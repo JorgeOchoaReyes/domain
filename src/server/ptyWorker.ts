@@ -60,6 +60,10 @@ export interface PtyWorkerOptions {
   launch: string | null;
   /** When the agent CLI was not found, its label — shown as a hint. */
   missingLabel: string | null;
+  /** The desk id — exposed to the agent as $DOMAIN_DESK for its report file. */
+  deskId: string;
+  /** Absolute reports directory — exposed as $DOMAIN_REPORTS. */
+  reportsDir: string;
 }
 
 type OutputListener = (data: string) => void;
@@ -88,7 +92,16 @@ export class PtyWorker implements IWorkerSession {
       cols: 80,
       rows: 24,
       cwd: opts.cwd,
-      env: { ...process.env, DOMAIN_WORKER: "1", TERM: "xterm-256color" },
+      env: {
+        ...process.env,
+        DOMAIN_WORKER: "1",
+        TERM: "xterm-256color",
+        // Where the agent should drop its presentation when it reaches a
+        // checkpoint. See .domain/BRIEF.md for the contract.
+        DOMAIN_DESK: opts.deskId,
+        DOMAIN_REPORTS: opts.reportsDir,
+        DOMAIN_REPORT_FILE: `${opts.reportsDir}/${opts.deskId}.json`,
+      },
     });
 
     this.pty.onData((data) => this.emit(data));

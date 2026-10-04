@@ -25,7 +25,29 @@ export type WorkerStatus =
   | "idle" // ready, waiting for a prompt
   | "working" // busy on a task
   | "waiting" // needs a human (blocked on input / a question)
+  | "presenting" // has a finished report and is lined up to present
   | "done"; // finished a task, celebrating
+
+/**
+ * A structured "presentation" an agent drops when it reaches a checkpoint.
+ * The agent writes this as JSON to `.domain/reports/<deskId>.json`; the office
+ * turns it into something you review. `summary` is what gets spoken aloud.
+ */
+export interface Report {
+  /** "ready" = finished work to review; "blocked" = needs a decision. */
+  status: "ready" | "blocked";
+  title: string;
+  /** One short paragraph, read aloud at the presentation. */
+  summary: string;
+  /** Bullet points shown on the presentation screen. */
+  slides: string[];
+  /** The question to answer, when status is "blocked". */
+  question?: string;
+  /** Something to look at: a running dev-server URL or an image path. */
+  preview?: { url?: string; image?: string };
+  /** When the report was produced (epoch ms). */
+  at: number;
+}
 
 /** A worker currently occupying a desk. */
 export interface Worker {
@@ -36,6 +58,19 @@ export interface Worker {
   status: WorkerStatus;
   /** Short line describing what it is doing, shown over the desk. */
   activity: string;
+  /** The latest unreviewed report, if the worker is waiting to present. */
+  report: Report | null;
+}
+
+/** A worker's place in the line waiting to present in your office. */
+export interface Presentation {
+  deskId: string;
+  workerId: string;
+  agent: AgentKind;
+  hiredBy: string;
+  report: Report;
+  /** 0 = at the podium presenting; 1+ = position in the line behind. */
+  order: number;
 }
 
 /** A desk in the office. Fixed position; may or may not be occupied. */
@@ -61,6 +96,8 @@ export interface Peer {
 export interface OfficeState {
   desks: Desk[];
   peers: Peer[];
+  /** Workers lined up to present, in queue order (order 0 = at the podium). */
+  presentations: Presentation[];
 }
 
 // ---------------------------------------------------------------------------
@@ -81,7 +118,13 @@ export type ClientMessage =
   /** Keystrokes typed into a worker's terminal. */
   | { t: "input"; deskId: string; data: string }
   /** Resize a worker's terminal. */
-  | { t: "resize"; deskId: string; cols: number; rows: number };
+  | { t: "resize"; deskId: string; cols: number; rows: number }
+  /**
+   * Respond to a worker's presentation. `approve` lets it continue; otherwise
+   * `text` is the revision feedback sent back into its session. Either way the
+   * report is cleared and the worker returns to its desk.
+   */
+  | { t: "review"; deskId: string; approve: boolean; text?: string };
 
 // ---------------------------------------------------------------------------
 // Server -> Client
@@ -95,7 +138,9 @@ export type ServerMessage =
   /** Terminal output from a worker, to be written to its xterm. */
   | { t: "output"; deskId: string; data: string }
   /** The scrollback for a desk, sent when you open its terminal. */
-  | { t: "scrollback"; deskId: string; data: string };
+  | { t: "scrollback"; deskId: string; data: string }
+  /** A worker just dropped a new report and is heading to your office. */
+  | { t: "report"; presentation: Presentation };
 
 /** Narrow a parsed JSON value to a ClientMessage, or return null. */
 export function parseClientMessage(raw: unknown): ClientMessage | null {
@@ -104,4 +149,50 @@ export function parseClientMessage(raw: unknown): ClientMessage | null {
   if (typeof t !== "string") return null;
   // Trust the shape beyond the tag; the server validates fields it depends on.
   return raw as ClientMessage;
+}
+
+/**
+ * Coerce an untrusted JSON value (a report file an agent wrote) into a Report,
+ * filling in sane defaults and clamping sizes. Returns null if there is nothing
+ * usable. Kept permissive on purpose: agents hand-write these.
+ */
+export function coerceReport(raw: unknown): Report | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const str = (v: unknown, max: number): string =>
+    typeof v === "string" ? v.slice(0, max) : "";
+
+  const title = str(o.title, 120) || "Update";
+  const summary = str(o.summary, 1200);
+  const question = str(o.question, 600);
+  const status: Report["status"] = o.status === "blocked" ? "blocked" : "ready";
+
+  let slides: string[] = [];
+  if (Array.isArray(o.slides)) {
+    slides = o.slides
+      .filter((s): s is string => typeof s === "string")
+      .slice(0, 12)
+      .map((s) => s.slice(0, 240));
+  }
+
+  let preview: Report["preview"] | undefined;
+  if (o.preview && typeof o.preview === "object") {
+    const p = o.preview as Record<string, unknown>;
+    const url = typeof p.url === "string" ? p.url.slice(0, 500) : undefined;
+    const image = typeof p.image === "string" ? p.image.slice(0, 500) : undefined;
+    if (url || image) preview = { url, image };
+  }
+
+  // Require at least something to show or say.
+  if (!summary && slides.length === 0 && !question) return null;
+
+  return {
+    status,
+    title,
+    summary: summary || question || title,
+    slides,
+    question: question || undefined,
+    preview,
+    at: typeof o.at === "number" ? o.at : Date.now(),
+  };
 }

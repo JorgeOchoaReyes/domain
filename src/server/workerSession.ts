@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { join, delimiter } from "node:path";
-import type { AgentKind, WorkerStatus } from "../shared/protocol.js";
+import type { AgentKind, Report, WorkerStatus } from "../shared/protocol.js";
 import { AGENT_LABELS } from "../shared/protocol.js";
 import { SimulatedWorker } from "./worker.js";
 import { PtyWorker, ptyAvailable } from "./ptyWorker.js";
@@ -22,6 +22,12 @@ export interface IWorkerSession {
   write(data: string): void;
   resize(cols: number, rows: number): void;
   dispose(): void;
+  /**
+   * Some backends (the simulated worker) emit reports in-process. Real
+   * terminal workers instead write report files that the server watches, so
+   * this is optional.
+   */
+  onReport?(listener: (report: Report) => void): () => void;
 }
 
 export interface CreateWorkerOptions {
@@ -29,6 +35,10 @@ export interface CreateWorkerOptions {
   cwd: string;
   /** Force the scripted stub even when a terminal backend is available. */
   simulate: boolean;
+  /** The desk this worker sits at — names its report file. */
+  deskId: string;
+  /** Absolute path of the directory where report files are watched. */
+  reportsDir: string;
 }
 
 /** The CLI command each agent kind launches when a real terminal is used. */
@@ -57,6 +67,8 @@ export function createWorker(agent: AgentKind, opts: CreateWorkerOptions): IWork
     // with a note, which is still a real local terminal.
     launch: found ? command : null,
     missingLabel: found ? null : AGENT_LABELS[agent],
+    deskId: opts.deskId,
+    reportsDir: opts.reportsDir,
   });
 }
 

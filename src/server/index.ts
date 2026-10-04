@@ -98,6 +98,7 @@ function scheduleSnapshot(): void {
 
 office.onChange = scheduleSnapshot;
 office.onOutput = (deskId, data) => broadcast({ t: "output", deskId, data });
+office.onReport = (presentation) => broadcast({ t: "report", presentation });
 
 // Presence moves are frequent; broadcast them on a fixed cadence if dirty.
 let presenceDirty = false;
@@ -157,6 +158,10 @@ wss.on("connection", (ws) => {
       }
       case "resize": {
         office.resize(msg.deskId, msg.cols, msg.rows);
+        break;
+      }
+      case "review": {
+        office.review(msg.deskId, msg.approve, msg.text);
         break;
       }
     }

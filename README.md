@@ -83,16 +83,42 @@ Useful environment variables:
 
 ## Controls
 
-| Key / action        | Does                                   |
-| ------------------- | -------------------------------------- |
-| `W` `A` `S` `D`     | Walk (relative to the camera)          |
-| Drag                | Orbit the camera                       |
-| Scroll              | Zoom                                   |
-| `E`                 | Interact with the nearest desk         |
-| `Esc`               | Close a terminal or menu               |
+| Key / action        | Does                                       |
+| ------------------- | ------------------------------------------ |
+| `W` `A` `S` `D`     | Walk (relative to the camera)              |
+| Drag                | Orbit the camera                           |
+| Scroll              | Zoom                                       |
+| `E`                 | Interact with the nearest desk             |
+| `O`                 | Hold office hours (review who's presenting)|
+| `Esc`               | Close a terminal, menu, or review          |
 
 Walk to an empty desk and press `E` to hire a worker; walk to a staffed desk and
 press `E` to open its terminal. Inside a terminal, **Send home** frees the desk.
+
+## Presentations & voice review
+
+Agents don't narrate their terminal at you. Instead, when a worker finishes a
+chunk of work (or gets blocked), it **writes a report** and walks into your
+office to line up and present.
+
+- **Report contract.** A worker drops a JSON file at `$DOMAIN_REPORT_FILE`
+  (i.e. `.domain/reports/<desk>.json`). The server watches that folder, turns
+  the file into a presentation, and sends the worker to the stage. See the
+  auto-generated `.domain/BRIEF.md` for the schema the agent follows.
+- **Office hours.** Press `O` and the agent at the podium presents: its summary
+  is **read aloud** (a distinct browser voice per agent), with its slides and an
+  optional live preview on screen.
+- **Voice or text feedback.** Hit 🎤 to dictate (browser speech-to-text) or just
+  type. **Approve ▸ continue** lets it carry on; **Send changes** pushes your
+  feedback straight back into the agent's session as its next instruction. Then
+  the next presenter in line steps up.
+
+All of this uses the **free, browser-native** Web Speech API (so it works out of
+the box in the Electron app); no API keys, no per-minute costs.
+
+> The simulated worker exercises this whole loop on its own — hire one, type a
+> task, and it will line up to present. Real agents follow the `.domain/BRIEF.md`
+> contract (you may need to point your agent at it in its first instruction).
 
 ## Layout
 
@@ -101,17 +127,20 @@ src/
   shared/protocol.ts     typed client/server messages + office state
   server/
     index.ts             http static server + WebSocket layer
-    office.ts            authoritative room state (desks, workers, peers)
+    office.ts            authoritative room state (desks, workers, line, peers)
     workerSession.ts     IWorkerSession interface + backend factory + PATH lookup
     ptyWorker.ts         real local terminal (node-pty) running the agent CLI
-    worker.ts            simulated agent session (fallback)
+    worker.ts            simulated agent session (fallback; drives the demo loop)
+    reports.ts           watches .domain/reports for agent presentation files
   client/
-    main.ts              glue: loop, interaction, networking
+    main.ts              glue: loop, interaction, networking, office hours
     net.ts               reconnecting WebSocket client
-    scene/world.ts       Three.js scene, room, desks, peers
+    voice.ts             browser text-to-speech + speech-to-text (Web Speech API)
+    scene/world.ts       toon-shaded scene: room, stage, desks, avatars, peers
     scene/player.ts      WASD movement + orbit camera
     ui/hud.ts            join screen, prompts, hire menu
     ui/terminal.ts       xterm overlay
+    ui/review.ts         office-hours presentation + voice/text feedback panel
 electron/
   main.ts                desktop shell: starts the server, opens a native window
 ```
@@ -119,10 +148,12 @@ electron/
 ## Roadmap ideas
 
 - ~~Real PTY + agent CLI~~ ✓ · ~~desktop (Electron) app~~ ✓
+- ~~Presentations: agents report at a checkpoint and present in your office~~ ✓
+- ~~Voice: spoken presentations + dictated feedback~~ ✓
+- Auto-brief real agents with the report contract on hire (no manual pointer).
 - Worker status detection from real terminals (working / waiting-on-you).
-- Voice: push-to-talk dictation into a worker's terminal (browser speech first).
-- GitHub issue/PR boards on the walls.
-- A shared whiteboard; alternate rooms/themes.
+- Auto-launch & embed the project's dev server as a live preview wall.
+- GitHub issue/PR boards on the walls; a shared whiteboard; alternate rooms.
 
 ## License
 

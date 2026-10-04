@@ -8,6 +8,7 @@ const STATUS_LABEL: Record<WorkerStatus, string> = {
   idle: "idle",
   working: "working",
   waiting: "waiting on you",
+  presenting: "presenting",
   done: "done",
 };
 const STATUS_COLOR: Record<WorkerStatus, string> = {
@@ -15,6 +16,7 @@ const STATUS_COLOR: Record<WorkerStatus, string> = {
   idle: "#4ade80",
   working: "#38bdf8",
   waiting: "#f87171",
+  presenting: "#c58bff",
   done: "#fbbf24",
 };
 

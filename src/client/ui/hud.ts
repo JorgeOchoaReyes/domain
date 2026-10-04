@@ -40,7 +40,7 @@ export class Hud {
     hint.className = "hint card";
     hint.innerHTML = `
       <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move · drag to look · scroll to zoom</div>
-      <div><kbd>E</kbd> interact with a desk · <kbd>Esc</kbd> close</div>`;
+      <div><kbd>E</kbd> interact with a desk · <kbd>O</kbd> office hours · <kbd>Esc</kbd> close</div>`;
     this.root.appendChild(hint);
 
     this.promptEl = document.createElement("div");

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { AgentKind, WorkerStatus } from "../shared/protocol.js";
+import type { AgentKind, Report, WorkerStatus } from "../shared/protocol.js";
 import { AGENT_LABELS } from "../shared/protocol.js";
 import type { IWorkerSession } from "./workerSession.js";
 
@@ -32,6 +32,7 @@ const AGENT_COLOR: Record<AgentKind, string> = {
 
 type OutputListener = (data: string) => void;
 type StatusListener = (status: WorkerStatus, activity: string) => void;
+type ReportListener = (report: Report) => void;
 
 export class SimulatedWorker implements IWorkerSession {
   readonly id = randomUUID();
@@ -47,6 +48,8 @@ export class SimulatedWorker implements IWorkerSession {
 
   private outputListeners = new Set<OutputListener>();
   private statusListeners = new Set<StatusListener>();
+  private reportListeners = new Set<ReportListener>();
+  private taskCount = 0;
 
   constructor(agent: AgentKind, note?: string) {
     this.agent = agent;
@@ -64,6 +67,11 @@ export class SimulatedWorker implements IWorkerSession {
   onStatus(listener: StatusListener): () => void {
     this.statusListeners.add(listener);
     return () => this.statusListeners.delete(listener);
+  }
+
+  onReport(listener: ReportListener): () => void {
+    this.reportListeners.add(listener);
+    return () => this.reportListeners.delete(listener);
   }
 
   getStatus(): WorkerStatus {
@@ -112,6 +120,7 @@ export class SimulatedWorker implements IWorkerSession {
     this.timers.clear();
     this.outputListeners.clear();
     this.statusListeners.clear();
+    this.reportListeners.clear();
   }
 
   // --- internals ----------------------------------------------------------
@@ -201,27 +210,53 @@ export class SimulatedWorker implements IWorkerSession {
         i++;
         this.later(600, tick);
       } else {
-        // Occasionally "block" on a question so the waiting state is visible.
-        if (Math.random() < 0.3) {
-          this.emit(`${YELLOW}? I need a decision before continuing.${RESET}\r\n`);
-          this.emit(`${DIM}(answer, then Enter)${RESET}\r\n\r\n`);
-          this.setStatus("waiting", "Waiting on you");
-          this.prompt();
-        } else {
-          this.finish(task);
-        }
+        this.present(task);
       }
     };
     this.later(500, tick);
   }
 
-  private finish(task: string): void {
-    this.emit(`${GREEN}✓ done:${RESET} ${task}\r\n\r\n`);
-    this.setStatus("done", "Finished — needs review");
-    this.prompt();
-    // Settle back to idle after a short celebration.
-    this.later(4000, () => {
-      if (this.status === "done") this.setStatus("idle", "Idle — ready for a task");
-    });
+  /**
+   * Produce a report and line up to present it. Every third task "blocks" on a
+   * question instead of finishing, so the two report kinds are both exercised.
+   */
+  private present(task: string): void {
+    this.taskCount++;
+    const blocked = this.taskCount % 3 === 0;
+    const short = task.length > 46 ? task.slice(0, 46) + "…" : task;
+
+    const report: Report = blocked
+      ? {
+          status: "blocked",
+          title: `Need a decision: ${short}`,
+          summary: `I started on "${short}" but hit a fork I should not pick alone. I need your call before I continue.`,
+          slides: [
+            `Task: ${short}`,
+            "Explored two viable approaches",
+            "Blocked on which direction you prefer",
+          ],
+          question: "Which approach should I take — the simple one or the thorough one?",
+          at: Date.now(),
+        }
+      : {
+          status: "ready",
+          title: `Finished: ${short}`,
+          summary: `I finished "${short}". Here is a quick rundown of what changed so you can review and tell me to continue or adjust.`,
+          slides: [
+            `Task: ${short}`,
+            "Implemented the change end to end",
+            "Added a couple of tests",
+            "Ready for your review",
+          ],
+          at: Date.now(),
+        };
+
+    this.emit(
+      blocked
+        ? `${YELLOW}▸ lined up to present (blocked): ${report.title}${RESET}\r\n\r\n`
+        : `${GREEN}▸ lined up to present: ${report.title}${RESET}\r\n\r\n`,
+    );
+    this.setStatus("presenting", blocked ? "Waiting to present (blocked)" : "Waiting to present");
+    for (const l of this.reportListeners) l(report);
   }
 }

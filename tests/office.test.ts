@@ -48,6 +48,35 @@ test("a hired worker produces terminal output", async () => {
   office.dispose();
 });
 
+test("a finished worker lines up to present, and review clears it", async () => {
+  const office = new Office(sim);
+  const deskId = office.snapshot().desks[0].id;
+  let presented: string | null = null;
+  office.onReport = (p) => {
+    presented = p.deskId;
+  };
+  office.hire(deskId, "claude", "Jorge");
+  // Boot, then give it a task; the simulated worker presents a report.
+  await new Promise((r) => setTimeout(r, 900));
+  office.input(deskId, "build the login page\r");
+  await new Promise((r) => setTimeout(r, 3500));
+
+  const snap = office.snapshot();
+  assert.equal(presented, deskId, "a report event should have fired");
+  assert.equal(snap.presentations.length, 1, "worker should be in the line");
+  assert.equal(snap.presentations[0].order, 0, "and at the podium");
+  const desk = snap.desks.find((d) => d.id === deskId)!;
+  assert.equal(desk.worker?.status, "presenting");
+  assert.ok(desk.worker?.report, "the desk carries the report");
+
+  // Approve: the line clears and the worker goes back to work.
+  assert.equal(office.review(deskId, true), true);
+  const after = office.snapshot();
+  assert.equal(after.presentations.length, 0, "line is empty after review");
+  assert.equal(after.desks.find((d) => d.id === deskId)!.worker?.report, null);
+  office.dispose();
+});
+
 test("peers can join, move and leave", () => {
   const office = new Office(sim);
   office.addPeer("p1", "Ann");
