@@ -74,6 +74,8 @@ export interface PtyWorkerOptions {
   repliesDir: string;
   /** Extra environment for the agent (e.g. pointing it at its MCP config). */
   env?: Record<string, string>;
+  /** You've said this project's worker folders can be trusted: answer the agent's trust prompt. */
+  autoTrust?: () => boolean;
 }
 
 type OutputListener = (data: string) => void;
@@ -92,6 +94,7 @@ export class PtyWorker implements IWorkerSession {
   private queue: string[] = [];
   private ready = true;
   private launchedAt = 0;
+  private autoTrust: () => boolean;
   private lastOutputAt = 0;
   private readyTimer: ReturnType<typeof setInterval> | null = null;
   /** The agent asked whether to trust its folder: waiting on you. */
@@ -109,6 +112,7 @@ export class PtyWorker implements IWorkerSession {
   constructor(agent: AgentKind, opts: PtyWorkerOptions) {
     if (!ptyModule) throw new Error("PTY backend unavailable");
     this.agent = agent;
+    this.autoTrust = opts.autoTrust ?? (() => false);
 
     const shell = defaultShell();
     this.pty = ptyModule.spawn(shell.file, shell.args, {
@@ -177,6 +181,39 @@ export class PtyWorker implements IWorkerSession {
     return this.scrollback;
   }
 
+  /**
+   * Answer the agent's "trust this folder?" with yes: move the highlight until
+   * it's on the yes option (read off the screen, never assumed), then Enter.
+   * Returns whether it got there; if the screen can't be read, the prompt is
+   * left for you.
+   */
+  async trust(): Promise<boolean> {
+    if (!this.trustAsked || this.disposed) return false;
+    this.setStatus("working", `${AGENT_LABELS[this.agent]} starting…`);
+    let from = this.scanFrom;
+    for (let i = 0; i < 5; i++) {
+      await new Promise((r) => setTimeout(r, 350));
+      const choice = highlighted(plain(this.scrollback.slice(from)));
+      if (choice === null) break;
+      if (YES_OPTION.test(choice)) {
+        this.pty.write("\r");
+        this.trustAsked = false;
+        this.scanFrom = this.scrollback.length;
+        this.lastOutputAt = Date.now();
+        return true;
+      }
+      from = this.scrollback.length;
+      this.pty.write("\x1b[B");
+    }
+    this.setStatus("waiting", `${AGENT_LABELS[this.agent]} asks whether to trust this folder — answer in its terminal`);
+    return false;
+  }
+
+  /** Whether it's stopped at a trust prompt. */
+  get askingTrust(): boolean {
+    return this.trustAsked;
+  }
+
   send(data: string): void {
     if (this.ready) this.write(data);
     else this.queue.push(data);
@@ -217,7 +254,8 @@ export class PtyWorker implements IWorkerSession {
     const now = Date.now();
     if (!this.trustAsked && TRUST_PROMPT.test(plain(this.scrollback.slice(this.scanFrom)))) {
       this.trustAsked = true;
-      this.setStatus("waiting", `${AGENT_LABELS[this.agent]} asks whether to trust this folder — answer in its terminal`);
+      if (this.autoTrust()) void this.trust();
+      else this.setStatus("waiting", `${AGENT_LABELS[this.agent]} asks whether to trust this folder — answer in its terminal`);
       return;
     }
     if (this.trustAsked) return;
@@ -312,9 +350,19 @@ export const ASKING = /do you want to (?:proceed|make this edit|create|run|allow
 /** Claude Code, Codex and Gemini CLI each ask, on a folder they haven't seen, whether to trust it. */
 export const TRUST_PROMPT = /trust (?:this folder|the (?:contents|files) (?:of|in) this (?:directory|folder))|do you trust/i;
 
-/** Terminal output as text: escape codes gone, cursor moves read as spaces. */
+/** The "yes" in a trust prompt (Claude Code: "Yes, I trust this folder"; Codex and Gemini: "Yes…", "Trust folder"). */
+const YES_OPTION = /^(?:\d+\.\s*)?(?:yes|trust\b)/i;
+
+/** The option a menu has highlighted ("❯ No, exit"), from the latest repaint; null if there's none. */
+export function highlighted(screen: string): string | null {
+  const marks = [...screen.matchAll(/[❯›▶>]\s*([^\n❯›▶>]{2,80})/g)];
+  return marks.length ? marks[marks.length - 1][1].trim() : null;
+}
+
+/** Terminal output as text: escape codes gone, cursor moves read as spaces, jumps to a row as new lines. */
 export function plain(s: string): string {
   return s
+    .replace(/\x1b\[\d+;\d+H/g, "\n")
     .replace(/\x1b\[\d*C/g, " ")
     .replace(/\x1b\[[0-9;?>]*[ -\/]*[@-~]/g, "")
     .replace(/\x1b\][^\x07]*\x07/g, "");

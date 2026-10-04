@@ -190,3 +190,15 @@ test("local models: no tools, no job; no thinking, Codex runs them with reasonin
     server.close();
   }
 });
+
+test("a local model too big for this computer's memory is called out before it hangs", async () => {
+  const { LOCAL_MODEL_BYTES, localModelWarning } = await import("../src/server/workerSession.ts");
+  const GB = 1024 ** 3;
+  LOCAL_MODEL_BYTES.set("ollama/qwen3.6:latest", 24 * GB);
+  LOCAL_MODEL_BYTES.set("ollama/llama3.1:latest", 5 * GB);
+  // This machine: 15 GB in all, 3 GB free.
+  assert.match(localModelWarning("ollama/qwen3.6:latest", 15 * GB, 3 * GB)!, /needs about 24 GB .* has 15 GB .* Pick a smaller model/);
+  assert.match(localModelWarning("ollama/llama3.1:latest", 15 * GB, 3 * GB)!, /3 GB is free right now/);
+  assert.equal(localModelWarning("ollama/llama3.1:latest", 15 * GB, 9 * GB), null, "fits: no warning");
+  assert.equal(localModelWarning("sonnet", 15 * GB, 1 * GB), null, "cloud models aren't local");
+});

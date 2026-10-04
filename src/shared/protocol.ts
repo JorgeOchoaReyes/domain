@@ -294,6 +294,8 @@ export type ClientMessage =
   | { t: "agentsGet" }
   /** Install a missing agent CLI with npm (shown in the logs as it goes). */
   | { t: "agentInstall"; agent: AgentKind }
+  /** Let agents trust this project's worker folders (answers their trust prompts, now and later). */
+  | { t: "trustWorkers" }
   // --- idea boards -------------------------------------------------------------------
   | { t: "ideasGet" }
   /**
@@ -381,7 +383,7 @@ export type ServerMessage =
  * deck was updated; deployStarted / deployFailed: the deploy command started
  * or exited non-zero; shipped: a goal shipped or was delivered.
  */
-export type LoopEvent = "planned" | "deck" | "deployStarted" | "deployFailed" | "shipped" | "timeUp" | "checkFailed" | "merged" | "mergeFailed";
+export type LoopEvent = "planned" | "deck" | "deployStarted" | "deployFailed" | "shipped" | "timeUp" | "checkFailed" | "merged" | "mergeFailed" | "warn";
 
 /** Something a worker says back during its review, dropped as a reply file. */
 export function coerceReply(raw: unknown): { say: string; at: number } | null {

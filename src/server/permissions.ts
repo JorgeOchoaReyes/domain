@@ -28,6 +28,7 @@ const HOST_ONLY: ReadonlySet<T> = new Set<T>([
   "mcpScan",
   "probe",
   "agentInstall",
+  "trustWorkers",
 ]);
 
 export function allowed(role: Role, t: string): boolean {

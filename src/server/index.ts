@@ -1,3 +1,4 @@
+import { localModelWarning } from "./workerSession.js";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
@@ -15,6 +16,7 @@ import { describeLaunch, mcpCleanup, mcpLaunch, serversFor, withGithubAuth } fro
 import type { ClientRec, Route, ServerCtx } from "./ctx.js";
 import { personaBrief, type WorkerIdentity } from "../shared/team.js";
 import { Office } from "./office.js";
+import { isTrusted, trustProject } from "./prefs.js";
 import { Progress } from "./progress.js";
 import { isTone } from "../shared/progress.js";
 import {
@@ -57,7 +59,7 @@ const MIME: Record<string, string> = {
 
 const CWD = process.env.DOMAIN_CWD || process.cwd();
 const SIMULATE = process.env.DOMAIN_SIMULATE === "1";
-const office = new Office({ cwd: CWD, simulate: SIMULATE });
+const office = new Office({ cwd: CWD, simulate: SIMULATE, trusted: () => isTrusted(CWD) });
 
 // ---------------------------------------------------------------------------
 // Static file server (serves the built client in production).
@@ -491,6 +493,7 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
           ? { characterId: character.id, name: character.name, look: character.look, voice: character.voice }
           : null;
         if (office.hire(msg.deskId, agent, client.name, model, leash, policy.isolate, identity)) {
+          warnIfTooBig(model);
           if (character) progress.characterHired(character.id);
           progress.hired(client.name);
           progress.recheck(client.name);
@@ -676,6 +679,14 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
 // ---------------------------------------------------------------------------
 
 /** The standing instructions of the character at a desk, for its task briefs. */
+/** A local model too big for this computer's memory: say so now, not after it hangs. */
+function warnIfTooBig(model: string): void {
+  const warning = localModelWarning(model);
+  if (!warning) return;
+  log.start("agent", `⚠ ${warning}`).done(false);
+  broadcast({ t: "loop", goalId: "", event: "warn", text: `🧠 ${warning}` });
+}
+
 /** Extra lines for task briefs, from feature modules (e.g. the idea a task came from). */
 const briefNotes: ((goalId: string, taskId: string, deskId: string) => string)[] = [];
 
@@ -686,6 +697,7 @@ function assignTask(who: string, goalId: string, taskId: string, deskId: string,
   const brief = coerceBrief(rawBrief ?? {}, progress.policy);
   const got = progress.assign(who, goalId, taskId, deskId, brief);
   if (!got) return false;
+  if (brief.model) warnIfTooBig(brief.model);
   // Put the worker on the task's model first: Claude Code switches in
   // place; other CLIs restart on it, so give them a moment to boot.
   const switched = brief.model ? office.switchModel(deskId, brief.model) : "same";
@@ -762,6 +774,11 @@ office.mcpFor = (deskId, agent, identity) => {
 
 const routes = new Map<string, Route>();
 routes.set("logs", (_msg, _client, ws) => send(ws, { t: "oplogAll", entries: log.all() }));
+// You said this project's worker folders can be trusted: remember it, and answer any agent asking now.
+routes.set("trustWorkers", () => {
+  trustProject(CWD);
+  void office.trustAll().then((n) => log.start("agent", n ? `Trusted this project's worker folders (answered ${n} waiting)` : "Trusted this project's worker folders").done(true));
+});
 for (const make of MODULES) {
   for (const [t, route] of Object.entries(make(ctx))) if (route) routes.set(t, route);
 }

@@ -1,4 +1,4 @@
-import { LOCAL_NO_THINKING } from "./workerSession.js";
+import { LOCAL_MODEL_BYTES, LOCAL_NO_THINKING } from "./workerSession.js";
 import { spawn as spawnChild, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
@@ -510,13 +510,14 @@ export async function detectLocalModels(env: NodeJS.ProcessEnv = process.env): P
   const lmBase = (env.LMSTUDIO_URL ?? "http://127.0.0.1:1234").replace(/\/$/, "");
   const [ollama, lm] = await Promise.all([get(`${ollamaBase}/api/tags`), get(`${lmBase}/v1/models`)]);
   const out: string[] = [];
-  const o = ollama as { models?: { name?: unknown; capabilities?: unknown }[] } | null;
+  const o = ollama as { models?: { name?: unknown; capabilities?: unknown; size?: unknown }[] } | null;
   for (const m of o?.models ?? []) {
     if (typeof m.name !== "string") continue;
     const caps = Array.isArray(m.capabilities) ? m.capabilities : null;
     // An agent works through tools: a model that can't call them can't do the job.
     if (caps && !caps.includes("tools")) continue;
     if (caps && !caps.includes("thinking")) LOCAL_NO_THINKING.add(`ollama/${m.name}`);
+    if (typeof m.size === "number") LOCAL_MODEL_BYTES.set(`ollama/${m.name}`, m.size);
     out.push(`ollama/${m.name}`);
   }
   const l = lm as { data?: { id?: unknown }[] } | null;

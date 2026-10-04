@@ -40,6 +40,8 @@ export interface OfficeOptions {
   cwd?: string;
   /** Force simulated workers (no real local terminals). */
   simulate?: boolean;
+  /** Whether you've trusted this project's worker folders (agents' trust prompts get answered). */
+  trusted?: () => boolean;
 }
 
 /**
@@ -78,7 +80,10 @@ export class Office {
   /** Workers' own branches. Disabled for simulated workers and outside a git repo. */
   readonly workspaces: Workspaces | null;
 
+  private trusted: () => boolean;
+
   constructor(options: OfficeOptions = {}) {
+    this.trusted = options.trusted ?? (() => false);
     this.cwd = options.cwd ?? process.cwd();
     this.simulate = options.simulate ?? false;
     this.reportsDir = join(this.cwd, ".domain", "reports");
@@ -161,7 +166,15 @@ export class Office {
       leash,
       extraArgs: mcp?.args,
       env: mcp?.env,
+      autoTrust: this.trusted,
     });
+  }
+
+  /** You trusted this project: answer every worker stopped at a trust prompt. Returns how many. */
+  async trustAll(): Promise<number> {
+    let n = 0;
+    for (const seat of this.seats) if (seat.session?.askingTrust && (await seat.session.trust?.())) n++;
+    return n;
   }
 
   /**
@@ -427,12 +440,18 @@ export class Office {
     const sketchPath = sketch ? this.saveSketch(deskId, sketch) : null;
     const board = sketchPath ? ` Whiteboard sketch from the review: ${sketchPath}` : "";
     const plan = seat.desk.worker.report.status === "plan";
+    // Approving finished work closes the task: the worker stops and waits for
+    // its next one (it doesn't wander on into other work). Approving a
+    // decision it was blocked on lets it carry on.
+    const blocked = seat.desk.worker.report.status === "blocked";
     const message = plan
       ? approve
         ? `[Review] Plan approved — go ahead and build it.${feedback ? ` Notes: ${feedback}` : ""}${board} When it's done, present it (status "ready").`
         : `[Review] Changes to the plan: ${feedback || "see the whiteboard sketch."}${board} Revise the plan and present it again (status "plan") before building.`
       : approve
-        ? `[Review] Approved — please continue.${feedback ? ` Notes: ${feedback}` : ""}${board}`
+        ? blocked
+          ? `[Review] Go ahead — carry on with the task.${feedback ? ` Notes: ${feedback}` : ""}${board}`
+          : `[Review] Approved — this task is done, nice work.${feedback ? ` Notes: ${feedback}` : ""}${board} Commit anything left over, then stop and wait for your next task. Don't start other work on your own.`
         : `[Review] Changes requested: ${feedback || "see the whiteboard sketch."}${board}`;
     // Hand the decision back into the worker's session as its next turn.
     typeLine(seat.session, message);
@@ -444,7 +463,9 @@ export class Office {
         ? "Building the approved plan"
         : "Revising the plan"
       : approve
-        ? "Continuing after approval"
+        ? blocked
+          ? "Carrying on after your decision"
+          : "Wrapping up — approved"
         : "Revising from feedback";
     this.dequeue(deskId);
     this.watcher?.forget(deskId);

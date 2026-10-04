@@ -1,3 +1,4 @@
+import { freemem, totalmem } from "node:os";
 import { existsSync } from "node:fs";
 import { join, delimiter } from "node:path";
 import type { AgentKind, Report, WorkerStatus } from "../shared/protocol.js";
@@ -41,6 +42,9 @@ export interface IWorkerSession {
    * into their CLI instead, and they answer through reply files.
    */
   summon?(): void;
+  /** Stopped at the agent's "trust this folder?": answer yes. Real terminals only. */
+  trust?(): Promise<boolean>;
+  readonly askingTrust?: boolean;
   /** Start on a task from a goal (the simulated worker just gets to work). */
   assign?(title: string, planFirst?: boolean): void;
   tell?(text: string): void;
@@ -64,6 +68,8 @@ export interface CreateWorkerOptions {
   env?: Record<string, string>;
   /** The desk this worker sits at — names its report file. */
   deskId: string;
+  /** Answer the agent's trust prompt for you (you've trusted this project's worker folders). */
+  autoTrust?: () => boolean;
   /** Absolute path of the directory where report files are watched. */
   reportsDir: string;
   /** Absolute path of the directory where reply files are watched. */
@@ -101,6 +107,23 @@ const LOCAL_PROVIDERS = ["ollama", "lmstudio"] as const;
  * in by detectLocalModels from what Ollama says each model can do.
  */
 export const LOCAL_NO_THINKING = new Set<string>();
+
+/** How big each local model is (bytes), as Ollama reports it — to warn before one can't fit in memory. */
+export const LOCAL_MODEL_BYTES = new Map<string, number>();
+
+/**
+ * A warning when a local model won't fit (or barely fits) in this computer's
+ * memory; null when it's fine or its size isn't known.
+ */
+export function localModelWarning(model: string, total = totalmem(), free = freemem()): string | null {
+  const bytes = LOCAL_MODEL_BYTES.get(model);
+  if (!bytes) return null;
+  const gb = (n: number) => `${Math.round(n / 1024 ** 3)} GB`;
+  const name = model.replace(/^[a-z]+\//, "");
+  if (bytes > total * 0.75) return `${name} needs about ${gb(bytes)} of memory and this computer has ${gb(total)} — it will be very slow or fail. Pick a smaller model.`;
+  if (bytes > free) return `${name} needs about ${gb(bytes)} of memory and ${gb(free)} is free right now — close some apps, or it may crawl.`;
+  return null;
+}
 
 export function launchCommand(agent: AgentKind, model = "", leash: Leash = "ask", extraArgs: string[] = []): string {
   const parts = [AGENT_COMMAND[agent]];
@@ -143,6 +166,7 @@ export function createWorker(agent: AgentKind, opts: CreateWorkerOptions): IWork
     deskId: opts.deskId,
     reportsDir: opts.reportsDir,
     repliesDir: opts.repliesDir,
+    autoTrust: opts.autoTrust,
   });
 }
 

@@ -16,6 +16,8 @@ export interface Prefs {
   recent: RecentProject[];
   /** The GitHub account you last signed in as (the credential manager may hold several). */
   githubLogin?: string;
+  /** Projects whose worker folders agents may trust without asking you each time. */
+  trusted?: string[];
 }
 
 export const MAX_RECENT = 12;
@@ -34,7 +36,13 @@ export function loadPrefs(file = prefsPath()): Prefs {
         )
       : [];
     const login = typeof raw.githubLogin === "string" && /^[A-Za-z0-9-]{1,39}$/.test(raw.githubLogin) ? raw.githubLogin : undefined;
-    return { project: typeof raw.project === "string" ? raw.project : undefined, recent: recent.slice(0, MAX_RECENT), ...(login ? { githubLogin: login } : {}) };
+    const trusted = Array.isArray(raw.trusted) ? raw.trusted.filter((t): t is string => typeof t === "string").slice(0, 100) : [];
+    return {
+      project: typeof raw.project === "string" ? raw.project : undefined,
+      recent: recent.slice(0, MAX_RECENT),
+      ...(login ? { githubLogin: login } : {}),
+      ...(trusted.length ? { trusted } : {}),
+    };
   } catch {
     return { recent: [] };
   }
@@ -76,4 +84,16 @@ export function rememberProject(
   if (opts.current) p.project = entry.path;
   savePrefs(p, file);
   return p;
+}
+
+/** Whether you've trusted this project's worker folders. */
+export function isTrusted(project: string, file = prefsPath()): boolean {
+  return (loadPrefs(file).trusted ?? []).some((t) => samePath(t, project));
+}
+
+/** Trust this project's worker folders from now on. */
+export function trustProject(project: string, file = prefsPath()): void {
+  const p = loadPrefs(file);
+  if ((p.trusted ?? []).some((t) => samePath(t, project))) return;
+  savePrefs({ ...p, trusted: [...(p.trusted ?? []), project] }, file);
 }

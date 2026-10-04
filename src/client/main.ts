@@ -314,7 +314,7 @@ net.onMessage = (msg) => {
       if (msg.event === "deployFailed") {
         sound.click();
         hud.toast(msg.text, "error");
-      } else if (msg.event === "checkFailed" || msg.event === "mergeFailed") {
+      } else if (msg.event === "checkFailed" || msg.event === "mergeFailed" || msg.event === "warn") {
         hud.toast(msg.text, "warn");
       } else {
         if (msg.event === "merged") sound.xp();
@@ -846,9 +846,20 @@ function pipTips(): Tip[] {
         : { id: "no-node", urgency: 2, text: "To hire coding agents, this computer needs Node.js (nodejs.org) — install it, then restart domain and I'll set up the agents." },
     );
   }
+  // An agent asking whether to trust its folder: one click trusts the project, for every worker from now on.
+  const asking = office.desks.find((d) => d.worker?.status === "waiting" && /trust this folder/.test(d.worker.activity));
+  if (asking && !guestRole()) {
+    const w = asking.worker!;
+    tips.push({
+      id: `trust-${asking.id}`,
+      urgency: 3,
+      text: `${w.identity?.name ?? AGENT_LABELS[w.agent]} is asking whether it can trust this project's files (its own copy at ${asking.label}). Trust them for every worker in this project? I won't ask again.`,
+      action: { label: "✅ Trust this project", run: () => net.send({ t: "trustWorkers" }) },
+    });
+  }
   for (const desk of office.desks) {
     const w = desk.worker;
-    if (w?.status !== "waiting") continue;
+    if (w?.status !== "waiting" || desk === asking) continue;
     const who = w.identity?.name ?? AGENT_LABELS[w.agent];
     tips.push({
       id: `wait-${desk.id}`,

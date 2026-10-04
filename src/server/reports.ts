@@ -143,9 +143,12 @@ It is read aloud in your voice. Bump \`at\` for every reply.
 
 ## 3. Feedback
 
-When the review ends you get either an approval to continue or the changes to
-make as your next instruction. A whiteboard sketch, if your manager drew one,
-is saved as an image and its path is included — open it.
+When the review ends you get the decision as your next instruction: the
+changes to make, or an approval. An approved task is done — commit anything
+left over, then stop and wait for your next task rather than starting other
+work. (Approving a plan, or a decision you were blocked on, means carry on.) A
+whiteboard sketch, if your manager drew one, is saved as an image in your
+folder and its path is included — open it.
 `;
   try {
     mkdirSync(domainDir, { recursive: true });

@@ -158,7 +158,8 @@ Agents work through tool calls, so only models that support them are offered
 “think”, like `llama3.1`, runs in Codex with reasoning off
 (`-c model_reasoning_effort=none`), since Codex otherwise asks every model to
 reason. Local models still vary a lot: pick one built for agentic coding, and
-big enough for it — and mind your memory with the large ones.
+big enough for it. Hire one that won't fit in your computer's memory and you're
+told straight away (in a toast and the Logs) rather than left watching it hang.
 
 ## The office
 
@@ -244,10 +245,13 @@ nothing gets stuck. Each goal's files live in `.domain/goals/<id>/`
 - **Own branch per worker** (on by default in a git repo): each hire works in
   its own git worktree under `.domain/worktrees/`, on its own branch
   (`domain/<agent>-<desk>-…`), so parallel workers never touch the same files.
-  `.domain/` is kept out of `git status` through `.git/info/exclude`. A desk
-  reuses its folder (`.domain/worktrees/desk-1`), so an agent that asks whether
-  to trust its folder asks once per desk — the desk shows *needs you* until you
-  answer in its terminal, and briefs wait.
+  `.domain/` is kept out of `git status` through `.git/info/exclude`.
+- **Trusting the folders, once**: agents like Claude Code ask whether to trust
+  a folder they haven't seen. The first time, Pip asks you instead — **✅ Trust
+  this project** — and from then on every worker's prompt in that project is
+  answered for you (the office reads which option is highlighted and picks
+  *yes*; it never guesses). Until you answer, the desk shows *needs you* and
+  briefs wait. Your choice is kept per project in `~/.domain/prefs.json`.
 - **Your dependencies come along**: a worktree only has what git tracks, so each
   one links to your checkout's installed `node_modules` (and `.venv`) wherever
   git ignores them — the check runs with your project's own tools, and the links
@@ -402,7 +406,9 @@ your name.
    worker's CLI, and its answer comes back as speech.
 4. **The review board.** Draw on it; the sketch goes to the worker with your
    feedback.
-5. **Decide.** **Approve** (merges its branch), **Send changes**, or **Later**.
+5. **Decide.** **Approve** (merges its branch, and the worker stops and waits
+   for its next task), **Send changes**, or **Later**. Approving a plan — or a
+   decision a worker was blocked on — lets it carry on.
 
 Voice uses the browser's free Web Speech API — no keys, no costs. Dictation
 needs Chrome or Edge (in the desktop app it depends on the speech service being
