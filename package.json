@@ -6,6 +6,7 @@
   "bin": {
     "domain": "bin/domain.js"
   },
+  "main": "dist/electron/main.js",
   "files": [
     "bin",
     "dist"
@@ -15,8 +16,11 @@
     "build": "npm run build:client && npm run build:server",
     "build:client": "vite build",
     "build:server": "tsc -p tsconfig.server.json",
-    "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.client.json --noEmit",
+    "build:electron": "tsc -p tsconfig.electron.json",
+    "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.client.json --noEmit && tsc -p tsconfig.electron.json --noEmit",
     "start": "node bin/domain.js",
+    "electron": "npm run build && npm run build:electron && electron dist/electron/main.js",
+    "electron:dev": "npm run build:server && npm run build:electron && concurrently -k -n server,vite,electron \"tsx watch src/server/index.ts\" \"vite\" \"cross-env DOMAIN_ELECTRON_URL=http://localhost:5173 electron dist/electron/main.js\"",
     "test": "node --import tsx --test tests/*.test.ts"
   },
   "engines": {
@@ -24,6 +28,7 @@
   },
   "license": "MIT",
   "dependencies": {
+    "@lydell/node-pty": "^1.2.0-beta.15",
     "ws": "^8.18.0"
   },
   "devDependencies": {
@@ -33,6 +38,8 @@
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
     "concurrently": "^9.1.0",
+    "cross-env": "^7.0.3",
+    "electron": "^33.2.0",
     "three": "^0.169.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",

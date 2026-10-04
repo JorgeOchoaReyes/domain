@@ -1,16 +1,17 @@
 import { randomUUID } from "node:crypto";
 import type { AgentKind, WorkerStatus } from "../shared/protocol.js";
 import { AGENT_LABELS } from "../shared/protocol.js";
+import type { IWorkerSession } from "./workerSession.js";
 
 /**
  * A simulated agent worker.
  *
- * This is the "stub" behind every desk: instead of spawning a real PTY and a
- * real agent CLI, it fakes a terminal session — a boot banner, a prompt, line
- * editing, and a scripted response when you submit a prompt. The surface it
- * exposes (onOutput / onStatus / write / resize / scrollback) is deliberately
- * the same shape a real PTY-backed worker would have, so swapping in a real
- * agent later means replacing this class, not the server around it.
+ * This is the scripted stub behind a desk: instead of spawning a real PTY and
+ * a real agent CLI, it fakes a terminal session — a boot banner, a prompt,
+ * line editing, and a scripted response when you submit a prompt. It is used
+ * as a fallback when no local terminal backend is available, or when the
+ * server is started in simulate mode (DOMAIN_SIMULATE=1), so the app always
+ * runs even with no agent CLIs installed.
  */
 
 const ESC = "\x1b[";
@@ -32,7 +33,7 @@ const AGENT_COLOR: Record<AgentKind, string> = {
 type OutputListener = (data: string) => void;
 type StatusListener = (status: WorkerStatus, activity: string) => void;
 
-export class WorkerSession {
+export class SimulatedWorker implements IWorkerSession {
   readonly id = randomUUID();
   readonly agent: AgentKind;
 
@@ -42,12 +43,14 @@ export class WorkerSession {
   private line = ""; // current, unsubmitted input line
   private timers = new Set<NodeJS.Timeout>();
   private disposed = false;
+  private note?: string;
 
   private outputListeners = new Set<OutputListener>();
   private statusListeners = new Set<StatusListener>();
 
-  constructor(agent: AgentKind) {
+  constructor(agent: AgentKind, note?: string) {
     this.agent = agent;
+    this.note = note;
     this.boot();
   }
 
@@ -154,6 +157,7 @@ export class WorkerSession {
   private boot(): void {
     const c = this.color();
     this.emit(`${c}${BOLD}${this.label()}${RESET}${DIM} — simulated worker${RESET}\r\n`);
+    if (this.note) this.emit(`${DIM}${this.note}${RESET}\r\n`);
     this.later(350, () => {
       this.emit(`${DIM}connecting to runtime…${RESET}\r\n`);
       this.later(450, () => {

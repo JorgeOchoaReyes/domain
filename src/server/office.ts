@@ -5,7 +5,7 @@ import type {
   Peer,
   Worker,
 } from "../shared/protocol.js";
-import { WorkerSession } from "./worker.js";
+import { createWorker, type IWorkerSession } from "./workerSession.js";
 
 /** How the fixed desks are laid out on the floor. */
 const DESK_ROWS = 2;
@@ -15,7 +15,7 @@ const DESK_SPACING_Z = 5;
 
 interface Seat {
   desk: Desk;
-  session: WorkerSession | null;
+  session: IWorkerSession | null;
   /** Unsubscribe callbacks for the live session's listeners. */
   cleanup: (() => void)[];
 }
@@ -23,6 +23,13 @@ interface Seat {
 /** Presence record for a connected client. */
 interface Presence {
   peer: Peer;
+}
+
+export interface OfficeOptions {
+  /** Directory real terminals start in. Defaults to the server's cwd. */
+  cwd?: string;
+  /** Force simulated workers (no real local terminals). */
+  simulate?: boolean;
 }
 
 /**
@@ -42,7 +49,12 @@ export class Office {
   /** Called with (deskId, data) when a seated worker produces output. */
   onOutput: ((deskId: string, data: string) => void) | null = null;
 
-  constructor() {
+  private readonly cwd: string;
+  private readonly simulate: boolean;
+
+  constructor(options: OfficeOptions = {}) {
+    this.cwd = options.cwd ?? process.cwd();
+    this.simulate = options.simulate ?? false;
     let id = 0;
     for (let r = 0; r < DESK_ROWS; r++) {
       for (let c = 0; c < DESK_COLS; c++) {
@@ -86,7 +98,7 @@ export class Office {
     const seat = this.seats.find((s) => s.desk.id === deskId);
     if (!seat || seat.session) return false;
 
-    const session = new WorkerSession(agent);
+    const session = createWorker(agent, { cwd: this.cwd, simulate: this.simulate });
     seat.session = session;
     seat.desk.worker = this.toWorker(session, hiredBy);
 
@@ -150,7 +162,7 @@ export class Office {
     }
   }
 
-  private toWorker(session: WorkerSession, hiredBy: string): Worker {
+  private toWorker(session: IWorkerSession, hiredBy: string): Worker {
     return {
       id: session.id,
       agent: session.agent,

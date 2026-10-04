@@ -24,7 +24,10 @@ const MIME: Record<string, string> = {
   ".ico": "image/x-icon",
 };
 
-const office = new Office();
+const office = new Office({
+  cwd: process.env.DOMAIN_CWD || process.cwd(),
+  simulate: process.env.DOMAIN_SIMULATE === "1",
+});
 
 // ---------------------------------------------------------------------------
 // Static file server (serves the built client in production).
@@ -166,8 +169,13 @@ wss.on("connection", (ws) => {
   ws.on("error", () => ws.close());
 });
 
-httpServer.listen(PORT, HOST, () => {
-  console.log(`domain server listening on http://${HOST}:${PORT}`);
+/** Resolves to the base URL once the server is accepting connections. */
+export const serverReady: Promise<string> = new Promise((resolve) => {
+  httpServer.listen(PORT, HOST, () => {
+    const url = `http://${HOST}:${PORT}`;
+    console.log(`domain server listening on ${url}`);
+    resolve(url);
+  });
 });
 
 function shutdown(): void {
