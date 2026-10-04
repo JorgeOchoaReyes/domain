@@ -2,21 +2,31 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <meta name="description" content="A 3D office where you put coding agents to work and review their progress in person." />
+    <meta name="theme-color" content="#bfe3ff" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>domain</title>
-    <link rel="icon" href="data:," />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏢</text></svg>" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;800&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;700;800;900&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./styles/main.css" />
+
   </head>
   <body>
     <div id="app">
       <canvas id="scene"></canvas>
       <div id="hud"></div>
+    </div>
+    <div id="loading">
+      <div class="load-card">
+        <div class="load-logo">🏢</div>
+        <h1>domain</h1>
+        <p>Opening the office…</p>
+        <div class="load-bar"><span></span></div>
+      </div>
     </div>
     <script type="module" src="./main.ts"></script>
   </body>

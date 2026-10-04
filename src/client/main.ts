@@ -1,216 +1,1452 @@
-import type { AgentKind, Desk, OfficeState, Presentation } from "../shared/protocol.js";
-import { AGENT_LABELS } from "../shared/protocol.js";
+import type { AgentKind, ClientMessage, Desk, Look, OfficeState, Presentation } from "../shared/protocol.js";
+import { AGENT_LABELS, DEFAULT_LOOK, coerceLook } from "../shared/protocol.js";
+import {
+  ARCADES,
+  DESK_BY_ID,
+  ELEVATOR,
+  FLOOR,
+  HOOP,
+  KITCHEN,
+  REVIEW_SPOT,
+  SPAWN,
+  STANDUP,
+  WORK_PAD,
+  arcadeSpot,
+  roomAt,
+  deskSeat,
+  type RoomId,
+  type IdeaBoardId,
+  IDEA_BOARDS,
+} from "../shared/layout.js";
 import { Net } from "./net.js";
 import { World } from "./scene/world.js";
-import { Player } from "./scene/player.js";
+import { Player, type ViewMode } from "./scene/player.js";
+import { ShotMeter } from "./scene/minigames.js";
+import { openArcade, arcadeBest } from "./ui/arcade.js";
+import { openStandup, type StandupPlan } from "./ui/standup.js";
+import { openTeleport, placeDestinations, teleportFlash, type Destination } from "./ui/teleport.js";
+import { Minimap } from "./ui/minimap.js";
+import { ObjectiveTracker, nextObjective, type Objective } from "./ui/objective.js";
+import { MyLaptop } from "./ui/mylaptop.js";
+import { openDeck, refreshDeck } from "./ui/deck.js";
+import { loadSettings, openSettings, saveSettings, type Settings } from "./ui/settings.js";
+import { openAssignCard } from "./ui/assign.js";
+import { Assistant, type Guide, type Tip, type TourStep } from "./ui/assistant.js";
+import { ingestLan, lanChip, onLanChange, openInvite } from "./ui/invite.js";
+import { askPasscode, guestBadge, guestRole, needsPasscode, openNearby, showDisconnected } from "./ui/join.js";
+import { githubTools, ingestMcp, openMcp } from "./ui/mcp.js";
+import { ingestLogs, openLogs } from "./ui/logs.js";
+import { openOfficeMenu, type OfficeTile } from "./ui/officemenu.js";
+import { ingestProjects, openProjects, projectBadge, projectState } from "./ui/projects.js";
+import { ingestGithub } from "./ui/github.js";
+import { agentsState, ingestAgents, installAgent, setAgentsSender } from "./ui/agents.js";
+import { openHire, openTeam, type TeamContext } from "./ui/team.js";
+import { openPolicy } from "./ui/policy.js";
+import type { LoopHandlers } from "./ui/loop.js";
 import { Hud } from "./ui/hud.js";
 import { TerminalOverlay } from "./ui/terminal.js";
 import { ReviewPanel } from "./ui/review.js";
+import { IdeaBoard } from "./ui/ideas.js";
+import { VR } from "./vr/xr.js";
+import { VrFlows } from "./vr/flows.js";
+import type { Idea } from "../shared/ideas.js";
+import { pickCharacter } from "./ui/charpick.js";
+import { esc, escapeModal, modalOpen } from "./ui/modal.js";
+import { GoalsWindow } from "./ui/goals.js";
+import { SessionPill, openStartSession, showSessionSummary } from "./ui/session.js";
+import { PlayerCard, blankStats, openProfile } from "./ui/profile.js";
+import { confetti, floatXp, isMuted, setMuted, sound } from "./ui/fx.js";
+import { ACHIEVEMENTS, EMPTY_PROGRESS, type Goal, type ProgressState } from "../shared/progress.js";
+import * as THREE from "three";
+import "./styles/main.css";
 
-const INTERACT_RADIUS = 2.4;
+const INTERACT_RADIUS = 1.9;
 const PRESENCE_INTERVAL = 1000 / 15;
+
+// --- who you are ---------------------------------------------------------------
+
+function load<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+function save(key: string, value: unknown): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* storage blocked */
+  }
+}
+let myName = load<string>("domain.name.v2", "");
+let myLook: Look = coerceLook(load<unknown>("domain.look", DEFAULT_LOOK));
+
+// --- the pieces ------------------------------------------------------------------
 
 const canvas = document.getElementById("scene") as HTMLCanvasElement;
 const hudRoot = document.getElementById("hud") as HTMLElement;
 
-const world = new World(canvas);
-const player = new Player(world, canvas);
-const hud = new Hud(hudRoot);
-const terminal = new TerminalOverlay(hudRoot);
-const review = new ReviewPanel(hudRoot);
+const world = new World(canvas, myLook, myName || "You");
+const player = new Player(world, canvas, load<ViewMode>("domain.view", "first") === "third" ? "third" : "first");
+player.onView = (mode) => {
+  save("domain.view", mode);
+  document.body.classList.toggle("fp", mode === "first");
+};
+document.body.classList.toggle("fp", player.view === "first");
+/** When the mouse capture last ended, so the Esc that ended it doesn't also open settings. */
+let unlockedAt = 0;
+player.onStep = (kind) => (kind === "land" ? sound.land() : sound.step());
+player.onLock = (locked) => {
+  document.body.classList.toggle("mouse-captured", locked);
+  if (!locked) unlockedAt = performance.now();
+};
+let settings: Settings = loadSettings();
+let lastQuality: Settings["graphics"] | null = null;
+world.onAutoQuality = (q) => {
+  settings = { ...settings, graphics: q };
+  lastQuality = q;
+  saveSettings(settings);
+  hud.toast(`🩺 Things were running slow, so graphics are now ${q === "fast" ? "Fast" : "Balanced"} — change it in Settings (Esc)`);
+};
+function applySettings(s: Settings): void {
+  settings = s;
+  player.applySettings(s);
+  world.setShowHand(s.hand);
+  world.setDayNight(s.dayNight);
+  if (lastQuality !== s.graphics) {
+    lastQuality = s.graphics;
+    world.setQuality(s.graphics);
+  }
+  world.autoQuality = s.autoGraphics;
+  minimap?.el.classList.toggle("hidden", !s.minimap);
+}
+const terminal = new TerminalOverlay();
+const review = new ReviewPanel();
 const net = new Net();
+setAgentsSender((m) => net.send(m));
+const hud = new Hud(hudRoot, {
+  onOpenWorker: (deskId) => openTerminal(deskId),
+  onRoundup: () => openRoundup(),
+  onOfficeHours: () => startOfficeHours(),
+  onGoals: () => openGoals(),
+  onFocus: () => openFocus(),
+  onProfile: () => openProfile(me(), progress),
+  onStandup: () => openStandupNow(),
+  onTravel: () => openTravel(),
+  onLaptop: () => openLaptop(),
+  onSettings: () => openSettingsNow(),
+});
+const minimap = new Minimap(hudRoot, () => openTravel());
+const objective = new ObjectiveTracker(hudRoot, (o) => doObjective(o));
+/** Pip, the assistant: reminders, "what now?", and the guided tour. */
+const assistant = new Assistant(hudRoot, {
+  tips: () => pipTips(),
+  tour: () => pipTour(),
+  whatNow: () => {
+    const o = nextObjective(progress, office.desks, office.presentations);
+    return { id: "whatnow", urgency: 1, text: `Next: ${o.text}`, action: { label: o.key ? `Do it (${o.key})` : "Do it", run: () => doObjective(o) } };
+  },
+  freeMouse: () => player.unlock(),
+  busy: () => modalOpen() || review.isOpen || terminal.isOpen,
+  guides: () => pipGuides(),
+  cheer: (final) => {
+    if (final) {
+      sound.levelUp();
+      confetti(140);
+    } else sound.xp();
+  },
+});
+/** When you last pressed a key or clicked (Pip only nudges after a quiet spell). */
+let lastActivity = performance.now();
+for (const ev of ["keydown", "pointerdown"]) window.addEventListener(ev, () => (lastActivity = performance.now()), { capture: true, passive: true });
+/** A first visit: Pip offers the tour before the first stand-up. */
+let welcomeDue = false;
+applySettings(settings);
 
-// Bottom banner nudging you to hold office hours when agents are waiting.
-const presentAlert = document.createElement("div");
-presentAlert.className = "present-alert card";
-hudRoot.appendChild(presentAlert);
+function openSettingsNow(): void {
+  if (modalOpen()) return;
+  openSettings(settings, applySettings, {
+    firstPerson: player.view === "first",
+    muted: isMuted(),
+    setFirstPerson: (on) => player.setView(on ? "first" : "third"),
+    setMuted: (on) => {
+      setMuted(on);
+      refreshGame();
+    },
+    openHelp: () => hud.openHelp(),
+  });
+}
+const shotMeter = new ShotMeter();
+// The Office menu: projects and GitHub, your team, MCP tools, inviting people, logs.
+const officeBtn = document.createElement("button");
+officeBtn.className = "btn dock-btn";
+officeBtn.dataset.act = "office";
+officeBtn.title = "Office: projects & GitHub, your team, MCP tools, invite people, logs";
+officeBtn.innerHTML = `🏢 <span class="lbl">Office</span>`;
+officeBtn.addEventListener("click", () => openOfficeMenuNow());
+hudRoot.querySelector('.dock [data-act="settings"]')?.before(officeBtn);
+/** The Office menu's tiles (features add theirs here). */
+const officeTiles: OfficeTile[] = [
+  { key: "projects", icon: "github", title: "Projects & GitHub", text: "Which project your workers are on — switch, or clone one from GitHub", run: () => openProjects(projectActions()) },
+  { key: "team", icon: "👥", title: "Your team", text: "Characters with names, looks, voices and personas you hire again and again", run: () => openTeam(teamCtx()) },
+  { key: "ideas", icon: "💡", title: "Idea board", text: "Sketch an idea and hand it to a worker, or make it a goal — also at the whiteboards", run: () => openIdeas(null) },
+  { key: "mcp", icon: "mcp", title: "MCP tools", text: "Tools your workers can use — add once, give to whoever needs them", hostOnly: true, run: () => openMcp({ progress: () => progress, send: (m) => net.send(m), isHost: () => !guestRole() }) },
+  { key: "invite", icon: "📡", title: "Invite people", text: "Share your office with people on your Wi-Fi, with a passcode", hostOnly: true, run: () => openInviteNow() },
+  { key: "nearby", icon: "📶", title: "Join a nearby office", text: "Offices shared on your network", hostOnly: true, run: () => openNearby({ send: (m) => net.send(m) }) },
+  { key: "logs", icon: "log", title: "Logs", text: "Every git, GitHub, MCP, check and deploy step, with output", run: () => openLogs() },
+];
+function openOfficeMenuNow(): void {
+  if (modalOpen()) return;
+  openOfficeMenu(officeTiles, !!guestRole());
+}
+const lanChipEl = document.createElement("div");
+lanChipEl.className = "lan-chip-slot";
+hudRoot.querySelector(".project")?.appendChild(lanChipEl);
+onLanChange(() => (lanChipEl.innerHTML = lanChip()));
+function openInviteNow(): void {
+  if (modalOpen() || guestRole()) return;
+  openInvite({ send: (m) => net.send(m) });
+}
+function showGuestBadge(): void {
+  const role = guestRole();
+  document.body.dataset.guest = role ?? "";
+  if (!role || hud.leftEl.querySelector(".guest-badge-slot")) return;
+  const b = document.createElement("span");
+  b.className = "guest-badge-slot";
+  b.innerHTML = guestBadge();
+  hud.leftEl.appendChild(b);
+}
+
+const playChip = document.createElement("div");
+playChip.className = "play-chip panel";
+playChip.innerHTML = `<span class="key">Tab</span> Menu`;
+hudRoot.appendChild(playChip);
+const crosshair = document.createElement("div");
+crosshair.className = "crosshair";
+hudRoot.appendChild(crosshair);
+for (const a of ARCADES) world.gameRoom.setBest(a.id, arcadeBest(a.id));
+/** What the loop controls (in the Goals window and on your laptop) can do. */
+const loopHandlers: LoopHandlers = {
+  send: (m) => net.send(m),
+  roundup: () => openRoundup(),
+  officeHours: () => startOfficeHours(),
+  openDeck: (goal) => openDeck(goal),
+  openLaptop: (app) => laptop.open(app),
+  assign: (goalId, taskId, deskId) => openAssignFor(goalId, taskId, deskId),
+  hire: () => {
+    escapeModal();
+    if (here !== "floor") travelTo({ label: "Work floor", icon: "🖥", ...SPAWN });
+    hud.toast("🪑 Walk to a desk with a green + and press E to hire");
+  },
+};
+const laptop = new MyLaptop(loopHandlers);
+const goals = new GoalsWindow({
+  loop: loopHandlers,
+  create: (title, why, tasks, kind) => net.send({ t: "goalCreate", title, why, tasks, kind }),
+  remove: (goalId) => net.send({ t: "goalDelete", goalId }),
+  addTask: (goalId, title) => net.send({ t: "taskAdd", goalId, title }),
+  assign: (goalId, taskId, deskId) => openAssignFor(goalId, taskId, deskId, true),
+  policy: () => openPolicyNow(),
+  done: (goalId, taskId, done) => net.send({ t: "taskDone", goalId, taskId, done }),
+  focus: (goalId) => {
+    goals.close();
+    openFocus(goalId);
+  },
+});
+const playerCard = new PlayerCard(hud.leftEl, () => openProfile(me(), progress));
+const sessionPill = new SessionPill(hudRoot, () => net.send({ t: "sessionStop" }));
+let progress: ProgressState = EMPTY_PROGRESS;
 
 let selfId = "";
 let office: OfficeState = { desks: [], peers: [], presentations: [] };
 let joined = false;
-/** Desk whose review we just submitted, waiting for it to leave the queue. */
+
+/** Desks whose laptop is waiting for its scrollback, and the terminal's. */
+const laptopPending = new Set<string>();
+const laptopPrimed = new Set<string>();
+let terminalPending: string | null = null;
+/** A freshly hired worker whose terminal opens once it sits down. */
+let pendingOpen: string | null = null;
+
+/** The review you just decided on, waiting for the worker to leave the line. */
 let awaitingAdvance: string | null = null;
+/** Workers you said you'd see later, this round of office hours. */
+const later = new Set<string>();
+/** Each worker's last status, to notice when one starts needing you. */
+const lastStatus = new Map<string, string>();
+/** The stand-up opens once your progress arrives after you join. */
+let standupDue = false;
+/** The room you're in, from the minimap. */
+let here: RoomId = "standup";
+let hoopStreak = 0;
+let goals_ = { west: 0, east: 0 };
 
 function deskById(id: string | null): Desk | undefined {
   return id ? office.desks.find((d) => d.id === id) : undefined;
 }
 
-// --- networking -------------------------------------------------------------
+// --- networking ---------------------------------------------------------------------
 
 net.onStatus = (connected) => {
   hud.setConnected(connected);
-  if (connected && joined) {
-    const name = localStorage.getItem("domain.name") || "Guest";
-    net.send({ t: "join", name });
+  if (connected && joined) net.send({ t: "join", name: myName, look: myLook });
+  if (connected) {
+    // Laptops ask for their terminals afresh after a reconnect.
+    laptopPrimed.clear();
   }
 };
 
 net.onMessage = (msg) => {
+  // The laptop keeps its own view of the loop, deploys and terminals.
+  laptop.onMessage(msg);
+  ingestLan(msg);
+  ingestMcp(msg);
+  ingestLogs(msg);
+  ingestProjects(msg);
+  ingestAgents(msg);
+  ingestGithub(msg);
+  if (msg.t === "project") showProject();
+  if (msg.t === "guest") showGuestBadge();
   switch (msg.t) {
+    case "loop":
+      if (msg.event === "deployFailed") {
+        sound.click();
+        hud.toast(msg.text, "error");
+      } else if (msg.event === "checkFailed" || msg.event === "mergeFailed") {
+        hud.toast(msg.text, "warn");
+      } else {
+        if (msg.event === "merged") sound.xp();
+        hud.toast(msg.text);
+        if (msg.event === "planned" || msg.event === "deck") sound.xp();
+        if (msg.event === "deployStarted") sound.bell();
+      }
+      break;
     case "welcome":
+      document.getElementById("loading")?.classList.add("done");
       selfId = msg.selfId;
       office = msg.office;
       applyOffice();
+      net.send({ t: "projectInfo" });
+      net.send({ t: "ideasGet" });
+      net.send({ t: "agentsGet" });
       break;
     case "office":
       office = msg.office;
       applyOffice();
+      ideaBoard.refreshWorkers();
+      break;
+    case "ideas":
+      onIdeas(msg.ideas);
       break;
     case "output":
-      if (terminal.isOpen && terminal.deskId === msg.deskId) terminal.write(msg.data);
+      world.output(msg.deskId, msg.data);
+      if (terminal.isOpen && terminal.deskId === msg.deskId && terminalPending !== msg.deskId) terminal.write(msg.data);
       break;
     case "scrollback":
-      if (terminal.isOpen && terminal.deskId === msg.deskId) terminal.write(msg.data);
+      if (laptopPending.delete(msg.deskId)) world.output(msg.deskId, msg.data, true);
+      if (terminalPending === msg.deskId) {
+        terminalPending = null;
+        if (terminal.isOpen && terminal.deskId === msg.deskId) terminal.write(msg.data);
+      }
       break;
-    case "report":
-      // The snapshot that follows updates the line; just nudge the banner now.
-      updatePresentAlert();
+    case "report": {
+      const label = AGENT_LABELS[msg.presentation.agent];
+      hud.toast(`📋 ${label} is ready to present — lining up outside your office${away() ? " · T to head over" : ""}`);
+      break;
+    }
+    case "progress": {
+      const startedNow = !progress.session && msg.progress.session;
+      progress = msg.progress;
+      world.setProgress(progress);
+      goals.update(progress, office.desks, office.presentations);
+      refreshDeck(progress.goals);
+      refreshGame();
+      if (startedNow) {
+        sound.bell();
+        hud.toast(`🔥 Focus session started — ${progress.session!.minutes} minutes. Let's go!`);
+      }
+      if (welcomeDue) {
+        welcomeDue = false;
+        standupDue = false;
+        setTimeout(() => assistant.welcome(myName, () => openStandupNow()), 600);
+      } else if (standupDue) {
+        standupDue = false;
+        setTimeout(() => openStandupNow(), 500);
+      }
+      break;
+    }
+    case "award":
+      onAward(msg);
+      break;
+    case "sessionEnd":
+      showSessionSummary(msg.summary);
+      break;
+    case "said":
+      if (msg.from === "agent") world.speak(msg.deskId, msg.text);
+      if (review.isOpen && review.deskId === msg.deskId) review.addLine(msg.from, msg.text);
       break;
   }
 };
 
-function applyOffice(): void {
-  world.syncDesks(office.desks);
-  world.syncWorkerAvatars(office.desks, office.presentations);
-  world.syncPeers(office.peers, selfId);
+// --- the game ---------------------------------------------------------------------------
 
-  // If a terminal is open, reflect status changes and close it if the worker
-  // was sent home (possibly by someone else).
+function me() {
+  return progress.players.find((p) => p.name === myName) ?? blankStats(myName);
+}
+
+function refreshGame(): void {
+  playerCard.update(me());
+  hud.updateGame(progress);
+  objective.update(nextObjective(progress, office.desks, office.presentations));
+}
+
+/** Do what the quest tracker says. */
+function doObjective(o: Objective): void {
+  if (modalOpen()) return;
+  switch (o.action) {
+    case "standup":
+      openStandupNow();
+      break;
+    case "hire":
+      if (here !== "floor") travelTo({ label: "Work floor", icon: "🖥", ...SPAWN });
+      hud.toast("🪑 Walk to a desk with a green + and press E");
+      break;
+    case "goals":
+      openGoals(o.goal?.id);
+      break;
+    case "roundup":
+      openRoundup();
+      break;
+    case "hours":
+      startOfficeHours();
+      break;
+    case "travel-game": {
+      const game = placeDestinations("desks").find((d) => d.label === "Game room");
+      if (game) travelTo(game);
+      break;
+    }
+    case "laptop":
+      openLaptop();
+      break;
+  }
+}
+
+function openGoals(select?: string): void {
+  if (modalOpen() && !goals.isOpen) return;
+  goals.open(progress, office.desks, select);
+}
+
+function openFocus(goalId: string | null = null): void {
+  if (progress.session) {
+    const left = Math.ceil((progress.session.endsAt - Date.now()) / 60000);
+    hud.toast(`🔥 A focus session is on — ${left} min to go. Stay in the zone!`);
+    return;
+  }
+  if (modalOpen() && !goals.isOpen) return;
+  openStartSession(progress, goalId, (minutes, goal) => net.send({ t: "sessionStart", minutes, goalId: goal }));
+}
+
+function onAward(a: { who: string; xp: number; reason: string; levelUp?: { level: number; title: string }; unlocked: string[] }): void {
+  const shipped = a.reason.startsWith("Task done") || a.reason.startsWith("Goal complete") || a.reason.startsWith("Shipped") || a.reason.startsWith("Delivered");
+  if (shipped) {
+    // Everyone hears the gong when work ships.
+    world.ringGong();
+    sound.gong();
+  }
+  if (a.reason.startsWith("Shipped") || a.reason.startsWith("Delivered")) {
+    confetti(260);
+    hud.toastHtml(`🚀 <b>${esc(a.who)}</b> shipped it: ${esc(a.reason.replace(/^(Shipped|Delivered): /, ""))}`, "ach", 6500);
+  } else if (a.reason.startsWith("Goal complete")) {
+    confetti(220);
+    hud.toastHtml(`🚀 <b>${esc(a.who)}</b> completed a goal: ${esc(a.reason.replace(/^Goal complete: /, ""))}`, "ach", 6000);
+  }
+  if (a.who !== myName) return;
+  if (a.xp > 0) {
+    floatXp(a.xp, playerCard.el);
+    if (!shipped) sound.xp();
+    if (a.xp >= 50) hud.toastHtml(`<b>+${a.xp} XP</b> · ${esc(a.reason)}`, "xp");
+  }
+  for (const id of a.unlocked) {
+    const def = ACHIEVEMENTS.find((x) => x.id === id);
+    if (!def) continue;
+    setTimeout(() => {
+      sound.achievement();
+      hud.toastHtml(`<span class="a-icon">${def.icon}</span><span><small>Achievement unlocked</small><b>${esc(def.title)}</b> — ${esc(def.text)}</span>`, "ach", 5500);
+    }, 400);
+  }
+  if (a.levelUp) showLevelUp(a.levelUp.level, a.levelUp.title);
+}
+
+function showLevelUp(level: number, title: string): void {
+  sound.levelUp();
+  confetti(200);
+  const el = document.createElement("div");
+  el.className = "levelup";
+  el.innerHTML = `<div class="lv-ring">${level}</div><h2>Level up!</h2><p>You're now a ${esc(title)}</p>`;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 3300);
+}
+
+/** Whether you're away from the work (the game room, the kitchen, outside…). */
+function away(): boolean {
+  return here !== "floor" && here !== "office";
+}
+
+function applyOffice(): void {
+  world.sync(office.desks, office.presentations, office.peers, selfId);
+  // A worker that just started needing you gets a shout, wherever you are.
+  for (const desk of office.desks) {
+    const st = desk.worker?.status;
+    const before = lastStatus.get(desk.id);
+    if (st === "waiting" && before && before !== "waiting") {
+      sound.click();
+      hud.toast(`🔴 ${AGENT_LABELS[desk.worker!.agent]} at ${desk.label} needs you${away() ? " · press T to jump there" : ""}`, "warn");
+    }
+    if (st) lastStatus.set(desk.id, st);
+    else lastStatus.delete(desk.id);
+  }
+  goals.update(progress, office.desks, office.presentations);
+  hud.update(office.desks, office.presentations, office.peers, selfId);
+  objective.update(nextObjective(progress, office.desks, office.presentations));
+
+  // Each laptop shows its worker's terminal: fetch the scrollback once per worker.
+  for (const desk of office.desks) {
+    if (desk.worker && !laptopPrimed.has(desk.id)) {
+      laptopPrimed.add(desk.id);
+      laptopPending.add(desk.id);
+      net.send({ t: "open", deskId: desk.id });
+    } else if (!desk.worker) {
+      laptopPrimed.delete(desk.id);
+    }
+  }
+
+  // Keep an open terminal in step, and close it if its worker was sent home.
   if (terminal.isOpen && terminal.deskId) {
     const desk = deskById(terminal.deskId);
-    if (!desk?.worker) {
-      closeTerminal();
-    } else {
-      terminal.setStatus(desk.worker.status);
-    }
+    if (!desk?.worker) terminal.close();
+    else terminal.setStatus(desk.worker.status);
   }
 
-  // Advance the review queue: once a reviewed worker has left the line, move
-  // to the next presenter, or close office hours if the line is empty.
-  if (review.isOpen && awaitingAdvance) {
-    const stillThere = office.presentations.some((p) => p.deskId === awaitingAdvance);
-    if (!stillThere) {
-      awaitingAdvance = null;
-      if (office.presentations.length > 0) openReview(office.presentations[0]);
-      else closeReview();
-    }
+  // A review was decided: once that worker has left the line, bring in the next.
+  if (awaitingAdvance && !office.presentations.some((p) => p.deskId === awaitingAdvance)) {
+    awaitingAdvance = null;
+    const next = nextReady();
+    if (next) openReview(next);
+    else endOfficeHours();
   }
 
-  updatePresentAlert();
-}
-
-function updatePresentAlert(): void {
-  const n = office.presentations.length;
-  if (n > 0 && !review.isOpen && !terminal.isOpen && !hud.modalOpen) {
-    presentAlert.innerHTML = `🔔 ${n} agent${n > 1 ? "s" : ""} waiting to present — <kbd>O</kbd> to hold office hours`;
-    presentAlert.classList.add("show");
-  } else {
-    presentAlert.classList.remove("show");
+  if (pendingOpen && deskById(pendingOpen)?.worker) {
+    const id = pendingOpen;
+    pendingOpen = null;
+    openTerminal(id);
   }
 }
 
-// --- interaction ------------------------------------------------------------
-
-function closeTerminal(): void {
-  terminal.close();
-  player.enabled = true;
-}
+// --- desks and terminals -----------------------------------------------------------------
 
 function openTerminal(deskId: string): void {
   const desk = deskById(deskId);
-  if (!desk?.worker) return;
-  const title = `${AGENT_LABELS[desk.worker.agent]} · hired by ${desk.worker.hiredBy}`;
+  if (!desk?.worker || review.isOpen) return;
+  const title = `${AGENT_LABELS[desk.worker.agent]} · ${desk.label} · hired by ${desk.worker.hiredBy}`;
+  terminalPending = deskId;
   terminal.open(deskId, title, desk.worker.status, {
     onInput: (data) => net.send({ t: "input", deskId, data }),
     onResize: (cols, rows) => net.send({ t: "resize", deskId, cols, rows }),
     onFire: () => {
       net.send({ t: "fire", deskId });
-      closeTerminal();
+      terminal.close();
+      hud.toast(`👋 Sent ${AGENT_LABELS[desk.worker!.agent]} home`);
     },
-    onClose: closeTerminal,
+    onClose: () => {
+      terminalPending = null;
+    },
   });
-  player.enabled = false;
   net.send({ t: "open", deskId });
 }
 
-function hire(deskId: string, agent: AgentKind): void {
-  net.send({ t: "hire", deskId, agent });
-  // The office snapshot will bring the new worker; open its terminal once it
-  // arrives so the player sees the boot sequence.
-  pendingOpen = deskId;
+function hire(desk: Desk): void {
+  openHire(
+    { id: desk.id, label: desk.label },
+    {
+      ...teamCtx(),
+      onHire: (choice) => {
+        net.send(
+          typeof choice === "string"
+            ? { t: "hire", deskId: desk.id, agent: "claude", characterId: choice }
+            : { t: "hire", deskId: desk.id, agent: choice.agent as AgentKind, model: choice.model, leash: choice.leash },
+        );
+        pendingOpen = desk.id;
+      },
+    },
+  );
 }
-let pendingOpen: string | null = null;
 
-// --- office hours (presentations) ------------------------------------------
+/** What the team windows need: the roster, the desks, and how to save. */
+function teamCtx(): TeamContext {
+  return {
+    progress,
+    desks: office.desks,
+    onSave: (c) => net.send({ t: "characterSave", character: c }),
+    onDelete: (id) => net.send({ t: "characterDelete", id }),
+    onEditPolicy: () => openPolicyNow(),
+  };
+}
 
-function openReview(p: Presentation): void {
-  player.enabled = false;
-  hud.setPrompt(null);
-  review.open(p, office.presentations.length, {
-    onReview: (approve, text) => {
-      net.send({ t: "review", deskId: p.deskId, approve, text });
-      awaitingAdvance = p.deskId;
+/** What the Projects window may do: switch and clone, and share your GitHub sign-in with workers' tools. */
+function projectActions() {
+  return {
+    send: (m: ClientMessage) => net.send(m),
+    hasGithubTools: () => progress.mcp.some((m) => m.auth === "github" && m.enabled),
+    addGithubTools: () => {
+      net.send({ t: "mcpSave", server: githubTools() });
+      hud.toast("🧰 Every worker now gets GitHub's tools, using your sign-in");
     },
-    onClose: () => {
-      awaitingAdvance = null;
-      player.enabled = true;
-      updatePresentAlert();
+  };
+}
+
+/** The project's name and branch in the top-left card. */
+function showProject(): void {
+  const info = projectState.info;
+  const name = hudRoot.querySelector<HTMLElement>(".project-name > span");
+  if (info && name) name.textContent = info.name;
+  let badge = hudRoot.querySelector<HTMLElement>(".project-badge-slot");
+  if (!badge) {
+    badge = document.createElement("div");
+    badge.className = "project-badge-slot";
+    hudRoot.querySelector(".project")?.appendChild(badge);
+    badge.addEventListener("click", () => openProjects(projectActions()));
+  }
+  badge.innerHTML = projectBadge();
+}
+
+/**
+ * Hand a task out on your terms: the assignment card (worker, model, time
+ * budget, plan first, definition of done). From the Goals window, it comes
+ * back to the goal afterwards.
+ */
+function openAssignFor(goalId: string, taskId: string, deskId?: string, backToGoals = false): void {
+  const goal = progress.goals.find((g) => g.id === goalId);
+  const task = goal?.tasks.find((t) => t.id === taskId);
+  if (!goal || !task) return;
+  const busy = new Map<string, string>();
+  for (const g of progress.goals) for (const t of g.tasks) if (t.deskId && t.status !== "done" && t.id !== taskId) busy.set(t.deskId, t.title);
+  openAssignCard({
+    goal,
+    task,
+    desks: office.desks,
+    policy: progress.policy,
+    deskId,
+    busy,
+    onAssign: (desk, brief) => {
+      net.send({ t: "taskAssign", goalId, taskId, deskId: desk, brief });
+      sound.click();
+      const w = deskById(desk)?.worker;
+      hud.toast(
+        `👉 ${w ? AGENT_LABELS[w.agent] : "Worker"} is on “${task.title}”` +
+          (brief.minutes ? ` · ${brief.minutes} min` : "") +
+          (brief.planFirst ? " · plan first" : ""),
+      );
+      if (backToGoals) setTimeout(() => openGoals(goalId), 60);
     },
+    onEditPolicy: () => openPolicyNow(),
   });
 }
 
-function closeReview(): void {
-  review.close();
-  awaitingAdvance = null;
-  player.enabled = true;
-  updatePresentAlert();
+/** The team's defaults for hiring and handing out tasks. */
+function openPolicyNow(): void {
+  openPolicy(progress.policy, (p) => {
+    net.send({ t: "policySet", policy: p });
+    hud.toast("🛠 Team policy saved — new hires and assignments start from it");
+  });
 }
 
-function enterOfficeHours(): void {
-  if (review.isOpen || terminal.isOpen || hud.modalOpen) return;
-  if (office.presentations.length === 0) return;
-  openReview(office.presentations[0]);
+function openRoundup(): void {
+  if (modalOpen()) return;
+  hud.openRoundup(
+    office.desks,
+    office.presentations,
+    (deskIds) => {
+      net.send({ t: "roundup", deskIds });
+      hud.toast(`📣 Called ${deskIds.length} worker${deskIds.length === 1 ? "" : "s"} to your office`);
+    },
+    () => {},
+  );
 }
+
+// --- office hours ---------------------------------------------------------------------------
+
+/** The next worker in line with its report ready, skipping ones you'll see later. */
+function nextReady(): Presentation | null {
+  return office.presentations.find((p) => p.report && p.report.check?.status !== "running" && !later.has(p.deskId)) ?? null;
+}
+
+function startOfficeHours(): void {
+  if (review.isOpen) return;
+  if (terminal.isOpen) terminal.close();
+  if (modalOpen()) return;
+  later.clear();
+  const next = nextReady();
+  if (!next) {
+    const preparing = office.presentations.length;
+    hud.toast(
+      preparing
+        ? `📝 ${preparing} still preparing their report${preparing === 1 ? "" : "s"} — hang on`
+        : "☕ Nobody in line. Press R to round up workers for a review.",
+      "warn",
+    );
+    return;
+  }
+  // Take your seat at your desk in your office, facing the screen.
+  if (!world.nearReviewDesk(player.position.x, player.position.z)) {
+    player.placeAt(REVIEW_SPOT.x, REVIEW_SPOT.z, 0);
+  }
+  openReview(next);
+}
+
+function openReview(p: Presentation): void {
+  if (!p.report) return;
+  world.setPresenting(p.deskId, 0);
+  world.showReviewBoard(null);
+  const index = office.presentations.findIndex((x) => x.deskId === p.deskId) + 1;
+  review.open(p, { index, total: office.presentations.length }, {
+    onReview: (approve, text, sketch) => {
+      net.send({ t: "review", deskId: p.deskId, approve, text, sketch: sketch ?? undefined });
+      awaitingAdvance = p.deskId;
+      hud.toast(approve ? `✅ Approved — ${AGENT_LABELS[p.agent]} is back to work` : `✏️ Changes sent to ${AGENT_LABELS[p.agent]}`);
+      if (approve) sound.xp();
+    },
+    onSay: (text) => net.send({ t: "say", deskId: p.deskId, text }),
+    onLater: () => {
+      later.add(p.deskId);
+      const next = nextReady();
+      if (next) openReview(next);
+      else endOfficeHours();
+    },
+    onClose: () => endOfficeHours(),
+    onSlide: (i) => world.setPresenting(p.deskId, i),
+    onBoard: (c) => world.showReviewBoard(c),
+    onVoiceError: warnVoice,
+  }, deskById(p.deskId)?.worker?.identity ?? null);
+}
+
+/** Voice input failing is said once, not on every try. */
+let voiceWarned = false;
+function warnVoice(err: string): void {
+  if (voiceWarned) return;
+  voiceWarned = true;
+  hud.toast(
+    err === "not-allowed"
+      ? "🎤 Microphone blocked — allow it to talk to workers"
+      : `🎤 Voice input isn't available in this window — open ${location.origin} in Chrome to talk, or type`,
+    "warn",
+  );
+}
+
+// --- idea boards ------------------------------------------------------------------------------
+
+let ideas: Idea[] = [];
+/** The whiteboard you opened the idea board at (your sketch shows on it). */
+let ideaAt: IdeaBoardId | null = null;
+const ideaBoard = new IdeaBoard({
+  send: (m) => net.send(m),
+  desks: () => office.desks,
+  goalTitle: (id) => progress.goals.find((g) => g.id === id)?.title ?? null,
+  canEdit: () => guestRole() !== "visitor",
+  onSketch: (c) => world.showIdeaSketch(c ? ideaAt : null, c),
+  onVoiceError: warnVoice,
+});
+
+function openIdeas(at: IdeaBoardId | null): void {
+  if (modalOpen() && !ideaBoard.isOpen) return;
+  ideaAt = at;
+  ideaBoard.open(ideas);
+}
+
+function onIdeas(next: Idea[]): void {
+  // Say where an idea went when it changes hands.
+  for (const i of next) {
+    const before = ideas.find((x) => x.id === i.id);
+    if (before && before.status === i.status) continue;
+    if (i.status === "handed") hud.toast(`🤝 “${i.title}” handed to ${i.handedTo?.name ?? "a worker"} — it's on the goal as a task`);
+    else if (i.status === "goal") hud.toast(`🎯 “${i.title}” is a goal now — plan it or hand out its tasks (G)`);
+    else if (!before) hud.toast(`📌 Pinned to the idea board: “${i.title}”`);
+  }
+  ideas = next;
+  world.setIdeas(ideas);
+  ideaBoard.update(ideas);
+}
+
+// --- VR ----------------------------------------------------------------------------------------
+
+const vrFlows = new VrFlows({
+  world,
+  office: () => office,
+  progress: () => progress,
+  send: (m) => net.send(m),
+  interact: () => interact(),
+  position: () => player.position,
+  deskAt: () => {
+    const near = world.nearestDesk(player.position.x, player.position.z);
+    return near && near.dist <= INTERACT_RADIUS ? (deskById(near.id) ?? null) : null;
+  },
+  places: () => placeDestinations(here),
+  travel: (d) => travelTo(d),
+});
+const vr = new VR(world, player, vrFlows);
+vrFlows.vr = vr;
+hud.onToast = (text) => vr.notify(text);
+
+/** A 🥽 button in the dock, when this browser can reach a headset. */
+async function offerVr(): Promise<void> {
+  // Dev only: ?vr emulates a Quest 3, to try VR without one.
+  if (import.meta.env.DEV && new URLSearchParams(location.search).has("vr")) {
+    const { XRDevice, metaQuest3 } = await import("iwer");
+    const device = new XRDevice(metaQuest3);
+    device.installRuntime({ forceInstall: true });
+    (window as unknown as { __xrDevice: unknown }).__xrDevice = device;
+  }
+  if (!(await VR.supported())) return;
+  const btn = document.createElement("button");
+  btn.className = "btn dock-btn";
+  btn.dataset.act = "vr";
+  btn.title = "Step into the office in your VR headset";
+  btn.innerHTML = `🥽 <span class="lbl">VR</span>`;
+  btn.addEventListener("click", () => {
+    escapeModal();
+    vr.enter().catch((e: Error) => hud.toast(`🥽 Couldn't start VR: ${e.message}`, "error"));
+  });
+  hudRoot.querySelector('.dock [data-act="settings"]')?.before(btn);
+}
+void offerVr();
+
+function endOfficeHours(): void {
+  world.setPresenting(null);
+  world.showReviewBoard(null);
+}
+
+// --- Pip, the assistant ---------------------------------------------------------------------
+
+/** What Pip should mention right now, most urgent first. */
+function pipTips(): Tip[] {
+  const tips: Tip[] = [];
+  if (!joined) return tips;
+  // No coding agent on this machine yet: nothing can be hired until one is.
+  const agents = agentsState();
+  if (agents && !guestRole() && !Object.values(agents.installed).some(Boolean)) {
+    tips.push(
+      agents.npm
+        ? {
+            id: "no-agents",
+            urgency: 2,
+            text: agents.installing ? "Installing — it takes a minute. The output's in Office → Logs." : "None of the coding agents are installed on this computer yet. Want me to install Claude Code? (Codex, Gemini CLI and OpenCode are in the hire card.)",
+            action: agents.installing ? undefined : { label: "⬇ Install Claude Code", run: () => installAgent("claude") },
+          }
+        : { id: "no-node", urgency: 2, text: "To hire coding agents, this computer needs Node.js (nodejs.org) — install it, then restart domain and I'll set up the agents." },
+    );
+  }
+  for (const desk of office.desks) {
+    const w = desk.worker;
+    if (w?.status !== "waiting") continue;
+    const who = w.identity?.name ?? AGENT_LABELS[w.agent];
+    tips.push({
+      id: `wait-${desk.id}`,
+      urgency: 3,
+      text: `${who} at ${desk.label} is waiting for your answer.`,
+      action: { label: "Go there", run: () => goToDesk(desk.id) },
+    });
+  }
+  const ready = office.presentations.filter((p) => p.report && p.report.check?.status !== "running").length;
+  if (ready) {
+    tips.push({
+      id: `ready-${ready}`,
+      urgency: 2,
+      text: ready === 1 ? "Someone's ready to present outside your office." : `${ready} workers are ready to present outside your office.`,
+      action: { label: "🎤 Hold office hours", run: () => startOfficeHours() },
+    });
+  }
+  const s = progress.session;
+  if (s) {
+    const left = s.endsAt - Date.now();
+    if (left > 0 && left < 5 * 60_000 && office.desks.some((d) => d.worker)) {
+      tips.push({
+        id: `ending-${s.id}`,
+        urgency: 2,
+        text: "Five minutes left in this session — a good moment to round everyone up for a review.",
+        action: { label: "📣 Round up", run: () => openRoundup() },
+      });
+    }
+  }
+  if (!progress.goals.some((g) => !g.doneAt && !g.shippedAt) && !s) {
+    tips.push({ id: "no-goal", urgency: 1, text: "There's no goal yet. Every session starts with a stand-up — want to hold one?", action: { label: "☀️ Hold the stand-up", run: () => openStandupNow() } });
+  }
+  // The goal card already shows the next step: Pip only brings it up if you've been idle a while.
+  if (performance.now() - lastActivity > 90_000) {
+    const o = nextObjective(progress, office.desks, office.presentations);
+    tips.push({ id: `next-${o.text}`, urgency: 0, text: `Still here? Next up: ${o.text}`, action: { label: o.key ? `Do it (${o.key})` : "Do it", run: () => doObjective(o) } });
+  }
+  return tips.sort((a, b) => b.urgency - a.urgency);
+}
+
+/** The goal you're on: the session's, else the newest one still open. */
+function focusGoal(): Goal | undefined {
+  return progress.goals.find((g) => g.id === progress.session?.goalId && !g.shippedAt) ?? progress.goals.find((g) => !g.doneAt && !g.shippedAt);
+}
+
+/** Walk up to a free desk and open the hire card. */
+function hireAtFreeDesk(): void {
+  const desk = office.desks.find((d) => !d.worker);
+  const def = desk && DESK_BY_ID.get(desk.id);
+  if (!desk || !def) return void hud.toast("Every desk is taken — let one go to hire another");
+  const at = deskSeat(def, 1.75);
+  travelTo({ label: "", icon: "", x: at.x, z: at.z, facing: def.rotY + Math.PI, then: () => hire(desk) });
+}
+
+/** What Pip can walk you through, as checklists that tick themselves off. */
+function pipGuides(): Guide[] {
+  const goalReady = () => !!focusGoal();
+  const staffed = () => office.desks.some((d) => d.worker);
+  const goalStep = {
+    title: "Pick a goal",
+    text: "Everything starts with a goal: what you want done today. The stand-up sets one (and the tone, and how long you'll focus).",
+    done: goalReady,
+    action: { label: "☀️ Hold the stand-up", run: () => openStandupNow() },
+    spot: '[data-act="standup"]',
+  };
+  const task: Guide = {
+    id: "task",
+    icon: "🎯",
+    title: "Put a worker on a task",
+    finish: "Done — reviewed and approved. That's the whole loop: goal, plan, build, review. Ship it when the goal's ready.",
+    steps: () => [
+      goalStep,
+      {
+        title: "Hire a worker",
+        text: "Workers are real coding agents — Claude Code, Codex, OpenCode or Gemini — at a desk on the work floor.",
+        done: staffed,
+        action: { label: "🪑 Take me to a free desk", run: () => hireAtFreeDesk() },
+      },
+      {
+        title: "Break it into tasks",
+        text: "Let your worker plan the goal (it writes the tasks for you), or add a few yourself.",
+        done: () => (focusGoal()?.tasks.length ?? 0) > 0,
+        action: { label: "📋 Open the goal", run: () => openGoals(focusGoal()?.id) },
+        spot: '[data-act="goals"]',
+      },
+      {
+        title: "Hand a task out",
+        text: "Pick a task and a worker — and if you like, the model, a time budget and what “done” means.",
+        done: () => !!focusGoal()?.tasks.some((t) => t.status !== "todo"),
+        action: { label: "🎯 Assign a task", run: () => openGoals(focusGoal()?.id) },
+      },
+      {
+        title: "Review the work",
+        text: "When it's ready the worker lines up outside your office (or round them up now). Hold office hours, then approve it or send it back.",
+        done: () => !!focusGoal()?.tasks.some((t) => t.status === "done"),
+        action: {
+          label: "🎤 Office hours",
+          run: () => (office.presentations.some((p) => p.report) ? startOfficeHours() : openRoundup()),
+        },
+      },
+    ],
+  };
+  return [
+    {
+      id: "session",
+      icon: "🔥",
+      title: "Start a focus session",
+      finish: "The session's on. Your workers have their marching orders — I'll shout when someone needs you.",
+      steps: () => [
+        goalStep,
+        {
+          title: "Start the clock",
+          text: "A session is a timed sprint the whole office works in. Finish it for XP and to keep your streak.",
+          done: () => !!progress.session,
+          action: { label: "⏱ Start it", run: () => openStandupNow() },
+        },
+      ],
+    },
+    task,
+    {
+      id: "pr",
+      icon: "🚀",
+      title: "Ship a pull request",
+      finish: "Your pull request is up on GitHub. The goal card follows its checks.",
+      steps: () => [
+        {
+          title: "A project on GitHub",
+          text: "Pull requests need a project with a GitHub remote — open one, or clone one from GitHub.",
+          done: () => !!projectState.info?.github,
+          action: { label: "📁 Projects & GitHub", run: () => openProjects(projectActions()) },
+        },
+        {
+          title: "Signed in to GitHub",
+          text: "One sign-in, through git's own credential manager. Your workers' git uses it too.",
+          done: () => !!projectState.account,
+          action: { label: "🔑 Sign in", run: () => openProjects(projectActions()) },
+        },
+        {
+          title: "Approved work",
+          text: "Something to ship: at least one task on the goal reviewed and approved (it's merged into your branch).",
+          done: () => !!focusGoal()?.tasks.some((t) => t.status === "done"),
+          action: { label: "🎯 Walk me through a task", run: () => assistant.startGuide(task) },
+        },
+        {
+          title: "Open the pull request",
+          text: "Your branch goes up as domain/<goal> and the PR opens against the default branch.",
+          done: () => !!progress.goals.find((g) => g.id === lastShipGoal)?.pr,
+          action: {
+            label: "🚀 Open the PR",
+            run: () => {
+              const g = focusGoal();
+              if (!g) return;
+              lastShipGoal = g.id;
+              net.send({ t: "shipPR", goalId: g.id });
+              hud.toast(`🚀 Opening a pull request for “${g.title}”…`);
+            },
+          },
+        },
+      ],
+    },
+    {
+      id: "idea",
+      icon: "💡",
+      title: "Hand off an idea",
+      finish: "It's on the board — and with a worker, if you handed it over.",
+      steps: () => {
+        const before = ideas.length;
+        return [
+          {
+            title: "Go to an idea board",
+            text: "There's one on wheels on the work floor and one in the stand-up room.",
+            done: () => ideaBoard.isOpen || ideas.length > before || !!world.ideaBoardAt(player.position.x, player.position.z),
+            action: { label: "💡 Take me there", run: () => travelTo({ label: "", icon: "", x: IDEA_BOARDS[0].spot.x, z: IDEA_BOARDS[0].spot.z + 1.6, facing: Math.PI }) },
+          },
+          {
+            title: "Sketch it and pin it",
+            text: "Draw it, say what it is, then pin it — or hand it straight to a worker.",
+            done: () => ideas.length > before,
+            action: { label: "✏️ Open the board", run: () => openIdeas("floor") },
+          },
+        ];
+      },
+    },
+  ];
+}
+/** The goal a guide opened a pull request for (to know when it's up). */
+let lastShipGoal: string | null = null;
+
+/** Walk to a worker's desk and open its terminal. */
+function goToDesk(deskId: string): void {
+  const def = DESK_BY_ID.get(deskId);
+  if (!def) return;
+  const at = deskSeat(def, 1.75);
+  travelTo({ label: "", icon: "", x: at.x, z: at.z, facing: def.rotY + Math.PI, then: () => openTerminal(deskId) });
+}
+
+function placeNamed(label: string): Destination | undefined {
+  return placeDestinations("desks").find((d) => d.label === label);
+}
+
+/** The guided tour, room by room. */
+function pipTour(): TourStep[] {
+  const go = (label: string) => () => {
+    const d = placeNamed(label);
+    if (d) {
+      escapeModal();
+      travelTo(d);
+    }
+  };
+  return [
+    {
+      title: "Your goal, always in view",
+      text: "This card is your quest: the goal, how far along it is and where it is in the loop — plan, build, review, ship — plus the one next step. Click it to do that step.",
+      go: go("Stand-up room"),
+      spot: ".objective",
+    },
+    {
+      title: "Every session starts with a stand-up",
+      text: "Here you pick today's goal, set the tone and how long you'll focus. The big screen keeps the plan up all session. Press U any time.",
+      go: go("Stand-up room"),
+      spot: '[data-act="standup"]',
+    },
+    {
+      title: "Hire your workers",
+      text: "On the work floor, walk to a desk with a green + and press E. Pick an agent — Claude Code, Codex, OpenCode or Gemini — and a model. Each runs in a real terminal on this computer, on its own git branch.",
+      go: go("Work floor"),
+    },
+    {
+      title: "Plan it, hand it out",
+      text: "Goals (G): let a worker break the goal into tasks, then hand each one out — pick the model, a time budget, plan-first, and what done means.",
+      spot: '[data-act="goals"]',
+    },
+    {
+      title: "Got an idea?",
+      text: "Walk up to a whiteboard and press E: sketch it, jot a few notes, then hand it to a worker — it becomes a task, briefed with your sketch — or make it a goal. Pinned ideas stay on the boards.",
+      go: go("Work floor"),
+    },
+    {
+      title: "Review in your office",
+      text: "Round them up (R): each checks its work against your tests and lines up outside. Hold office hours (O): approve to merge it into your branch, or send it back with notes.",
+      go: go("Your office"),
+      spot: '[data-act="hours"]',
+    },
+    {
+      title: "Your laptop",
+      text: "Press L for your laptop: a browser on what's being built, every worker's live terminal, the loop, decks and deploys.",
+      spot: '[data-act="laptop"]',
+    },
+    {
+      title: "Get around fast",
+      text: "Press T to jump anywhere — or straight to a worker who needs you. The minimap shows the rooms and everyone in them.",
+      spot: ".minimap",
+    },
+    {
+      title: "Run the office",
+      text: "🏢 Office: switch projects or clone one from GitHub, build your team of characters with names, looks and personas, give workers MCP tools, invite people on your Wi-Fi, and see the logs of everything that ran.",
+      spot: '[data-act="office"]',
+    },
+    {
+      title: "Take a break",
+      text: "While they work: arcades, hoops, ping-pong, coffee, a walk outside. I'll call you when someone needs you, and the pad by the door takes you straight back.",
+      go: go("Game room"),
+    },
+    {
+      title: "That's the office!",
+      text: "Esc opens settings (view, speed, graphics), H shows the controls, and you can click me any time to ask what's next.",
+      action: { label: "☀️ Hold the stand-up", run: () => openStandupNow() },
+    },
+  ];
+}
+
+// --- stand-up and fast travel ---------------------------------------------------------------
+
+function openStandupNow(): void {
+  if (modalOpen()) return;
+  openStandup(
+    progress,
+    office.desks,
+    myName,
+    (plan: StandupPlan) => {
+      net.send({ t: "standup", ...plan });
+      sound.levelUp();
+      confetti(90);
+      const staffed = office.desks.some((d) => d.worker);
+      setTimeout(
+        () =>
+          hud.toast(
+            staffed
+              ? "🎯 Goal set. Open Goals (G) to plan it with a worker, or walk to their desk"
+              : "🎯 Goal set. Next: hire a worker on the work floor — T then 1 to get there fast",
+          ),
+        900,
+      );
+    },
+    () => {},
+  );
+}
+
+function travelTo(d: Destination): void {
+  teleportFlash();
+  sound.click();
+  player.placeAt(d.x, d.z, d.facing);
+  d.then?.();
+}
+
+function openTravel(): void {
+  if (modalOpen()) return;
+  const urgent: Destination[] = [];
+  for (const desk of office.desks) {
+    const w = desk.worker;
+    const def = DESK_BY_ID.get(desk.id);
+    if (!w || !def || w.status !== "waiting") continue;
+    const at = deskSeat(def, 1.75);
+    urgent.push({
+      label: `${AGENT_LABELS[w.agent]} needs you`,
+      icon: "🔴",
+      sub: desk.label,
+      urgent: true,
+      x: at.x,
+      z: at.z,
+      facing: def.rotY + Math.PI,
+      then: () => openTerminal(desk.id),
+    });
+  }
+  const ready = office.presentations.filter((p) => p.report).length;
+  if (ready) {
+    urgent.push({
+      label: `Office hours · ${ready} ready`,
+      icon: "🎤",
+      urgent: true,
+      x: REVIEW_SPOT.x,
+      z: REVIEW_SPOT.z,
+      facing: 0,
+      then: () => startOfficeHours(),
+    });
+  }
+  const id = here === "floor" ? "desks" : here;
+  openTeleport([...urgent, ...placeDestinations(id)], travelTo);
+}
+
+function onMinigames(): void {
+  const ev = world.events;
+  if (ev.hoop === "score") {
+    hoopStreak++;
+    sound.xp();
+    if (hoopStreak >= 3) confetti(40);
+    hud.toast(hoopStreak > 1 ? `🏀 Swish! ${hoopStreak} in a row` : "🏀 Swish!");
+  } else if (ev.hoop === "miss") {
+    if (hoopStreak >= 2) hud.toast(`🏀 Streak over at ${hoopStreak}`);
+    hoopStreak = 0;
+  }
+  if (ev.goal) {
+    goals_ = { ...goals_, [ev.goal]: goals_[ev.goal] + 1 };
+    sound.gong();
+    confetti(70);
+    hud.toast(`⚽ GOOOAL! West ${goals_.east} – ${goals_.west} East`);
+  }
+  // Walking off the free-throw spot puts the ball down.
+  if (shotMeter.active && !atHoopSpot()) shotMeter.hide();
+}
+
+function atHoopSpot(): boolean {
+  const { x, z } = player.position;
+  return Math.hypot(x - HOOP.spot.x, z - HOOP.spot.z) < 1.7;
+}
+function nearArcade(): (typeof ARCADES)[number] | null {
+  const { x, z } = player.position;
+  return ARCADES.find((a) => {
+    const s = arcadeSpot(a);
+    return Math.hypot(x - s.x, z - s.z) < 0.85;
+  }) ?? null;
+}
+function nearCoffee(): boolean {
+  const { x, z } = player.position;
+  return Math.hypot(x - KITCHEN.coffeeSpot.x, z - KITCHEN.coffeeSpot.z) < 1.4;
+}
+function inStandupCircle(): boolean {
+  const { x, z } = player.position;
+  return Math.hypot(x - STANDUP.circle.x, z - STANDUP.circle.z) < STANDUP.circle.r + 0.6 || Math.hypot(x - STANDUP.spot.x, z - STANDUP.spot.z) < 1.2;
+}
+function onWorkPad(): boolean {
+  const { x, z } = player.position;
+  return Math.hypot(x - WORK_PAD.x, z - WORK_PAD.z) < WORK_PAD.r + 0.3;
+}
+function atElevator(): boolean {
+  const { x, z } = player.position;
+  return Math.abs(x - ELEVATOR.x) < 1.6 && z < FLOOR.minZ + ELEVATOR.depth + 1.6 && z > FLOOR.minZ;
+}
+
+/** E in the game room, kitchen, stand-up room, outside… Returns true if it did something. */
+function interactFun(): boolean {
+  const { x, z } = player.position;
+  const arcade = nearArcade();
+  if (arcade) {
+    openArcade(arcade.id, (_score, best) => {
+      const before = arcadeBest(arcade.id);
+      world.gameRoom.setBest(arcade.id, best);
+      if (best > 0 && best >= before) hud.toast(`🕹 ${arcade.name} best: ${best}`);
+    });
+    return true;
+  }
+  if (atHoopSpot()) {
+    if (shotMeter.active) {
+      const power = shotMeter.stop();
+      world.hoops.shoot(new THREE.Vector3(x, 1.75, z), power);
+    } else if (!world.hoops.busy) {
+      player.placeAt(x, z, Math.atan2(HOOP.rim.x - x, HOOP.rim.z - z));
+      shotMeter.start();
+    }
+    return true;
+  }
+  if (world.ball.near(x, z)) {
+    const d = player.lookDir;
+    world.ball.kick(d.x, d.z, 0.9);
+    sound.click();
+    return true;
+  }
+  if (nearCoffee()) {
+    player.boostFor(90_000);
+    sound.bell();
+    hud.toast("☕ Fresh coffee — you move 35% faster for 90 seconds");
+    return true;
+  }
+  if (onWorkPad()) {
+    travelTo({ label: "Work floor", icon: "🖥", ...SPAWN });
+    return true;
+  }
+  if (atElevator()) {
+    openTravel();
+    return true;
+  }
+  if (here === "standup" && inStandupCircle()) {
+    openStandupNow();
+    return true;
+  }
+  const board = world.ideaBoardAt(x, z);
+  if (board) {
+    openIdeas(board.id);
+    return true;
+  }
+  return false;
+}
+
+/** Where to float the E key: over whatever E would use right now (null: nothing). */
+function promptTarget(): { x: number; y: number; z: number } | null {
+  if (modalOpen()) return null;
+  const { x, z } = player.position;
+  const arcade = nearArcade();
+  if (arcade) return { x: arcade.x, y: 2.35, z: arcade.z };
+  if (atHoopSpot()) return { x: HOOP.rim.x, y: HOOP.rim.y + 0.7, z: HOOP.rim.z };
+  if (world.ball.near(x, z)) return { x: world.ball.position.x, y: 0.95, z: world.ball.position.z };
+  if (nearCoffee()) return { x: KITCHEN.coffee.x, y: 1.95, z: KITCHEN.coffee.z };
+  if (onWorkPad()) return { x: WORK_PAD.x, y: 1.4, z: WORK_PAD.z };
+  if (atElevator()) return { x: ELEVATOR.x, y: 2.9, z: FLOOR.minZ + ELEVATOR.depth + 0.1 };
+  // Low, over the circle: up at eye height it would sit on the big screen's text.
+  if (here === "standup" && inStandupCircle()) return { x: STANDUP.circle.x, y: 1.15, z: STANDUP.circle.z + 1.6 };
+  const board = world.ideaBoardAt(x, z);
+  if (board) return board.key;
+  if (world.inMyOffice(x, z) && world.nearReviewDesk(x, z)) return { x: REVIEW_SPOT.x, y: 1.7, z: REVIEW_SPOT.z + 0.9 };
+  const near = world.nearestDesk(x, z);
+  if (near && near.dist <= INTERACT_RADIUS) {
+    const def = DESK_BY_ID.get(near.id);
+    if (def) return { x: def.x, y: 1.75, z: def.z };
+  }
+  return null;
+}
+
+function hintFun(): string | null {
+  const arcade = nearArcade();
+  if (arcade) {
+    const best = arcadeBest(arcade.id);
+    return `<span class="title">🕹 ${arcade.name}</span> <span class="key">E</span> Play${best ? ` · best ${best}` : ""}`;
+  }
+  if (atHoopSpot()) {
+    return shotMeter.active
+      ? `<span class="title">🏀 Free throw</span> <span class="key">E</span> Shoot — stop in the green`
+      : `<span class="title">🏀 Free throw</span> <span class="key">E</span> Pick up the ball${hoopStreak ? ` · streak ${hoopStreak}` : ""}`;
+  }
+  const { x, z } = player.position;
+  if (world.ball.near(x, z)) return `<span class="title">⚽ Ball</span> <span class="key">E</span> Kick where you're looking · or just run into it`;
+  if (nearCoffee()) {
+    const left = Math.ceil(player.boosted / 1000);
+    return `<span class="title">☕ Coffee machine</span> <span class="key">E</span> ${left ? `Top up (${left}s left)` : "Grab a coffee · speed boost"}`;
+  }
+  if (onWorkPad()) return `<span class="title">🖥 Back to work</span> <span class="key">E</span> Jump to the work floor`;
+  if (atElevator()) return `<span class="title">🛗 Elevator</span> <span class="key">E</span> Fast travel`;
+  if (here === "standup" && inStandupCircle()) {
+    return progress.session
+      ? `<span class="title">☀️ Stand-up</span> <span class="key">E</span> See today's plan`
+      : `<span class="title">☀️ Stand-up</span> <span class="key">E</span> Start the day: goal, tone, intention`;
+  }
+  if (world.ideaBoardAt(x, z)) {
+    const open = ideas.filter((i) => i.status === "open").length;
+    return `<span class="title">💡 Idea board</span> <span class="key">E</span> Sketch an idea · hand it to a worker${open ? ` · ${open} pinned` : ""}`;
+  }
+  return null;
+}
+
+// --- interacting ---------------------------------------------------------------------------
 
 function interact(): void {
-  if (terminal.isOpen || hud.modalOpen || review.isOpen) return;
-  const near = world.nearestDesk(player.position.x, player.position.z);
+  if (modalOpen()) return;
+  world.hand.swing();
+  if (interactFun()) return;
+  const { x, z } = player.position;
+  if (world.inMyOffice(x, z) && world.nearReviewDesk(x, z)) {
+    startOfficeHours();
+    return;
+  }
+  const near = world.nearestDesk(x, z);
   if (!near || near.dist > INTERACT_RADIUS) return;
   const desk = deskById(near.id);
   if (!desk) return;
-  if (desk.worker) {
-    openTerminal(desk.id);
-  } else {
-    player.enabled = false;
-    hud.openHireMenu(
-      (agent) => {
-        hire(desk.id, agent);
-        player.enabled = true;
-      },
-      () => {
-        player.enabled = true;
-      },
-    );
+  if (desk.worker) openTerminal(desk.id);
+  else hire(desk);
+}
+
+function hintFor(): string | null {
+  if (modalOpen()) return null;
+  const fun = hintFun();
+  if (fun) return fun;
+  const work = hintWork();
+  if (work) return work;
+  if (!player.mouseCaptured) return `<span class="title">🎮 Click to play</span> <span class="key">Tab</span> frees the mouse`;
+  return null;
+}
+
+function hintWork(): string | null {
+  const { x, z } = player.position;
+  if (world.inMyOffice(x, z)) {
+    const ready = office.presentations.filter((p) => p.report).length;
+    if (world.nearReviewDesk(x, z)) {
+      return ready
+        ? `<span class="title">⭐ Your desk</span> <span class="key">E</span> Start office hours · ${ready} ready`
+        : `<span class="title">⭐ Your desk</span> Nobody ready yet · <span class="key">R</span> round up workers`;
+    }
+    return `<span class="title">⭐ Your office</span> Sit at your desk to hold reviews`;
   }
+  const near = world.nearestDesk(x, z);
+  if (near && near.dist <= INTERACT_RADIUS) {
+    const desk = deskById(near.id);
+    if (desk?.worker) {
+      return `<span class="title">${AGENT_LABELS[desk.worker.agent]}</span> <span class="cost">${desk.worker.activity}</span> <span class="key">E</span> Open terminal`;
+    }
+    if (desk) return `<span class="title">🪑 ${desk.label}</span> <span class="key">E</span> Hire a worker`;
+  }
+  return null;
 }
 
 window.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
-    if (terminal.isOpen) closeTerminal();
-    else if (review.isOpen) closeReview();
-    else if (hud.modalOpen) hud.cancelMenu();
+    // Nothing open to close: Esc pauses into the settings.
+    const justUnlocked = performance.now() - unlockedAt < 250;
+    if (!escapeModal() && !terminal.isOpen && !review.isOpen && !shotMeter.active && !justUnlocked) openSettingsNow();
+    else if (shotMeter.active) shotMeter.hide();
     return;
   }
-  const tag = (e.target as HTMLElement)?.tagName;
-  if (tag === "INPUT" || tag === "TEXTAREA") return;
+  // Ctrl frees a captured mouse, like Tab.
+  if (e.key === "Control" && player.mouseCaptured) {
+    player.unlock();
+    return;
+  }
+  if (review.key(e)) {
+    e.preventDefault();
+    return;
+  }
+  const el = e.target as HTMLElement | null;
+  if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
+  if (el?.closest?.(".xterm")) return;
+  if (modalOpen()) return;
   const key = e.key.toLowerCase();
   if (key === "e") interact();
-  else if (key === "o") enterOfficeHours();
+  else if (key === "o") startOfficeHours();
+  else if (key === "r") openRoundup();
+  else if (key === "g") openGoals();
+  else if (key === "f") openFocus();
+  else if (key === "h" || key === "?") hud.openHelp();
+  else if (key === "t") openTravel();
+  else if (key === "v") player.toggleView();
+  else if (key === "u") openStandupNow();
+  else if (key === "m") applySettings({ ...settings, minimap: !settings.minimap });
+  else if (key === "l") openLaptop();
+  else if (e.key === "Tab") {
+    e.preventDefault();
+    // Tab frees a captured mouse for the menus; with the mouse free it shows or hides the panel.
+    if (player.mouseCaptured) player.unlock();
+    else hud.togglePanel();
+  }
 });
 
 window.addEventListener("resize", () => world.resize());
+// With the mouse captured, a left click uses whatever you're at, like E.
+canvas.addEventListener("pointerdown", (e) => {
+  if (modalOpen() || !player.mouseCaptured || e.button !== 0) return;
+  interact();
+});
 
-// --- main loop --------------------------------------------------------------
+// --- main loop -------------------------------------------------------------------------------
 
 let lastPresence = 0;
 let last = performance.now();
@@ -222,25 +1458,27 @@ function frame(now: number): void {
   const dt = Math.min((now - last) / 1000, 0.05);
   last = now;
 
-  player.update(dt);
-  world.update(dt);
-
-  // Prompt text when near a desk.
-  if (!terminal.isOpen && !hud.modalOpen && !review.isOpen) {
-    const near = world.nearestDesk(player.position.x, player.position.z);
-    if (near && near.dist <= INTERACT_RADIUS) {
-      const desk = deskById(near.id);
-      if (desk?.worker) {
-        hud.setPrompt(`<kbd>E</kbd> open ${AGENT_LABELS[desk.worker.agent]}'s terminal`);
-      } else {
-        hud.setPrompt(`<kbd>E</kbd> hire a worker at this desk`);
-      }
-    } else {
-      hud.setPrompt(null);
-    }
+  // Windows can't be seen in the headset: close them and say so.
+  if (vr.presenting && modalOpen()) {
+    const title = document.querySelector(".modal h2")?.textContent ?? "A window";
+    escapeModal();
+    vr.notify(`🖥 ${title} opens on your monitor — try it after VR`);
   }
+  vr.update();
+  player.enabled = !modalOpen();
+  // A window opening hands the mouse back.
+  if (!player.enabled && player.mouseCaptured) player.unlock();
+  player.update(dt);
+  world.update(dt, player.velocity);
+  onMinigames();
+  shotMeter.update(dt);
+  world.hand.update(dt, player.speed, player.yawAngle, player.boosted > 0, settings.headBob);
+  here = minimap.update({ x: player.position.x, z: player.position.z, facing: player.facing }, world.workerSpots(), world.peerSpots()).id;
+  hud.setHint(hintFor());
+  // In VR an open panel is what you're using: no E key floating over it.
+  world.setPrompt(vr.presenting && vr.panel.open ? null : promptTarget());
+  sessionPill.update(progress);
 
-  // Throttled presence updates.
   if (joined && now - lastPresence > PRESENCE_INTERVAL) {
     const p = player.position;
     const f = player.facing;
@@ -253,26 +1491,51 @@ function frame(now: number): void {
     }
   }
 
-  // Open a freshly hired worker's terminal once it appears.
-  if (pendingOpen && deskById(pendingOpen)?.worker) {
-    const id = pendingOpen;
-    pendingOpen = null;
-    openTerminal(id);
-  }
-
   world.render();
-  requestAnimationFrame(frame);
 }
 
 function round(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-// --- boot --------------------------------------------------------------------
+// --- boot ------------------------------------------------------------------------------------
 
-hud.showJoin((name) => {
+// You arrive in the stand-up room: every session starts with a stand-up.
+player.placeAt(STANDUP.spot.x, STANDUP.spot.z, STANDUP.spot.facing);
+// Joining someone else's office over the local network needs its passcode first.
+net.onGiveUp = (reason) =>
+  showDisconnected(reason, async () => {
+    net.setPasscode(await askPasscode("Try the code again"));
+    net.connect();
+  });
+void (async () => {
+  if (needsPasscode()) net.setPasscode(await askPasscode());
+  net.connect();
+})();
+world.loop(frame);
+// The office is drawn by now: let the character picker show over it.
+requestAnimationFrame(() => document.getElementById("loading")?.classList.add("done"));
+void pickCharacter(myName, myLook).then(({ name, look }) => {
+  myName = name;
+  myLook = look;
+  save("domain.name.v2", name);
+  save("domain.look", look);
+  world.setMe(name, look);
+  refreshGame();
   joined = true;
-  net.send({ t: "join", name });
+  standupDue = true;
+  welcomeDue = !assistant.toured;
+  net.send({ t: "join", name, look });
 });
-net.connect();
-requestAnimationFrame(frame);
+
+// A handle for poking at the office from the console (and screenshot scripts) in dev builds.
+if (import.meta.env.DEV) {
+  (window as unknown as { domain: unknown }).domain = { world, player, vr, startOfficeHours, openLaptop, openTravel, openGoals, escapeModal, net, laptop, progress: () => progress, office: () => office };
+  (window as unknown as { __roomAt: unknown }).__roomAt = (x: number, z: number) => roomAt(x, z).id;
+}
+
+/** Your laptop (L): browser, workers' screens, the loop, decks, deploys. */
+function openLaptop(): void {
+  if (modalOpen()) return;
+  laptop.open();
+}

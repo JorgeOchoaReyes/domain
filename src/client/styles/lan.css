@@ -1,0 +1,50 @@
+/* ---------- Local multiplayer: invite, join, nearby ---------- */
+.modal.invite-modal { width: min(720px, 100%); }
+.lan-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 14px; }
+.lan-steps div { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 2px dashed #d9cfc0; border-radius: 12px; font-weight: 800; font-size: 13px; }
+.lan-steps span { width: 24px; height: 24px; border-radius: 50%; background: var(--ink); color: var(--paper); display: grid; place-items: center; font-size: 13px; flex: none; }
+.lan-h { margin: 6px 0 8px; font-size: 13px; font-weight: 900; text-transform: uppercase; letter-spacing: .04em; }
+.lan-roles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.lan-role { font: inherit; color: var(--ink); text-align: left; display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border: 3px solid var(--ink); border-radius: 16px; background: #fff; box-shadow: 0 4px 0 var(--ink); cursor: pointer; }
+.lan-role b { font-size: 16px; font-weight: 900; }
+.lan-role span { font-size: 12px; font-weight: 700; color: var(--muted); line-height: 1.35; }
+.lan-role .lr-icon { font-size: 26px; color: inherit; }
+.lan-role.on { background: #fff1e6; outline: 3px solid var(--accent); outline-offset: 1px; }
+.lan-role.teammate.on { background: #fff6dc; }
+.lan-role:active { transform: translateY(2px); box-shadow: 0 2px 0 var(--ink); }
+.lan-live { display: grid; grid-template-columns: 240px 1fr; gap: 14px; align-items: start; }
+.lan-code-box { border: 3px solid var(--ink); border-radius: 16px; background: #1b1d2e; color: #fff; padding: 12px; text-align: center; box-shadow: 0 4px 0 var(--ink); }
+.lan-code { font: 900 46px/1.1 ui-monospace, "Cascadia Mono", Consolas, monospace; letter-spacing: .12em; margin: 4px 0 10px; display: flex; justify-content: center; gap: 4px; }
+.lan-code i { width: 12px; }
+.lan-label { display: block; font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.lan-code-box .lan-label { color: #b9bbd6; }
+.lan-url { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+.lan-url code { flex: 1; font-size: 15px; font-weight: 800; background: #fff; border: 2px solid var(--ink); border-radius: 10px; padding: 6px 10px; overflow-wrap: anywhere; }
+.lan-guests { margin: 14px 0 6px; padding: 8px 12px; border-radius: 12px; background: var(--paper-2); font-weight: 800; font-size: 14px; }
+.lan-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 999px; background: #1b1d2e; color: #fff; font-size: 12px; font-weight: 900; border: 2px solid var(--ink); }
+.guest-badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 999px; font-size: 12px; font-weight: 900; border: 2px solid var(--ink); background: #e8f4ff; color: var(--ink); }
+.guest-badge.teammate { background: #fff1c4; }
+
+.join-screen { position: fixed; inset: 0; z-index: 200; display: grid; place-items: center; padding: 16px; background: radial-gradient(circle at 50% 30%, #fff8e6, #bfe3ff 70%); }
+.join-card { width: min(440px, 100%); text-align: center; background: var(--paper); border: 3px solid var(--ink); border-radius: 22px; box-shadow: 0 6px 0 var(--ink); padding: 26px 24px 20px; }
+.join-card h1 { margin: 6px 0 8px; font-size: 26px; font-weight: 900; }
+.join-card p { margin: 0 0 14px; font-weight: 700; color: var(--muted); line-height: 1.45; }
+.join-icon { font-size: 52px; }
+.join-form { display: flex; gap: 10px; justify-content: center; }
+.join-code { width: 200px; font: 900 32px ui-monospace, "Cascadia Mono", Consolas, monospace; letter-spacing: .3em; text-align: center; border: 3px solid var(--ink); border-radius: 14px; padding: 8px 10px; background: #fff; color: var(--ink); outline: none; }
+.join-code:focus { border-color: var(--accent); }
+.join-error { min-height: 1.2em; margin: 10px 0 6px !important; color: var(--bad) !important; font-weight: 900 !important; }
+.join-hint { font-size: 12px; }
+.join-card.shake { animation: join-shake .35s ease; }
+@keyframes join-shake { 25% { transform: translateX(-8px); } 50% { transform: translateX(8px); } 75% { transform: translateX(-4px); } }
+
+.modal.nearby-modal { width: min(560px, 100%); }
+.nb-list { list-style: none; margin: 10px 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.nb-office { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 3px solid var(--ink); border-radius: 14px; background: #fff; box-shadow: 0 3px 0 var(--ink); }
+.nb-icon { font-size: 26px; }
+.nb-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.nb-main span { font-size: 12px; font-weight: 700; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nb-empty { padding: 12px; border: 2px dashed #d9cfc0; border-radius: 12px; font-weight: 700; font-size: 13px; color: var(--muted); line-height: 1.5; }
+.nb-form { display: flex; gap: 8px; }
+.nb-form input { flex: 1; }
+@media (max-width: 640px) { .lan-roles, .lan-live, .lan-steps { grid-template-columns: 1fr; } }

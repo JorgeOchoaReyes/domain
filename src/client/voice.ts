@@ -36,16 +36,53 @@ function voiceFor(agent: AgentKind): SpeechSynthesisVoice | null {
   return pool[idx % pool.length] ?? pool[0];
 }
 
+/** The voices this browser can speak with (English first), for picking a character's voice. */
+export function listVoices(): { name: string; lang: string }[] {
+  if (ttsSupported() && !voiceList.length) loadVoices();
+  const en = (v: SpeechSynthesisVoice) => (v.lang.toLowerCase().startsWith("en") ? 0 : 1);
+  return [...voiceList].sort((a, b) => en(a) - en(b) || a.name.localeCompare(b.name)).map((v) => ({ name: v.name, lang: v.lang }));
+}
+
 export function ttsSupported(): boolean {
   return typeof speechSynthesis !== "undefined";
 }
 
-/** Speak text in an agent's voice, cancelling anything already speaking. */
-export function speak(text: string, agent: AgentKind): void {
-  if (!ttsSupported() || !text.trim()) return;
+/**
+ * Speak text in an agent's voice — or a character's own, by voice name —
+ * cancelling anything already speaking. `onEnd` runs when it finishes (not
+ * when it is cancelled).
+ */
+export function speak(text: string, agent: AgentKind, onEnd?: () => void, voiceName = ""): void {
+  if (!ttsSupported() || !text.trim()) {
+    if (onEnd) setTimeout(onEnd, 1500);
+    return;
+  }
+  current = null;
   speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
-  const v = voiceFor(agent);
+  if (onEnd) {
+    // Some engines never fire onend (or have no voices at all), so a timer
+    // sized to the text backs it up. Whichever comes first wins.
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(backup);
+      onEnd();
+    };
+    const backup = setTimeout(() => {
+      if (current === u) finish();
+    }, 2500 + text.split(/\s+/).length * 420);
+    u.onend = () => {
+      if (current === u) finish();
+    };
+    u.onerror = () => {
+      settled = true;
+      clearTimeout(backup);
+    };
+  }
+  current = u;
+  const v = (voiceName && voiceList.find((x) => x.name === voiceName)) || voiceFor(agent);
   if (v) u.voice = v;
   u.pitch = AGENT_PITCH[agent] ?? 1;
   u.rate = 1.02;
@@ -53,8 +90,12 @@ export function speak(text: string, agent: AgentKind): void {
 }
 
 export function stopSpeaking(): void {
+  current = null;
   if (ttsSupported()) speechSynthesis.cancel();
 }
+
+/** The utterance speaking now; a cancelled one stops counting. */
+let current: SpeechSynthesisUtterance | null = null;
 
 // --- speech to text (dictation) ---------------------------------------------
 
@@ -82,7 +123,7 @@ interface SpeechRecognitionLike {
   abort(): void;
   onresult: ((e: SpeechRecognitionEventLike) => void) | null;
   onend: (() => void) | null;
-  onerror: ((e: unknown) => void) | null;
+  onerror: ((e: { error?: string }) => void) | null;
 }
 type SpeechRecognitionCtor = new () => SpeechRecognitionLike;
 
@@ -110,6 +151,8 @@ export class Dictation {
   constructor(
     private onText: (text: string) => void,
     private onStop: () => void,
+    /** Why it failed, e.g. "network" (no speech service) or "not-allowed" (no mic). */
+    private onError: (error: string) => void = () => {},
   ) {}
 
   get isActive(): boolean {
@@ -134,7 +177,11 @@ export class Dictation {
       }
       this.onText((this.finalText + interim).trim());
     };
-    rec.onerror = () => this.stop();
+    rec.onerror = (e) => {
+      const err = e?.error ?? "error";
+      if (err !== "no-speech" && err !== "aborted") this.onError(err);
+      this.stop();
+    };
     rec.onend = () => {
       if (this.active) {
         this.active = false;

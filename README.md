@@ -1,159 +1,614 @@
 # domain
 
-**A 3D room where you walk up to desks and put coding agents to work.**
+**A 3D office where you put coding agents to work — and turn real progress into a game.**
 
-`domain` is a small multiplayer office you share with your coding agents. Walk
-your avatar around a room, step up to an empty desk, and hire a worker — Claude
-Code, Codex, OpenCode or Gemini. Each worker's live terminal glows on the laptop
-in front of its desk; open it and type. A worker that needs a decision lights a
-red beacon over its desk so you can't miss it.
+![The work floor: workers at their desks, the quest tracker, the session timer and the minimap](docs/screenshots/work-floor.jpg)
 
-> This is an early foundation, but the terminals are **real**: each worker runs
-> in an actual pseudo-terminal on your machine (via `@lydell/node-pty`) that
-> launches the agent's CLI in your project directory. If an agent's CLI isn't
-> installed, you still get a real local shell. When no terminal backend is
-> available at all, it falls back to a **simulated** worker so the app always
-> runs. It ships both as a web app and as a native **desktop app** (Electron).
+Walk around a cartoon office, sit a worker at a desk — Claude Code, Codex,
+OpenCode or Gemini CLI, on the model you choose, local ones included — and hand
+it a task. Each worker runs in a real terminal on your machine, on its own git
+branch, and its live screen glows on the laptop in front of it. When you want
+to see how everyone's doing, **round them up**: they stop to put together a
+progress report, get checked by your tests, line up outside **your office** and
+come in one at a time to present a slide deck, out loud. Approve the work and it
+merges into your branch; send it back and your notes go straight into its CLI.
 
-## Stack
+It's built to make work fun without faking it: every session starts with a
+**stand-up**, every goal moves through one loop — plan, build, review, ship — and
+XP, levels, streaks and achievements only come from things that actually move
+the work forward. While the workers grind, there's a game room, a kitchen and a
+whole campus to walk around in. Got an idea? Sketch it on a whiteboard and hand
+it to a worker. Got a headset? Step in with **VR**.
 
-- **Client** — TypeScript + [Three.js](https://threejs.org) for the 3D room,
-  [xterm.js](https://xtermjs.org) for terminals, bundled with
-  [Vite](https://vitejs.dev).
-- **Server** — Node + [`ws`](https://github.com/websockets/ws). Holds the
-  authoritative office state and streams terminal output to everyone connected.
-- **Shared** — one typed message protocol (`src/shared/protocol.ts`) compiled
-  into both sides.
+## Get started
 
-## Run it
+### What you need
+
+- **Node.js 20+** (it brings npm, which installs the agents) and **git**.
+- **An agent CLI**: [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
+  (`claude`), [Codex](https://github.com/openai/codex) (`codex`),
+  [OpenCode](https://opencode.ai) (`opencode`) or
+  [Gemini CLI](https://github.com/google-gemini/gemini-cli) (`gemini`). Don't
+  have one? The office installs it for you: the hire card shows **⬇ Install**
+  next to any that's missing (it runs `npm install -g …`, with the output in
+  Logs), and Pip offers Claude Code on your first visit. Sign in to it the way
+  you normally would the first time it runs. No agents at all? Try
+  [simulate mode](#try-it-without-any-agents).
+- Optional: [Ollama](https://ollama.com) or [LM Studio](https://lmstudio.ai)
+  for [local models](#agents-and-models).
+- Windows, macOS or Linux.
+
+### Install the app
+
+**Windows:** build the installer once and run it —
 
 ```bash
+git clone <this repo> domain && cd domain
 npm install
-npm run dev
+npm run dist          # → release/domain-setup-0.1.0.exe
 ```
 
-This starts the game server on `:8787` and the Vite dev server on `:5173`. Open
-**http://localhost:5173**, pick a name, and you're in the room. Open a second
-tab to see presence and shared terminals working across clients.
+Double-click `release/domain-setup-0.1.0.exe`: it installs for you (no admin
+rights needed), adds **domain** to the Start menu and the desktop, and opens
+it. `npm run dist` builds a `.dmg` on macOS and an `.AppImage` on Linux the same
+way. The installer isn't code-signed yet, so Windows SmartScreen may ask you to
+confirm (**More info → Run anyway**).
 
-### Production build
+### Or run it from the source
 
 ```bash
-npm run build   # client -> dist/client, server -> dist/server
-npm start        # serves the built client and the WebSocket on :8787
+git clone <this repo> domain && cd domain
+npm install
+npm run electron
 ```
 
-Then open **http://localhost:8787**.
+That's it — the office opens. Only one office runs at a time (opening it again
+brings the window forward), and if something else already uses port 8787 it
+picks a free port by itself. Your workers work in the folder you started it
+from. (Started from a shortcut instead, it makes a workspace of its own in
+`Documents/domain/workspace`, ready for git.) To put them on a different
+project, **File → Open project folder… (Ctrl+O)**.
 
-### Desktop app (Electron)
+### Your first five minutes
 
-Run the whole thing as a native window. This starts the embedded server (which
-spawns the real local terminals) and opens the office in an Electron window:
+1. **Pick your character** and walk in. **Pip**, your assistant, says hi and
+   offers a two-minute **guided tour** of the office — take it.
+2. **Hold the stand-up**: set today's goal (or start from a template), pick a
+   **tone** for the session, say what would make it a win, choose a length,
+   **Start the day**.
+3. **Click the view** to play (the mouse hides and steers; **Tab** frees it).
+   Press **T → Work floor**, walk to a desk with a green **+** and press **E**
+   to **hire** a worker — pick the agent and its model.
+4. Open **Goals** (**G**): no tasks yet? **Plan with a worker** and its checklist
+   appears on its own. Hand out a task — the **assignment card** sets the model,
+   a time budget, plan-first and what "done" means.
+5. Watch it work on its laptop, or on yours (**L**) — or go play in the
+   **game room** (**T**); you'll get a shout when a worker needs you.
+6. **Round up** (**R**) and hold **office hours** (**O**): each worker presents,
+   you approve it (it merges into your branch) or send back changes.
+7. When every task is done, **Ship it**.
+
+The **goal card** under your player card always shows the goal, how far
+along it is, where it is in the loop and the one next step — click it to do
+that step. **Pip** (bottom left) speaks up when something needs you: a worker
+waiting on your answer, work ready to review, the session about to end. Click
+Pip any time to ask what's next, take the tour again, or have Pip **walk you
+through** something — *start a focus session*, *put a worker on a task*, *ship a
+pull request*, *hand off an idea*. Each is a short checklist that ticks itself
+off as you go, with a button on every step that does it for you.
+
+![Pip, your assistant, offering the tour](docs/screenshots/pip.jpg)
+
+### Try it without any agents
 
 ```bash
-npm run electron        # build everything, then launch the desktop app
-npm run electron:dev    # dev: Vite hot reload inside the Electron window
+DOMAIN_SIMULATE=1 npm run dev        # http://localhost:5173 — scripted workers that plan, present and talk back
 ```
 
-The server only ever listens on `127.0.0.1`, so the office — and the terminals
-it can spawn — are reachable from your machine alone.
+### Other ways to run it
 
-## Real agents vs. simulated
+```bash
+npm run dev           # browser, hot reload: server on :8787, client on http://localhost:5173
+npm run electron:dev  # desktop app with hot reload
+npm run build && npm start   # production server: http://localhost:8787
+```
 
-Each worker is a real pseudo-terminal spawned in your project directory:
+In the browser (or `npm run dev`), workers use the folder the server starts in,
+or `DOMAIN_CWD=/path/to/project`.
 
-- If the agent's CLI is on your `PATH` (`claude`, `codex`, `opencode`,
-  `gemini`), hiring that agent **launches it** in the terminal.
-- If it isn't installed, you still get a real local **shell** at that desk.
-- If the native terminal backend can't load (unusual platform), or you set
-  `DOMAIN_SIMULATE=1`, the desk runs a **simulated** worker instead.
+## A look around
 
-Useful environment variables:
+| | |
+| :-: | :-: |
+| ![The stand-up that opens every session](docs/screenshots/standup.jpg) **Stand-up** — goal, tone, intention, length | ![Handing out a task](docs/screenshots/assign-card.jpg) **Assignment card** — who, model, time budget, plan first, done means |
+| ![A worker presenting in office hours](docs/screenshots/review.jpg) **Office hours** — checked by your tests, read aloud, approve or send back | ![Your laptop](docs/screenshots/laptop.jpg) **Your laptop** — browser, workers' terminals, the loop, decks, deploys |
+| ![The game room](docs/screenshots/game-room.jpg) **Game room** — arcades, hoops, ping-pong, live work monitors | ![First person](docs/screenshots/first-person.jpg) **First person** — with your hand (and a coffee) |
+| ![The campus outside](docs/screenshots/outside.jpg) **Outside** — plaza, fountain, pitch, street; real-time day and night | ![Team policy](docs/screenshots/team-policy.jpg) **Team policy** — models, leash, time budgets, branches and checks |
+| ![The idea board](docs/screenshots/idea-board.jpg) **Idea board** — sketch it, then hand it to a worker or make it a goal | ![Drawing on a whiteboard in VR](docs/screenshots/vr-drawing.jpg) **VR** — draw on the whiteboards with your controller |
 
-| Variable           | Does                                                        |
-| ------------------ | ----------------------------------------------------------- |
-| `PORT`             | Server port (default `8787`).                               |
-| `HOST`             | Bind address (default `127.0.0.1`).                         |
-| `DOMAIN_CWD`       | Directory real terminals start in (default the server cwd). |
-| `DOMAIN_SIMULATE`  | `1` forces simulated workers (no real terminals).           |
+## Agents and models
+
+Every worker is a real agent CLI running in a real terminal. You pick its
+**model** when you hire it and per task; **Team policy** (🛠) lists the models
+each agent offers.
+
+| Agent | Command | Model flag | “Go ahead” leash |
+| --- | --- | --- | --- |
+| Claude Code | `claude` | `--model opus` / `sonnet` / `haiku` / a full name | `--permission-mode acceptEdits` |
+| Codex | `codex` | `--model <name>` | `--sandbox workspace-write --ask-for-approval on-request` |
+| Gemini CLI | `gemini` | `--model <name>` | `--approval-mode auto_edit` |
+| OpenCode | `opencode` | `--model <provider>/<model>` (any provider it's set up for) | its own prompts |
+
+Claude Code switches models mid-session (`/model`), keeping its context; the
+other CLIs pick a model at launch, so a worker restarts on a new one.
+
+### Local models
+
+Yes. If **Ollama** (or **LM Studio**) is running, domain finds its models and
+offers them in **Team policy** with one click (`ollama/<model>`,
+`lmstudio/<model>`):
+
+- **Codex** runs them through its open-source provider:
+  `codex --oss --local-provider ollama --model <model>`.
+- **OpenCode** takes `ollama/<model>` once Ollama is set up as a provider in
+  OpenCode's own config.
+
+Agents work through tool calls, so only models that support them are offered
+(Ollama's `llama3`, for one, doesn't, so it's left out). A model that can't
+“think”, like `llama3.1`, runs in Codex with reasoning off
+(`-c model_reasoning_effort=none`), since Codex otherwise asks every model to
+reason. Local models still vary a lot: pick one built for agentic coding, and
+big enough for it — and mind your memory with the large ones.
+
+## The office
+
+- **Desk pods** on the west side. A green **+** marks a free desk: press **E**
+  there to hire. Each worker's card says what it's doing, its task's clock and
+  model, and its antenna light shows its status (yellow working, red needs you,
+  purple presenting).
+- **Boards** along the north wall: **Workers**, **Up next** (the line for your
+  office) and **Goals**.
+- **The lounge** round the TV, which counts down the focus session.
+- **⭐ Your office**, the glass room in the south-east corner: a presentation
+  screen, a podium, your desk and the review board. The line forms outside its
+  door.
+
+Through the doors in the south wall, a **hallway** leads to the rest of the
+building:
+
+- **☀️ The stand-up room**, where every visit starts. Its big screen shows the
+  session's tone and intention, where the goal is in the loop, and the team.
+- **☕ The kitchen**: grab a coffee (**E** at the machine) and you move 35%
+  faster for 90 seconds — you'll see the cup in your hand.
+- **🕹 The game room**, for while your workers grind: three arcade cabinets
+  (*Snake*, *Bug Smash*, *Brick Breaker*, best scores kept), free throws at the
+  hoop (time the power meter), ping-pong and beanbags. Two screens keep the
+  workers and the goal in view, and the glowing pad by the door jumps you
+  straight back to the work floor.
+- **🛎 The lobby**, whose sliding front doors open onto **the grounds**: a plaza
+  and fountain, a five-a-side pitch with a ball you can dribble and kick, picnic
+  tables, a street. Walk all the way round the building; the sky follows your
+  real time of day.
+
+Press **T** anywhere to **fast travel** — the work floor, your office, any
+room, outside, or straight to a worker that needs you. When a worker needs you
+while you're away, you get a shout wherever you are. The **minimap** (bottom
+right, **M** to hide) shows the rooms, the workers by status and the people
+here; click it to travel. A floating **E** marks whatever you can use.
+
+![Fast travel](docs/screenshots/fast-travel.jpg)
+
+## The loop: goal → plan → build → review → ship
+
+Fun is the wrapper; the point is that real work gets done. Every goal moves
+through one loop, and there's always exactly one obvious next step.
+
+1. **☀️ Stand-up** (**U**, and automatically when you arrive): pick today's goal
+   or set a new one — **🛠 build** something or **📚 research** a question —
+   **set the tone** (🚀 Ship it, 🧘 Deep focus, 🧪 Explore, 🐛 Bug hunt), say what
+   would make the session a win, and pick a length. It starts a focus session;
+   the tone tints the office light.
+2. **🧠 Plan**: no tasks yet? *Plan with a worker* briefs one to break the goal
+   into a checklist; the tasks appear on their own. Or type them yourself.
+3. **⌨️ Build / 🔎 Research**: hand out tasks; each worker is briefed in its own
+   terminal with the goal, the task, its time budget and what "done" means.
+4. **🎤 Review**: round them up (**R**), hold office hours (**O**), approve or
+   send back changes. Approved tasks check themselves off.
+5. **🚀 Ship**: when every task is done —
+   - *build goals* run your configured deploy command (shown before it runs,
+     output streamed to your laptop's Deploy app). If it fails, one click hands
+     the log to a worker to fix. With no deploy command, a worker opens a PR,
+     or you mark it shipped yourself.
+   - *research goals* end in a **slide deck** the workers write as they go.
+     Present it, or download it as **.pptx** or Markdown.
+
+Manual overrides are always there — tick a task, re-plan, mark shipped — so
+nothing gets stuck. Each goal's files live in `.domain/goals/<id>/`
+(`plan.md`, `deck.md`, `shipped.md`, `deploy.log`).
+
+### 🛠 Running your team
+
+- **Hiring**: pick the agent, the **model** it starts on, and its **leash** —
+  *ask before edits*, or *go ahead* (see [Agents and models](#agents-and-models)).
+- **Handing out a task** opens the **assignment card**: who does it, which
+  **model**, a **time budget** (15–90 min, or none) and what happens when it runs
+  out (*nudge it to wrap up*, or *stop and present*), **plan first** (it presents
+  a plan in your office; you approve it, then it builds), and the task's own
+  **definition of done**.
+- **Team policy** (🛠 in the Goals window, the hire menu or the card): the
+  defaults everything starts from, shared by everyone in the office and saved
+  with your progress.
+
+### 🌿 Own branches and a check before review
+
+- **Own branch per worker** (on by default in a git repo): each hire works in
+  its own git worktree under `.domain/worktrees/`, on its own branch
+  (`domain/<agent>-<desk>-…`), so parallel workers never touch the same files.
+  `.domain/` is kept out of `git status` through `.git/info/exclude`. A desk
+  reuses its folder (`.domain/worktrees/desk-1`), so an agent that asks whether
+  to trust its folder asks once per desk — the desk shows *needs you* until you
+  answer in its terminal, and briefs wait.
+- **Your dependencies come along**: a worktree only has what git tracks, so each
+  one links to your checkout's installed `node_modules` (and `.venv`) wherever
+  git ignores them — the check runs with your project's own tools, and the links
+  are taken out before a folder is removed (your installs are never touched).
+- **Commits are yours**: the merge when you approve, and anything the office
+  commits for a worker, use your git name and email — so GitHub (and anything
+  that checks authors, like Vercel) sees your account.
+- **Approving finished work merges it**: whatever the worker left uncommitted
+  is committed on its branch, then merged into the branch you're on. If it
+  conflicts, nothing lands — the work goes back to the worker to merge your
+  branch in and resolve. If your checkout has uncommitted changes, the merge
+  waits and you're told. (Or set the policy to leave work on its branch.)
+- **Before each new task** the worker's branch catches up with yours.
+- **A worker that leaves** has its folder removed; a branch with work that never
+  reached yours is kept.
+- **A check before review**: set `"check"` in `domain.config.json` (or
+  `DOMAIN_CHECK_CMD`). It runs in the worker's folder when it presents finished
+  work. If it fails, the work goes
+  straight back with the output (up to 2 tries) so you only review work that
+  passes; the review shows ✅ passed, or ❌ failed with the log and *Approve anyway*.
+
+Nothing is pushed while workers work: every git step is local until you ship
+(a pull request pushes `domain/<goal>`).
+
+### 💻 Your laptop (L)
+
+A laptop in your hands, anywhere: a **Browser** showing the app your workers
+are building (your preview URL, or any local dev server it finds), **Workers**
+with each one's live terminal, the **Loop** for your goal, **Decks** for
+research goals, and the **Deploy** console.
+
+## Run the office (🏢)
+
+The **🏢 Office** button holds everything about running the office itself.
+
+![The Office menu](docs/screenshots/office-menu.jpg)
+
+### Projects and GitHub
+
+Which project your workers are on, the ones you've opened before, and
+GitHub — without pasting tokens.
+
+- **Recent projects**: switch in a click (the app restarts on it).
+- **Open a folder**: the native folder picker, or paste a path.
+- **Start from GitHub**: **Sign in with GitHub** uses git's own sign-in (Git
+  Credential Manager opens the browser once; domain never stores your token),
+  then pick one of your repos or paste `owner/repo` / a URL. It's cloned into
+  `Documents/domain/projects/`, with the clone's progress shown live, and the
+  office opens on it.
+- **Ship as a pull request**: on a GitHub project, a finished goal's next step
+  is **Open a pull request** — the work is pushed to `domain/<goal>` and a PR
+  opens against the default branch, with the goal, its tasks and the session's
+  intention. Its checks are followed and shown on the goal.
+- **GitHub issues → tasks**: import open issues into a goal from the Goals window.
+
+![Projects and GitHub](docs/screenshots/projects.jpg)
+
+### Your team
+
+Workers with names, faces and personalities you set once and hire again and
+again. A **character** keeps its agent, model and leash, a **persona** (standing
+instructions added to every task it gets — e.g. *“Write or update tests first,
+keep commits small”*), a **voice** for its presentations, its **look** (color,
+face, hat, accessory) and its **MCP tools**. Make one from the hire window
+(**＋ New character**) or Office → Your team; its name shows over its desk, in
+the panels and when it presents. **Quick hire** still gives you a plain worker.
+
+| | |
+| :-: | :-: |
+| ![Hiring from your team](docs/screenshots/your-team.jpg) | ![The character editor](docs/screenshots/character-editor.jpg) |
+
+### MCP tools
+
+MCP servers are tools your workers can use — read files, browse the web, work
+with GitHub, drive a browser. Add one once (presets: Filesystem, Fetch,
+Playwright, GitHub, Context7, Memory — or any command or URL), then give it to
+**everyone** or to the characters you pick. Each worker gets them for its own
+session only — your agents' own settings are never changed:
+
+| Agent | How it's given the servers |
+| --- | --- |
+| Claude Code | `--mcp-config .domain/mcp/<desk>/claude.json` |
+| Codex | a profile file `~/.codex/domain-…-<desk>.config.toml` and `-p` |
+| Gemini CLI | `GEMINI_CLI_SYSTEM_SETTINGS_PATH` |
+| OpenCode | `OPENCODE_CONFIG` |
+
+The window also lists the servers your agents **already load** from their own
+configs, and a health check shows each one's tools, *needs sign-in*, or the
+error. Secret values (tokens, headers) never leave the server or show in logs.
+
+![MCP tools](docs/screenshots/mcp.jpg)
+
+### Invite people (local multiplayer)
+
+Work together on the same Wi-Fi. **Invite people** opens your office to your
+local network with a **6-digit passcode** and shows the address to open (e.g.
+`http://192.168.1.23:8788`); people can also find it under **Join a nearby
+office** in their own domain app. Choose what guests can do:
+
+- **👀 Visitors** walk around, watch the workers and their screens, and see the
+  goals. They can't change anything.
+- **🤝 Teammates** also hire workers, hand out tasks, review and ship — and they
+  can type into workers' terminals, **which run on your computer**, so only
+  invite people you trust.
+
+Some things stay with you whatever the role: your GitHub sign-in and repos,
+switching projects, MCP tools, and sharing itself. Wrong codes are rate-limited,
+guests never see the code, and **Stop sharing** disconnects everyone.
+
+> First time you share, Windows asks to allow domain on networks — allow
+> **Private networks** (or add an inbound rule for the port in Windows Defender
+> Firewall). Discovery uses UDP 8790; some networks block it, but typing the
+> address always works. Guest Wi-Fi with "client isolation" blocks joining.
+
+| | |
+| :-: | :-: |
+| ![Invite people](docs/screenshots/invite.jpg) | ![Joining with the passcode](docs/screenshots/join.jpg) |
+
+### Logs
+
+Every git, GitHub, MCP, check and deploy step the office runs for you — with
+its icon, the command, its output and any link — in **Office → Logs**, and
+inline wherever it happened (a clone, a ship, an MCP check).
+
+![Logs](docs/screenshots/logs.jpg)
+
+## Make work a game
+
+- **🎯 Goals** (**G**): set a goal and break it into tasks; finish every task and
+  the goal ships 🚀. The **Goals board** on the wall tracks the one you're on.
+- **⏱ Focus sessions** (**F**, or the stand-up): a 25, 50 or 90-minute sprint for
+  the whole office. When it runs out, everyone here earns XP and keeps their
+  daily 🔥 streak; you get a summary of what got done.
+- **XP and levels**: hiring, planning, assigning, reviewing and above all
+  finishing tasks (+50), shipping (+150), goals (+250) and sessions (+4/min).
+  Climb from *Intern* to *Founder*. Click your card for stats, **achievements**
+  and the office **leaderboard**.
+- **Juice**: the gong rings when work ships, confetti for level-ups and shipped
+  goals, footsteps, an activity feed of everyone's progress.
+
+Progress is saved to `.domain/progress.json` in your project. Scores follow
+your name.
+
+## Reviews (office hours)
+
+1. **Round up** (📣, or **R**): call everyone, or tick the ones you want. Each
+   stops to prepare a short progress report and lines up outside your office.
+2. **Office hours** (🎤, or **O**, or **E** at your desk): the first worker
+   whose report is ready (and has passed your check) presents: a slide deck, read
+   aloud in its own voice and mirrored on the big screen. Flip slides with ← →.
+3. **Talk to it.** Hit **🎤 Talk** and speak (or type): your words go into that
+   worker's CLI, and its answer comes back as speech.
+4. **The review board.** Draw on it; the sketch goes to the worker with your
+   feedback.
+5. **Decide.** **Approve** (merges its branch), **Send changes**, or **Later**.
+
+Voice uses the browser's free Web Speech API — no keys, no costs. Dictation
+needs Chrome or Edge (in the desktop app it depends on the speech service being
+reachable — if it isn't, open http://127.0.0.1:8787 in Chrome, or type).
+
+## Idea boards
+
+The whiteboard on wheels on the work floor and the one in the stand-up room are
+**idea boards**. Walk up and press **E** (or 🏢 Office → **Idea board**):
+
+- **Sketch it** with the markers, give it a name and a few notes (or dictate
+  them with 🎤). Lines in the notes that start with `-` become tasks.
+- **📌 Pin it** — it goes up on both boards as a sticky note with your sketch,
+  for everyone in the office to see.
+- **🤝 Hand it over** to a worker — it becomes a task on the goal in focus (or a
+  new goal), and the worker is briefed with your notes and the path to the
+  sketch (saved in `.domain/ideas/`) so it can open it and look.
+- **🎯 Make it a goal** — its first line is the why, its `-` lines the tasks;
+  when those tasks go out, their briefs carry the idea and sketch too.
+
+Pinned ideas are listed under the board, coloured by where they went (on the
+board, with a worker, a goal). Visitors on your network can read them; teammates
+can pin and hand off too.
+
+![An idea handed to a worker, on the board](docs/screenshots/idea-board-floor.jpg)
+
+## VR
+
+With a headset, **🥽 VR** appears in the dock. Click it and you're standing in
+the office:
+
+| Controller | Does |
+| --- | --- |
+| Left stick | Walk the way you're looking |
+| Right stick | Snap-turn 30° |
+| Trigger | Press what the laser points at — a panel's button, or **draw on an idea board** · pointed at nothing, it's **E** |
+| A / X | **E**: use what's in front of you |
+| B / Y | The menu: travel, office hours, round everyone up, leave VR |
+| Hold a grip | **Talk** — to a worker at its desk (typed into its terminal), in a review (your question or the changes you want), or at an idea board (its name) |
+
+Windows become floating panels in VR: a worker's status with ⏎/Esc keys and
+"call it in to present"; hiring at an empty desk; **office hours** with the
+slides on the big screen, read aloud, and Back / Next / Ask / Approve / Send
+changes / Later; and the idea board, where you draw with your laser and pin it
+or hand it to a worker. Anything else that would open a window tells you it's
+waiting on your monitor. Toasts float in front of you.
+
+![Office hours in VR](docs/screenshots/vr-review.jpg)
+
+**What you need.** VR uses WebXR, so open the office in **Chrome or Edge** on
+the computer running it — http://127.0.0.1:8787 — with a PC headset connected
+(SteamVR, Windows Mixed Reality, or a Quest over Link / Air Link). The desktop
+app usually won't offer it (Electron's WebXR support isn't official) — use the
+browser. A Quest's own
+browser over Wi-Fi isn't supported yet: WebXR needs HTTPS off localhost.
+
+**No headset?** Run `npm run dev` and open http://localhost:5173/?vr — it
+emulates a Quest 3 (dev builds only) so you can try VR in the browser.
+
+## How agents take part
+
+Real agents follow a small file contract, written to `.domain/BRIEF.md` in your
+project when the office starts. Each worker's terminal has these set:
+
+| Variable             | What it's for                                              |
+| -------------------- | ---------------------------------------------------------- |
+| `DOMAIN_DESK`        | The worker's desk id.                                      |
+| `DOMAIN_REPORT_FILE` | Write a report here (JSON) to present it.                  |
+| `DOMAIN_REPLY_FILE`  | Write `{"say": "...", "at": <ms>}` here to answer out loud. |
+
+A report (`status` is `ready`, `blocked`, or `plan` for a plan to approve):
+
+```json
+{
+  "status": "ready",
+  "title": "Login page is in",
+  "summary": "One paragraph, read aloud as the worker presents.",
+  "slides": ["Added the form and validation", "Wired it to the session API", "Tests pass"],
+  "question": "Only when blocked: the decision it needs.",
+  "preview": { "url": "http://localhost:3000" },
+  "at": 1700000000000
+}
+```
+
+Tasks, round-ups, what you say in a review and your decisions all arrive in the
+worker's terminal as its next instruction, so any agent CLI that reads its
+prompt can take part. If an agent's CLI isn't installed, its desk gets a real
+local shell instead.
+
+## Configuration
+
+`domain.config.json` in your project (every key optional):
+
+```json
+{
+  "preview": "http://localhost:5173",
+  "deploy": "npm run deploy",
+  "check": "npm test",
+  "team": {
+    "models": { "claude": ["opus", "sonnet", "haiku"], "codex": ["ollama/qwen3-coder"] },
+    "defaultModel": { "claude": "sonnet" },
+    "leash": "ask",
+    "minutes": 30,
+    "onTimeUp": "wrapup",
+    "planFirst": false,
+    "done": ["It does what the task says", "Tests pass", "Nothing unrelated changed"],
+    "isolate": true,
+    "merge": "auto",
+    "gate": "fix"
+  }
+}
+```
+
+| Key | Does |
+| --- | --- |
+| `preview` | The URL your laptop's browser opens. |
+| `deploy` | The command **Ship it** runs (only ever this command). |
+| `check` | The command run on finished work before you review it. |
+| `team` | Starting defaults for Team policy (it's edited in game after that). |
+
+Environment variables:
+
+| Variable | Does |
+| --- | --- |
+| `DOMAIN_CWD` | The project folder workers work in (default: where you start it). |
+| `DOMAIN_SIMULATE` | `1` runs scripted workers instead of real terminals. |
+| `DOMAIN_PREVIEW_URL`, `DOMAIN_DEPLOY_CMD`, `DOMAIN_CHECK_CMD` | Override the config file. |
+| `DOMAIN_PROJECTS_DIR` | Where GitHub clones go (default `Documents/domain/projects`). |
+| `DOMAIN_PREFS` | Where recent projects are kept (default `~/.domain/prefs.json`). |
+| `DOMAIN_GITHUB_API` | The GitHub API base (for GitHub Enterprise). |
+| `OLLAMA_HOST`, `LMSTUDIO_URL` | Where to look for local models. |
+| `PORT`, `HOST` | Server port (`8787`) and bind address (`127.0.0.1`). |
 
 > **Security:** anyone who can reach the server can run commands on the host as
-> you (that's the point of a local agent office). Keep it on `127.0.0.1`. Do not
-> expose it with `--host 0.0.0.0` on an untrusted network.
+> you — that's what an agent office is. It listens on `127.0.0.1` only, and the
+> WebSocket refuses pages served from anywhere else (and DNS-rebinding hosts),
+> so other websites open in your browser can't drive it. Don't expose it with
+> `HOST=0.0.0.0` on a network you don't trust.
 
 ## Controls
 
-| Key / action        | Does                                       |
-| ------------------- | ------------------------------------------ |
-| `W` `A` `S` `D`     | Walk (relative to the camera)              |
-| Drag                | Orbit the camera                           |
-| Scroll              | Zoom                                       |
-| `E`                 | Interact with the nearest desk             |
-| `O`                 | Hold office hours (review who's presenting)|
-| `Esc`               | Close a terminal, menu, or review          |
-
-Walk to an empty desk and press `E` to hire a worker; walk to a staffed desk and
-press `E` to open its terminal. Inside a terminal, **Send home** frees the desk.
-
-## Presentations & voice review
-
-Agents don't narrate their terminal at you. Instead, when a worker finishes a
-chunk of work (or gets blocked), it **writes a report** and walks into your
-office to line up and present.
-
-- **Report contract.** A worker drops a JSON file at `$DOMAIN_REPORT_FILE`
-  (i.e. `.domain/reports/<desk>.json`). The server watches that folder, turns
-  the file into a presentation, and sends the worker to the stage. See the
-  auto-generated `.domain/BRIEF.md` for the schema the agent follows.
-- **Office hours.** Press `O` and the agent at the podium presents: its summary
-  is **read aloud** (a distinct browser voice per agent), with its slides and an
-  optional live preview on screen.
-- **Voice or text feedback.** Hit 🎤 to dictate (browser speech-to-text) or just
-  type. **Approve ▸ continue** lets it carry on; **Send changes** pushes your
-  feedback straight back into the agent's session as its next instruction. Then
-  the next presenter in line steps up.
-
-All of this uses the **free, browser-native** Web Speech API (so it works out of
-the box in the Electron app); no API keys, no per-minute costs.
-
-> The simulated worker exercises this whole loop on its own — hire one, type a
-> task, and it will line up to present. Real agents follow the `.domain/BRIEF.md`
-> contract (you may need to point your agent at it in its first instruction).
+| Key / action  | Does |
+| ------------- | --- |
+| Click         | Capture the mouse to play: it hides and steers the view; click again to use things |
+| `Tab` · `Ctrl`| Free the mouse for the menus |
+| `W A S D`     | Walk where you're looking · `Shift` run · `Space` jump |
+| Scroll        | Zoom — all the way in for first person, out again for third |
+| `V`           | Switch first / third person (also in Settings) |
+| `E`           | Use whatever the floating **E** marks: hire, terminal, office hours, the idea boards, coffee, arcades, hoops, the ball, the elevator |
+| `T`           | Fast travel |
+| `U`           | Stand-up |
+| `G`           | Goals |
+| `L`           | Your laptop |
+| `F`           | Start a focus session |
+| `R`           | Round up workers for a review |
+| `O`           | Office hours: the next one in line presents |
+| `M`           | Show or hide the minimap |
+| `← →`         | Flip slides in a presentation |
+| `H`           | Controls |
+| `Esc`         | Close a window · with nothing open, **Settings**: view, walk speed, sprint, mouse sensitivity, field of view, **graphics** (High / Balanced / Fast — it lowers itself if the game runs slow), hand, head bob, minimap, day and night, sound (`Ctrl+[` sends Esc to a terminal) |
 
 ## Layout
 
 ```
 src/
-  shared/protocol.ts     typed client/server messages + office state
+  shared/
+    protocol.ts          typed client/server messages + office state
+    layout.ts            the floor plan: building, rooms, grounds, routes, camera walls
+    progress.ts          goals, sessions, XP, levels, achievements, the loop's stages
+    policy.ts            team policy and task briefs (models, leash, time, done)
   server/
-    index.ts             http static server + WebSocket layer
-    office.ts            authoritative room state (desks, workers, line, peers)
-    workerSession.ts     IWorkerSession interface + backend factory + PATH lookup
+    index.ts             static server + WebSocket (local-only), the loop's wiring
+    office.ts            desks, workers, the line, reviews, task briefs
+    workerSession.ts     worker backends + agent launch commands (model, leash)
     ptyWorker.ts         real local terminal (node-pty) running the agent CLI
-    worker.ts            simulated agent session (fallback; drives the demo loop)
-    reports.ts           watches .domain/reports for agent presentation files
+    worker.ts            simulated worker
+    workspace.ts         a git worktree and branch per worker; merges
+    projects.ts          projects, cloning, GitHub sign-in, PRs, issues (with github.ts, prefs.ts)
+    team.ts              your team's characters
+    mcp.ts               MCP: scan agents' configs, health checks, per-worker servers
+    lan.ts               local multiplayer: the passcode listener, discovery
+    ideas.ts             the idea boards: pinned ideas, sketches, hand-offs
+    agents.ts            which agent CLIs are installed; installing a missing one
+    oplog.ts             the operations log
+    permissions.ts       what guests may do
+    checks.ts            the check run before review
+    loop.ts              config, plans, decks, deploys, local model discovery
+    reports.ts           watches report and reply files; writes BRIEF.md
+    progress.ts          keeps score; saved to .domain/
   client/
-    main.ts              glue: loop, interaction, networking, office hours
-    net.ts               reconnecting WebSocket client
-    voice.ts             browser text-to-speech + speech-to-text (Web Speech API)
-    scene/world.ts       toon-shaded scene: room, stage, desks, avatars, peers
-    scene/player.ts      WASD movement + orbit camera
-    ui/hud.ts            join screen, prompts, hire menu
-    ui/terminal.ts       xterm overlay
-    ui/review.ts         office-hours presentation + voice/text feedback panel
+    main.ts              glue: networking, interaction, the game loop
+    scene/               world, player, office, rooms, game room, minigames, hand, characters, boards
+    ui/                  HUD, stand-up, goals, assignment card, team policy, review, laptop,
+                         decks, arcade, fast travel, minimap, goal card, settings, Pip,
+                         projects, team, MCP, invite/join, logs, icons, idea board, sketchpad
+    vr/                  VR: the WebXR session and controllers, floating panels, what you do in VR
 electron/
-  main.ts                desktop shell: starts the server, opens a native window
+  main.ts                desktop shell: picks the project, starts the server, opens a window
+build/                   the app icon (for the installer)
+docs/screenshots/        the pictures in this README
 ```
 
-## Roadmap ideas
+## Credits
 
-- ~~Real PTY + agent CLI~~ ✓ · ~~desktop (Electron) app~~ ✓
-- ~~Presentations: agents report at a checkpoint and present in your office~~ ✓
-- ~~Voice: spoken presentations + dictated feedback~~ ✓
-- Auto-brief real agents with the report contract on hire (no manual pointer).
-- Worker status detection from real terminals (working / waiting-on-you).
-- Auto-launch & embed the project's dev server as a live preview wall.
-- GitHub issue/PR boards on the walls; a shared whiteboard; alternate rooms.
+The office's look and floor plan are inspired by
+[Agent Office](https://github.com/AgentSystemLabs/agent-office) (MIT).
 
 ## License
 

@@ -1,0 +1,77 @@
+/* The game room: arcade cabinets in a window, and the hoops power meter. */
+
+.modal.arcade-modal {
+  width: min(560px, 100%);
+  background: #14112e;
+  border-color: #0b0a1a;
+  box-shadow: 0 6px 0 #0b0a1a, 0 0 40px rgba(255, 79, 216, 0.35);
+}
+.modal.arcade-modal header { background: #1b1838; border-bottom-color: #0b0a1a; color: #fff; }
+.modal.arcade-modal header .btn.close { background: #2a2552; color: #fff; }
+.modal.arcade-modal .body { padding: 14px; }
+
+.arcade { --neon: var(--accent); display: flex; flex-direction: column; gap: 10px; }
+.arc-bar {
+  display: flex;
+  justify-content: space-between;
+  font: 900 15px var(--font);
+  letter-spacing: 0.08em;
+  color: #c9c6e8;
+}
+.arc-bar b { color: #fff; text-shadow: 0 0 8px var(--neon); margin-left: 6px; }
+.arc-best b { color: var(--warn); text-shadow: 0 0 8px var(--warn); }
+.arc-screen {
+  position: relative;
+  border: 3px solid var(--neon);
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 0 18px var(--neon), inset 0 0 24px rgba(0, 0, 0, 0.6);
+  background: #0b0a1a;
+}
+.arc-screen canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1 / 1;
+  max-height: calc(100vh - 210px);
+  margin: 0 auto;
+  object-fit: contain;
+  cursor: crosshair;
+  touch-action: none;
+}
+.arc-help { font: 700 12px var(--font); color: #9d98c9; text-align: center; min-height: 16px; }
+
+/* --- the shot meter --------------------------------------------------------- */
+
+.shot-meter {
+  position: absolute;
+  left: 50%;
+  bottom: 96px;
+  transform: translateX(-50%);
+  width: min(360px, calc(100vw - 32px));
+  padding: 10px 14px 12px;
+  background: var(--paper);
+  border: 3px solid var(--ink);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  font-family: var(--font);
+  z-index: 6;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+.shot-meter.hidden { display: none; }
+.shot-meter .sm-label { font-weight: 900; font-size: 14px; text-align: center; margin-bottom: 8px; color: var(--ink); }
+.shot-meter .sm-track {
+  position: relative;
+  height: 18px;
+  border: 3px solid var(--ink);
+  border-radius: 10px;
+  background: #e9ecef;
+  overflow: hidden;
+}
+.shot-meter .sm-sweet { position: absolute; top: 0; bottom: 0; background: var(--good); opacity: 0.55; }
+.shot-meter .sm-fill { position: absolute; left: 0; top: 0; bottom: 0; background: linear-gradient(90deg, var(--info), var(--warn) 70%, var(--bad)); opacity: 0.55; }
+.shot-meter .sm-needle { position: absolute; top: -2px; bottom: -2px; width: 4px; margin-left: -2px; background: var(--ink); }
+.shot-meter.frozen.good { border-color: var(--good); }
+.shot-meter.frozen.good .sm-label { color: #059b74; }
+.shot-meter.frozen.bad .sm-label { color: var(--bad); }

@@ -1,34 +1,32 @@
 import { watch, type FSWatcher } from "node:fs";
 import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync } from "node:fs";
 import { join, basename } from "node:path";
-import { coerceReport, type Report } from "../shared/protocol.js";
 
 /**
- * Watches `<cwd>/.domain/reports/` for report files an agent drops when it
- * reaches a checkpoint. Each file is named `<deskId>.json`. When one appears
- * or changes, it is parsed and handed to the callback with its desk id.
+ * Watches a folder for JSON files agents drop, one per desk, named
+ * `<deskId>.json`: their reports in `.domain/reports/` and what they say back
+ * during a review in `.domain/replies/`. When a file appears or changes it is
+ * parsed with `coerce` and, if it is newer than the last one (its `at`
+ * advanced), handed to the callback with its desk id.
  *
  * Uses fs.watch with a short polling backstop, since fs.watch misses events on
  * some platforms/filesystems. Reads are debounced per desk so a half-written
  * file is not parsed mid-write.
  */
-export class ReportWatcher {
-  readonly dir: string;
+export class DropWatcher<T extends { at: number }> {
   private watcher: FSWatcher | null = null;
   private poll: NodeJS.Timeout | null = null;
   private debounce = new Map<string, NodeJS.Timeout>();
-  private seen = new Map<string, number>(); // deskId -> last report `at`
-  private onReport: (deskId: string, report: Report) => void;
+  private seen = new Map<string, number>(); // deskId -> last `at`
 
-  constructor(cwd: string, onReport: (deskId: string, report: Report) => void) {
-    this.dir = join(cwd, ".domain", "reports");
-    this.onReport = onReport;
-  }
+  constructor(
+    readonly dir: string,
+    private coerce: (raw: unknown) => T | null,
+    private onItem: (deskId: string, item: T) => void,
+  ) {}
 
   start(): void {
     mkdirSync(this.dir, { recursive: true });
-    this.writeBrief();
-
     try {
       this.watcher = watch(this.dir, (_event, filename) => {
         if (filename) this.queue(basename(filename.toString()));
@@ -36,7 +34,6 @@ export class ReportWatcher {
     } catch {
       this.watcher = null; // fall back to polling only
     }
-
     // Backstop: rescan every 2s in case a watch event was missed.
     this.poll = setInterval(() => this.scan(), 2000);
     this.poll.unref?.();
@@ -50,7 +47,7 @@ export class ReportWatcher {
     this.debounce.clear();
   }
 
-  /** Forget a desk's last-seen report (called when a worker is sent home). */
+  /** Forget a desk's last-seen file (called when a worker is sent home). */
   forget(deskId: string): void {
     this.seen.delete(deskId);
   }
@@ -86,35 +83,41 @@ export class ReportWatcher {
     } catch {
       return; // not valid JSON yet (mid-write) — a later event will retry
     }
-    const report = coerceReport(parsed);
-    if (!report) return;
-    // Only fire when the report is new (its `at` advanced).
+    const item = this.coerce(parsed);
+    if (!item) return;
     const last = this.seen.get(deskId);
-    if (last !== undefined && report.at <= last) return;
-    this.seen.set(deskId, report.at);
-    this.onReport(deskId, report);
+    if (last !== undefined && item.at <= last) return;
+    this.seen.set(deskId, item.at);
+    this.onItem(deskId, item);
   }
+}
 
-  private writeBrief(): void {
-    const briefPath = join(this.dir, "..", "BRIEF.md");
-    if (existsSync(briefPath)) return;
-    const brief = `# How to report in domain
+/**
+ * Write `.domain/BRIEF.md`, the contract a real agent follows to present its
+ * work and to talk back during a review. Rewritten on every start so it
+ * tracks the office's current contract.
+ */
+export function writeBrief(domainDir: string): void {
+  const brief = `# Working in domain
 
-You are a worker in **domain**, a 3D office. When you finish a chunk of work, or
-you get blocked and need a decision, present it to your manager by writing a
-single JSON file:
+You are a worker in **domain**, a 3D office. Your manager reviews your work in
+their office: you present a short slide deck, they give feedback by voice or on
+a whiteboard, and you can talk back.
 
-- Path: the value of \`$DOMAIN_REPORT_FILE\` (also \`$DOMAIN_REPORTS/$DOMAIN_DESK.json\`).
-- Overwrite it each time you have something new to present. Bump \`at\` so the
-  office notices it is a new report.
+## 1. Present your work
 
-Schema:
+When you finish a chunk of work, get blocked, or your manager rounds everyone
+up for a review, write a single JSON file:
+
+- Path: \`$DOMAIN_REPORT_FILE\` (also \`$DOMAIN_REPORTS/$DOMAIN_DESK.json\`).
+- Overwrite it each time you have something new, and bump \`at\` so the office
+  notices.
 
 \`\`\`json
 {
   "status": "ready",            // "ready" = done & reviewable, "blocked" = need a decision
   "title": "Short headline",
-  "summary": "One paragraph, read aloud at the presentation.",
+  "summary": "One paragraph, read aloud as you present.",
   "slides": ["Key point 1", "Key point 2", "Key point 3"],
   "question": "Only when blocked: the decision you need.",
   "preview": { "url": "http://localhost:3000" },
@@ -122,13 +125,32 @@ Schema:
 }
 \`\`\`
 
-After you write the file, keep your session open: your manager will send back
-feedback (approval to continue, or changes to make) as your next instruction.
+Each slide is one short point (3 to 6 slides works best); they are shown one
+at a time on the big screen while your summary is read aloud.
+
+## 2. Talk back during your review
+
+While you present, your manager may speak to you. Their words arrive as your
+next instruction, starting with \`[Office hours]\`. Answer out loud by writing:
+
+- Path: \`$DOMAIN_REPLY_FILE\` (also \`.domain/replies/$DOMAIN_DESK.json\`).
+
+\`\`\`json
+{ "say": "What you want to say back, in a sentence or two.", "at": 1700000000000 }
+\`\`\`
+
+It is read aloud in your voice. Bump \`at\` for every reply.
+
+## 3. Feedback
+
+When the review ends you get either an approval to continue or the changes to
+make as your next instruction. A whiteboard sketch, if your manager drew one,
+is saved as an image and its path is included — open it.
 `;
-    try {
-      writeFileSync(briefPath, brief);
-    } catch {
-      /* best effort */
-    }
+  try {
+    mkdirSync(domainDir, { recursive: true });
+    writeFileSync(join(domainDir, "BRIEF.md"), brief);
+  } catch {
+    /* best effort */
   }
 }

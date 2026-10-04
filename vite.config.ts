@@ -10,6 +10,13 @@ export default defineConfig({
   build: {
     outDir: "../../dist/client",
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        // three.js and xterm change rarely: their own chunks cache across releases.
+        manualChunks: { three: ["three"], xterm: ["@xterm/xterm", "@xterm/addon-fit", "@xterm/headless"] },
+      },
+    },
+    chunkSizeWarningLimit: 800,
   },
   server: {
     port: 5173,

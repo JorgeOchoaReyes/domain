@@ -1,0 +1,46 @@
+/* ---------- MCP servers ---------- */
+.modal.mcp-modal { width: min(900px, 100%); height: min(780px, calc(100vh - 32px)); }
+.mcp-intro { display: flex; gap: 12px; align-items: flex-start; padding: 10px 14px; border: 3px solid var(--ink); border-radius: 14px; background: #eef3ff; margin-bottom: 14px; }
+.mcp-intro p { margin: 0; font-size: 13px; font-weight: 700; line-height: 1.45; }
+.mcp-intro-icon { color: #4c6ef5; flex: none; }
+.mcp-sec { margin-bottom: 16px; }
+.mcp-sec h4 { margin: 0 0 8px; font-size: 13px; font-weight: 900; text-transform: uppercase; letter-spacing: .04em; display: flex; align-items: center; gap: 6px; }
+.mcp-sec .opt, .mcp-form .opt { text-transform: none; letter-spacing: 0; font-weight: 700; color: var(--muted); font-size: 12px; }
+.mcp-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.mcp-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 2px solid var(--ink); border-radius: 12px; background: #fff; }
+.mcp-item.off { opacity: .6; }
+.mcp-ic { display: inline-flex; color: var(--muted); }
+.mcp-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.mcp-main b { font-size: 14px; }
+.mcp-main code { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mcp-main small { font-size: 11px; color: var(--muted); font-weight: 700; }
+.mcp-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 900; padding: 2px 8px; border-radius: 999px; border: 2px solid var(--ink); white-space: nowrap; max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+.mcp-badge.ok { background: #c9f5e6; }
+.mcp-badge.auth { background: #ffe8a8; }
+.mcp-badge.error { background: #ffd6e0; }
+.mcp-badge.checking { background: #cde7ff; }
+.mcp-badge.unknown { background: #f1ede6; color: var(--muted); border-color: #d9d2c5; }
+.mcp-toggle { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 800; white-space: nowrap; cursor: pointer; }
+.mcp-toggle input { accent-color: var(--accent); }
+.mcp-empty { margin: 0; font-size: 13px; font-weight: 700; color: var(--muted); padding: 8px 10px; border: 2px dashed #d9d2c5; border-radius: 12px; }
+.mcp-presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; }
+.mcp-preset { font: inherit; color: var(--ink); text-align: left; display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border: 3px solid var(--ink); border-radius: 12px; background: #fff; box-shadow: 0 3px 0 var(--ink); cursor: pointer; }
+.mcp-preset span { font-size: 11px; font-weight: 700; color: var(--muted); }
+.mcp-preset i { font-style: normal; font-size: 11px; font-weight: 800; color: #b07800; display: inline-flex; gap: 4px; align-items: center; }
+.mcp-preset.custom { border-style: dashed; }
+.mcp-form { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 3px solid var(--ink); border-radius: 14px; background: var(--paper-2); }
+.mcp-form label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 800; margin: 0; }
+.mcp-form input[type=text], .mcp-form input[type=password], .mcp-form textarea { font: inherit; font-size: 13px; border: 2px solid var(--ink); border-radius: 10px; padding: 6px 9px; background: #fff; color: var(--ink); }
+.mcp-form .seg button { font: 800 13px var(--font); border: 3px solid var(--ink); border-radius: 12px; background: #fff; padding: 5px 10px; cursor: pointer; box-shadow: 0 2px 0 var(--ink); color: var(--ink); display: inline-flex; gap: 6px; align-items: center; }
+.mcp-form .seg button.on { background: var(--ink); color: var(--paper); }
+.f-env-head { font-size: 13px; font-weight: 800; }
+.f-env { display: flex; flex-direction: column; gap: 6px; }
+.f-env-row { display: grid; grid-template-columns: 180px 1fr auto; gap: 6px; }
+.f-opts { display: flex; gap: 12px; align-items: center; }
+.f-opts .grow { flex: 1; }
+.mcp-need { margin: 0; font-size: 12px; font-weight: 800; color: #8a5a00; display: flex; gap: 6px; align-items: center; }
+.mcp-error { margin: 0; color: var(--bad); font-size: 12px; font-weight: 800; }
+.mcp-error:empty { display: none; }
+.mcp-agent { margin-bottom: 10px; }
+.mcp-agent-head { display: flex; align-items: center; gap: 6px; font-weight: 900; font-size: 13px; margin-bottom: 6px; }
+.mcp-agent-head .dot { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--ink); }

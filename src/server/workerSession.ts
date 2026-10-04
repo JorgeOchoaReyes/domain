@@ -4,6 +4,7 @@ import type { AgentKind, Report, WorkerStatus } from "../shared/protocol.js";
 import { AGENT_LABELS } from "../shared/protocol.js";
 import { SimulatedWorker } from "./worker.js";
 import { PtyWorker, ptyAvailable } from "./ptyWorker.js";
+import { isModelName, type Leash } from "../shared/policy.js";
 
 /**
  * The contract every worker session fulfils, whether it is a real local
@@ -20,6 +21,12 @@ export interface IWorkerSession {
   getActivity(): string;
   getScrollback(): string;
   write(data: string): void;
+  /**
+   * Type something on the office's behalf (a brief, a review): held until the
+   * agent's screen is up and nothing is waiting on you, so it isn't lost in a
+   * startup prompt. Backends without one just write.
+   */
+  send?(data: string): void;
   resize(cols: number, rows: number): void;
   dispose(): void;
   /**
@@ -28,6 +35,18 @@ export interface IWorkerSession {
    * this is optional.
    */
   onReport?(listener: (report: Report) => void): () => void;
+  /**
+   * The simulated worker acts out a round-up and talking back itself. Real
+   * terminal workers have none of these: the office types the instruction
+   * into their CLI instead, and they answer through reply files.
+   */
+  summon?(): void;
+  /** Start on a task from a goal (the simulated worker just gets to work). */
+  assign?(title: string, planFirst?: boolean): void;
+  tell?(text: string): void;
+  /** Act out a one-off job (plan, ship…) and call `done` at the end — simulated workers only. */
+  act?(activity: string, steps: string[], done: () => void): void;
+  onSay?(listener: (text: string) => void): () => void;
 }
 
 export interface CreateWorkerOptions {
@@ -35,10 +54,20 @@ export interface CreateWorkerOptions {
   cwd: string;
   /** Force the scripted stub even when a terminal backend is available. */
   simulate: boolean;
+  /** The model to launch the CLI on ("" = its default). */
+  model?: string;
+  /** How much it may do without asking. */
+  leash?: Leash;
+  /** More arguments for the agent's command line (already safe to type into a shell). */
+  extraArgs?: string[];
+  /** More environment for the agent. */
+  env?: Record<string, string>;
   /** The desk this worker sits at — names its report file. */
   deskId: string;
   /** Absolute path of the directory where report files are watched. */
   reportsDir: string;
+  /** Absolute path of the directory where reply files are watched. */
+  repliesDir: string;
 }
 
 /** The CLI command each agent kind launches when a real terminal is used. */
@@ -48,6 +77,49 @@ const AGENT_COMMAND: Record<AgentKind, string> = {
   opencode: "opencode",
   gemini: "gemini",
 };
+
+/** Local model servers Codex can run on with `--oss`: `ollama/<model>` or `lmstudio/<model>`. */
+const LOCAL_PROVIDERS = ["ollama", "lmstudio"] as const;
+
+/**
+ * The command line that starts an agent's CLI on a model and leash. Only flags
+ * each CLI documents in its --help are used; a model name is validated before
+ * it goes on a command line typed into a real shell.
+ *
+ * - Claude Code: `--model <alias|name>`; "auto" = `--permission-mode acceptEdits`.
+ * - Codex: `--model <name>`, or a local model (`ollama/<m>`, `lmstudio/<m>`)
+ *   via `--oss --local-provider <p> --model <m>`; "auto" =
+ *   `--sandbox workspace-write --ask-for-approval on-request` (edits in the
+ *   project, asks before anything outside it).
+ * - Gemini CLI: `--model <name>`; "auto" = `--approval-mode auto_edit`.
+ * - OpenCode: `--model <provider/model>` (any provider it's configured for,
+ *   local ones included); its own prompts decide edits.
+ */
+/**
+ * Local models that can't "think": Codex asks every model to reason, and these
+ * refuse ("does not support thinking"), so they run with reasoning off. Filled
+ * in by detectLocalModels from what Ollama says each model can do.
+ */
+export const LOCAL_NO_THINKING = new Set<string>();
+
+export function launchCommand(agent: AgentKind, model = "", leash: Leash = "ask", extraArgs: string[] = []): string {
+  const parts = [AGENT_COMMAND[agent]];
+  if (model && isModelName(model)) {
+    const [provider, ...rest] = model.split("/");
+    const local = agent === "codex" && rest.length > 0 && (LOCAL_PROVIDERS as readonly string[]).includes(provider);
+    if (local) {
+      parts.push("--oss", "--local-provider", provider, "--model", rest.join("/"));
+      if (LOCAL_NO_THINKING.has(model)) parts.push("-c", "model_reasoning_effort=none");
+    } else parts.push("--model", model);
+  }
+  if (leash === "auto") {
+    if (agent === "claude") parts.push("--permission-mode", "acceptEdits");
+    else if (agent === "codex") parts.push("--sandbox", "workspace-write", "--ask-for-approval", "on-request");
+    else if (agent === "gemini") parts.push("--approval-mode", "auto_edit");
+  }
+  parts.push(...extraArgs);
+  return parts.join(" ");
+}
 
 /**
  * Pick a worker backend for a desk. Prefers a real local terminal; falls back
@@ -65,10 +137,12 @@ export function createWorker(agent: AgentKind, opts: CreateWorkerOptions): IWork
     cwd: opts.cwd,
     // Launch the agent CLI if it is on PATH; otherwise hand over a plain shell
     // with a note, which is still a real local terminal.
-    launch: found ? command : null,
+    launch: found ? launchCommand(agent, opts.model ?? "", opts.leash ?? "ask", opts.extraArgs ?? []) : null,
+    env: opts.env,
     missingLabel: found ? null : AGENT_LABELS[agent],
     deskId: opts.deskId,
     reportsDir: opts.reportsDir,
+    repliesDir: opts.repliesDir,
   });
 }
 
@@ -76,6 +150,11 @@ export function createWorker(agent: AgentKind, opts: CreateWorkerOptions): IWork
  * Look up an executable on PATH without spawning anything. Returns the full
  * path, or null if not found. Handles Windows' PATHEXT extensions.
  */
+/** Whether an agent's CLI is on your PATH. */
+export function agentInstalled(agent: AgentKind): boolean {
+  return findOnPath(AGENT_COMMAND[agent]) !== null;
+}
+
 export function findOnPath(command: string): string | null {
   const pathVar = process.env.PATH ?? "";
   const dirs = pathVar.split(delimiter).filter(Boolean);

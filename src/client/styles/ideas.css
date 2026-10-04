@@ -1,0 +1,40 @@
+/* ---------- Idea boards ---------- */
+.modal.ideas-modal { width: min(1180px, 100%); height: min(860px, calc(100vh - 32px)); }
+.ideas { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(280px, 1fr); grid-template-rows: auto 1fr; gap: 14px; min-height: 0; }
+.idea-draw { grid-column: 1; grid-row: 1; }
+.idea-words { grid-column: 2; grid-row: 1; display: flex; flex-direction: column; gap: 10px; }
+.idea-pinned { grid-column: 1 / -1; grid-row: 2; min-height: 0; }
+.idea-words label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 900; margin: 0; }
+.idea-words .opt { font-weight: 700; color: var(--muted); font-size: 12px; }
+.idea-words input[type=text], .idea-words textarea, .idea-who { font: inherit; font-size: 14px; border: 2px solid var(--ink); border-radius: 10px; padding: 7px 10px; background: #fff; color: var(--ink); }
+.idea-words textarea { flex: 1; resize: vertical; min-height: 96px; }
+.idea-words .seg { display: flex; gap: 6px; }
+.idea-words .seg button { font: 800 13px var(--font); border: 3px solid var(--ink); border-radius: 12px; background: #fff; padding: 5px 10px; cursor: pointer; box-shadow: 0 2px 0 var(--ink); color: var(--ink); }
+.idea-words .seg button.on { background: var(--ink); color: var(--paper); }
+.idea-go { display: flex; flex-direction: column; gap: 8px; }
+.idea-hand { display: flex; gap: 6px; }
+.idea-who { flex: 1; min-width: 0; padding: 6px 8px; }
+.idea-error { margin: 0; color: var(--bad); font-size: 12px; font-weight: 800; }
+.idea-error:empty { display: none; }
+.idea-help { margin: 0; font-size: 12px; font-weight: 700; color: var(--muted); line-height: 1.4; }
+.idea-pinned h4 { margin: 0 0 8px; font-size: 13px; font-weight: 900; text-transform: uppercase; letter-spacing: .04em; }
+.idea-count { color: var(--muted); }
+.idea-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 8px; }
+.idea-card { display: flex; gap: 10px; align-items: center; padding: 8px; border: 2px solid var(--ink); border-radius: 12px; background: #fffbe0; }
+.idea-card.handed { background: #e3f8ef; }
+.idea-card.goal { background: #eef3ff; }
+.idea-card img, .idea-nothumb { width: 96px; height: 54px; border-radius: 6px; border: 2px solid var(--ink); background: #fbfdff; object-fit: cover; flex: none; }
+.idea-nothumb { display: grid; place-items: center; font-size: 24px; }
+.idea-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.idea-main b { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.idea-main small { font-size: 12px; color: var(--muted); font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.idea-chip { font-size: 11px; font-weight: 800; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.idea-acts { display: flex; flex-direction: column; gap: 4px; }
+.idea-empty { grid-column: 1 / -1; font-size: 13px; font-weight: 700; color: var(--muted); padding: 10px; border: 2px dashed #d9d2c5; border-radius: 12px; }
+/* Visitors see what's pinned, not the pens. */
+.ideas.read-only .idea-words, .ideas.read-only .idea-draw { display: none; }
+.ideas.read-only .idea-pinned { grid-row: 1; }
+@media (max-width: 820px) {
+  .ideas { grid-template-columns: 1fr; grid-template-rows: auto auto auto; }
+  .idea-draw, .idea-words, .idea-pinned { grid-column: 1; grid-row: auto; }
+}
