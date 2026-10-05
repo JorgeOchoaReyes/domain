@@ -1,3 +1,4 @@
+import { copyAll, copyOnSelect } from "./termcopy.js";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
@@ -57,6 +58,7 @@ export class TerminalOverlay {
         selectionBackground: "#585b70",
       },
     });
+    copyOnSelect(term);
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(this.host);
@@ -117,22 +119,7 @@ export class TerminalOverlay {
     // Copy: the selection if there is one, else everything in the terminal.
     const copy = this.modal.footer!.querySelector<HTMLButtonElement>(".term-copy")!;
     copy.addEventListener("click", () => {
-      const t = this.term;
-      if (!t) return;
-      let text = t.getSelection();
-      if (!text) {
-        const b = t.buffer.active;
-        const lines: string[] = [];
-        for (let i = 0; i < b.length; i++) lines.push(b.getLine(i)?.translateToString(true) ?? "");
-        text = lines.join("\n").replace(/\n+$/, "\n");
-      }
-      void navigator.clipboard.writeText(text).then(
-        () => {
-          copy.textContent = "✅ Copied";
-          setTimeout(() => (copy.textContent = "📋 Copy"), 1500);
-        },
-        () => (copy.textContent = "Couldn't copy"),
-      );
+      if (this.term) copyAll(this.term);
     });
     this.setStatus(status);
     this.term!.reset();

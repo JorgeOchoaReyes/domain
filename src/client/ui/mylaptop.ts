@@ -1,3 +1,4 @@
+import { copyAll, copyOnSelect } from "./termcopy.js";
 import { TEAM_THREAD, type ChatThread } from "../../shared/chat.js";
 import { UPDATE_ASK } from "./chat.js";
 import { micButton, wireMic } from "../voice.js";
@@ -504,7 +505,8 @@ export class MyLaptop {
       : `<p class="lt-note">No workers yet. Hire one at a desk with a <b>+</b>.</p>`;
     const head = this.content.querySelector<HTMLElement>(".wk-head");
     const d = staffed.find((x) => x.id === this.watching);
-    if (head) head.innerHTML = d ? `<b>${esc(workerName(d.worker!))}</b> · ${esc(d.label)} · hired by ${esc(d.worker!.hiredBy)} <span class="grow"></span><span class="lt-note">Type to talk to it · Ctrl+[ sends Esc</span>` : "";
+    if (head) head.innerHTML = d ? `<b>${esc(workerName(d.worker!))}</b> · ${esc(d.label)} · hired by ${esc(d.worker!.hiredBy)} <span class="grow"></span><span class="lt-note">Type to talk to it · select to copy · Ctrl+[ sends Esc</span><button class="btn small wk-copy">📋 Copy all</button>` : "";
+    head?.querySelector(".wk-copy")?.addEventListener("click", () => this.term && copyAll(this.term));
   }
 
   private watch(deskId: string): void {
@@ -524,6 +526,7 @@ export class MyLaptop {
   private ensureTerm(): void {
     if (this.term) return;
     const term = new Terminal({ cursorBlink: true, fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace", fontSize: 13, theme: TERM_THEME });
+    copyOnSelect(term);
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(this.termHost);
@@ -641,6 +644,7 @@ export class MyLaptop {
     this.content.appendChild(this.dHost);
     if (!this.dterm) {
       const t = new Terminal({ disableStdin: true, convertEol: false, fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace", fontSize: 13, theme: TERM_THEME });
+      copyOnSelect(t);
       const fit = new FitAddon();
       t.loadAddon(fit);
       t.open(this.dHost);

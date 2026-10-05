@@ -717,3 +717,9 @@ button.link { border: 0; background: none; color: var(--accent); font: inherit; 
 .fw-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; border: 2px solid #eadfce; border-radius: 12px; padding: 6px 10px; background: #fff; }
 .fw-why { font-size: 12px; color: var(--muted); font-style: italic; margin-top: 2px; }
 .modal.term.big { width: calc(100vw - 24px); height: calc(100vh - 24px); max-width: none; }
+
+/* Terminals: drag the corner to resize; select to copy */
+.modal.term { resize: both; overflow: hidden; min-width: 520px; min-height: 320px; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); }
+.modal.mylaptop { resize: both; overflow: hidden; min-width: 640px; min-height: 420px; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); }
+.term-copied { position: fixed; left: 50%; bottom: 90px; transform: translateX(-50%) translateY(10px); z-index: 200; background: var(--ink); color: #fff; font: 800 13px var(--font); padding: 6px 14px; border-radius: 999px; opacity: 0; pointer-events: none; transition: opacity .15s, transform .15s; }
+.term-copied.show { opacity: 1; transform: translateX(-50%) translateY(0); }

@@ -775,7 +775,7 @@ Environment variables:
 | `M`           | Show or hide the minimap |
 | `← →`         | Flip slides in a presentation |
 | `H`           | Controls |
-| Terminal      | **⤢ Enlarge** to (nearly) fill the window · **📋 Copy** the selection, or all of it |
+| Terminal      | **Select to copy** — it's on your clipboard at once · drag the corner to resize, or **⤢ Enlarge** · **📋 Copy** all of it |
 | `Esc`         | Close a window · with nothing open, **Settings**: view, walk speed, sprint, mouse sensitivity, field of view, **graphics** (High / Balanced / Fast — it lowers itself if the game runs slow), hand, head bob, minimap, day and night, sound (`Ctrl+[` sends Esc to a terminal) |
 
 ## Layout
