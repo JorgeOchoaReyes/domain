@@ -93,6 +93,10 @@ export interface Goal {
   deck: Deck | null;
   /** Its pull request on GitHub, once shipped that way. */
   pr?: PullRequestInfo | null;
+  /** When it's due (epoch ms), or null: reminders come as it nears. */
+  dueAt?: number | null;
+  /** The desks working it as a group: tasks go out across them as each finishes. */
+  group?: string[] | null;
 }
 
 /** A timed focus session the whole office works in. */
@@ -305,6 +309,8 @@ export function coerceGoal(raw: Goal): Goal {
     ship: raw.ship && raw.ship.status !== "running" ? raw.ship : null,
     shippedAt: typeof raw.shippedAt === "number" ? raw.shippedAt : null,
     deck: raw.deck && Array.isArray(raw.deck.slides) ? raw.deck : null,
+    dueAt: typeof raw.dueAt === "number" ? raw.dueAt : null,
+    group: Array.isArray(raw.group) ? raw.group.filter((d): d is string => typeof d === "string").slice(0, 12) : null,
   };
 }
 
@@ -335,3 +341,22 @@ export function briefLine(task: GoalTask, now = Date.now()): string {
   return parts.join(" · ");
 }
 
+/** How a deadline reads: "due in 45m", "due in 3h", "due Tue 5 PM", "overdue by 20m". */
+export function dueLabel(dueAt: number, now = Date.now()): string {
+  const left = dueAt - now;
+  const span = (ms: number) => {
+    const m = Math.round(Math.abs(ms) / 60000);
+    if (m < 60) return `${m}m`;
+    const h = Math.round(m / 60);
+    return h < 48 ? `${h}h` : `${Math.round(h / 24)}d`;
+  };
+  if (left < 0) return `overdue by ${span(left)}`;
+  if (left < 24 * 3600_000) return `due in ${span(left)}`;
+  return `due ${new Date(dueAt).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}`;
+}
+
+/** A datetime-local input's value for an epoch ms (local time). */
+export function toLocalInput(t: number): string {
+  const d = new Date(t - new Date(t).getTimezoneOffset() * 60000);
+  return d.toISOString().slice(0, 16);
+}

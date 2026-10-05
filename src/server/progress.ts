@@ -74,7 +74,7 @@ export class Progress {
 
   // --- goals --------------------------------------------------------------------
 
-  createGoal(who: string, title: string, why: string, tasks: string[], kind: GoalKind = "build"): Goal | null {
+  createGoal(who: string, title: string, why: string, tasks: string[], kind: GoalKind = "build", dueAt: number | null = null): Goal | null {
     const t = clean(title, 120);
     if (!t || this.state.goals.length >= MAX_GOALS) return null;
     const goal: Goal = {
@@ -90,6 +90,8 @@ export class Progress {
       ship: null,
       shippedAt: null,
       deck: null,
+      dueAt: dueAt && Number.isFinite(dueAt) ? dueAt : null,
+      group: null,
     };
     for (const line of tasks.slice(0, MAX_TASKS)) {
       const tt = clean(line, 160);
@@ -112,6 +114,24 @@ export class Progress {
     g.doneAt = null;
     this.changed();
     return id;
+  }
+
+  /** When a goal is due (null: no deadline). */
+  setDue(goalId: string, dueAt: number | null): boolean {
+    const g = this.goal(goalId);
+    if (!g) return false;
+    g.dueAt = dueAt && Number.isFinite(dueAt) ? dueAt : null;
+    this.changed();
+    return true;
+  }
+
+  /** The desks working a goal as a group (empty: no group). */
+  setGroup(goalId: string, deskIds: string[]): boolean {
+    const g = this.goal(goalId);
+    if (!g) return false;
+    g.group = deskIds.length ? [...new Set(deskIds)].slice(0, 12) : null;
+    this.changed();
+    return true;
   }
 
   /** Every goal's id (for watching their folders). */
@@ -242,10 +262,10 @@ export class Progress {
    */
   standup(
     who: string,
-    opts: { goalId: string | null; newGoal?: { title: string; why: string; tasks: string[]; kind: GoalKind }; tone: ToneId; intention: string; minutes: number },
+    opts: { goalId: string | null; newGoal?: { title: string; why: string; tasks: string[]; kind: GoalKind; dueAt?: number | null }; tone: ToneId; intention: string; minutes: number },
   ): { goal: Goal | null; started: boolean } {
     let goal: Goal | null = opts.goalId ? (this.goal(opts.goalId) ?? null) : null;
-    if (opts.newGoal) goal = this.createGoal(who, opts.newGoal.title, opts.newGoal.why, opts.newGoal.tasks, opts.newGoal.kind) ?? goal;
+    if (opts.newGoal) goal = this.createGoal(who, opts.newGoal.title, opts.newGoal.why, opts.newGoal.tasks, opts.newGoal.kind, opts.newGoal.dueAt ?? null) ?? goal;
     const intention = clean(opts.intention, 200);
     const started = this.startSession(who, opts.minutes, goal?.id ?? null, opts.tone, intention);
     const what = goal ? goal.title : "no particular goal";

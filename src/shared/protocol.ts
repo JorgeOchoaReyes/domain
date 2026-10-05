@@ -1,6 +1,7 @@
 import type { Idea } from "./ideas.js";
 import type { AgentsState } from "./agents.js";
 import type { ChatPeek, ChatThread, ChatWork } from "./chat.js";
+import type { HistoryEvent } from "./history.js";
 import type { GoalKind, ProgressState, SessionSummary, ToneId } from "./progress.js";
 import type { Leash, TaskBrief, TeamPolicy } from "./policy.js";
 import type { GithubAccount, GithubIssue, GithubRepo, OpLog, ProjectInfo, PullRequestInfo, RecentProject } from "./project.js";
@@ -219,7 +220,13 @@ export type ClientMessage =
   /** Say something to a worker during its review (dictated or typed). */
   | { t: "say"; deskId: string; text: string }
   /** Goals: set one (with its tasks), add a task, drop one. */
-  | { t: "goalCreate"; title: string; why: string; tasks: string[]; kind?: GoalKind }
+  | { t: "goalCreate"; title: string; why: string; tasks: string[]; kind?: GoalKind; dueAt?: number | null }
+  /** When a goal is due (null: no deadline). */
+  | { t: "goalDue"; goalId: string; dueAt: number | null }
+  /** Give a goal to a group of workers: one plans it, then tasks go out across them. */
+  | { t: "goalGroup"; goalId: string; deskIds: string[] }
+  /** The office's history (the latest, or a worker's). */
+  | { t: "historyGet" }
   | { t: "goalDelete"; goalId: string }
   | { t: "taskAdd"; goalId: string; title: string }
   /** Put the worker at a desk on a task (it's briefed in its terminal). */
@@ -238,7 +245,7 @@ export type ClientMessage =
   | {
       t: "standup";
       goalId: string | null;
-      newGoal?: { title: string; why: string; tasks: string[]; kind: GoalKind };
+      newGoal?: { title: string; why: string; tasks: string[]; kind: GoalKind; dueAt?: number | null };
       tone: ToneId;
       intention: string;
       minutes: number;
@@ -374,6 +381,9 @@ export type ServerMessage =
   | { t: "ideas"; ideas: Idea[] }
   /** Which agent CLIs are installed (and whether one is being installed). */
   | { t: "agents"; state: AgentsState }
+  /** The office's history, newest first; and each new event as it happens. */
+  | { t: "history"; events: HistoryEvent[] }
+  | { t: "historyEvent"; event: HistoryEvent }
   /** Every chat thread, with its history. */
   | { t: "chat"; threads: ChatThread[] }
   | { t: "chatPeek"; peek: ChatPeek }

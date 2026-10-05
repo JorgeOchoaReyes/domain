@@ -3,6 +3,7 @@ import { TEAM_THREAD } from "../../shared/chat.js";
 import type { ClientMessage, Desk } from "../../shared/protocol.js";
 import { AGENT_COLOR } from "../scene/characters.js";
 import { Dictation, sttSupported } from "../voice.js";
+import { KIND_ICON, historyOf } from "./history.js";
 import { esc, openModal, type Modal } from "./modal.js";
 import "../styles/chat.css";
 
@@ -256,7 +257,18 @@ export class TeamChat {
           : `<p class="ch-none">${w.branch ? "Nothing committed on its branch yet." : "No commits yet."}</p>`
       }</section>
       ${w.branch ? `<section class="ch-sec"><h4>📝 Files it has changed</h4>${w.changed.length ? `<ul class="ch-files">${w.changed.map((f) => `<li><code>${esc(f)}</code></li>`).join("")}</ul>` : `<p class="ch-none">None yet.</p>`}</section>` : ""}
+      <section class="ch-sec"><h4>📜 Done before</h4>${this.pastHtml()}</section>
       <p class="ch-none">Its whole conversation is under 💬 Chat; to step in, open its 🖥 Terminal.</p>`;
+  }
+
+  /** What this worker (or its character, across hires) has done: from the office's history. */
+  private pastHtml(): string {
+    const w = this.desk(this.selected)?.worker;
+    if (!w) return "";
+    const past = historyOf({ deskId: this.selected, characterId: w.identity?.characterId }).filter((e) => ["assigned", "approved", "changes", "audit", "reported"].includes(e.kind)).slice(0, 25);
+    return past.length
+      ? `<ul>${past.map((e) => `<li>${KIND_ICON[e.kind]} ${esc(e.text)} <span>${new Date(e.at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span></li>`).join("")}</ul>`
+      : `<p class="ch-none">Nothing yet.</p>`;
   }
 
   private messageHtml(m: ChatThread["messages"][number]): string {

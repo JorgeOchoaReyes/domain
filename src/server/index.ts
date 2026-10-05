@@ -1,3 +1,7 @@
+import { HistoryLog } from "./history.js";
+import { Audits } from "./audits.js";
+import type { HistoryEvent } from "../shared/history.js";
+import { DEFAULT_AUDIT_ROUNDS } from "../shared/policy.js";
 import { connectToApp } from "./parentPort.js";
 import { localModelWarning } from "./workerSession.js";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -7,7 +11,7 @@ import { existsSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, normalize, extname } from "node:path";
 import { WebSocketServer, WebSocket } from "ws";
-import { AGENT_KINDS, AGENT_LABELS, coerceLook, parseClientMessage, type CheckResult, type ServerMessage } from "../shared/protocol.js";
+import { AGENT_KINDS, AGENT_LABELS, coerceLook, parseClientMessage, type CheckResult, type Presentation, type ServerMessage } from "../shared/protocol.js";
 import { GATE_RETRIES, coerceBrief, coercePolicy, isModelName } from "../shared/policy.js";
 import { runCheck, simulateCheck } from "./checks.js";
 import { OpLogger } from "./oplog.js";
@@ -257,13 +261,76 @@ setInterval(refreshLocalModels, 60_000).unref();
 /** How many times each desk's current work has been sent back by a failed check. */
 const gateTries = new Map<string, number>();
 
+// --- the office's history ------------------------------------------------------------------
+
+const history = new HistoryLog(join(CWD, ".domain", "history.json"));
+history.onEvent = (event) => broadcast({ t: "historyEvent", event });
+
+/** The worker at a desk, for history lines (null when nobody's there). */
+function workerRef(deskId: string): HistoryEvent["worker"] {
+  const w = office.workerAt(deskId);
+  if (!w) return null;
+  const name = w.identity?.name ?? AGENT_LABELS[w.agent];
+  return { deskId, name, agent: w.agent, ...(w.identity ? { characterId: w.identity.characterId } : {}) };
+}
+const nameAt = (deskId: string) => workerRef(deskId)?.name ?? deskId;
+
+// --- pair workers: an auditor reviews the work before it comes to you --------------------
+
+/** A report reaches you: into the line, announced, and in the history. */
+function toYou(presentation: Presentation): void {
+  const { deskId, report } = presentation;
+  progress.reported(deskId);
+  broadcast({ t: "report", presentation });
+  if (report) history.add({ kind: "reported", who: nameAt(deskId), text: `${nameAt(deskId)} is ready to present: “${report.title}”`, worker: workerRef(deskId), task: progress.taskAt(deskId)?.title });
+}
+
+const audits = new Audits({
+  office,
+  base: () => office.workspaces?.base() ?? null,
+  nameOf: nameAt,
+  release: (deskId) => {
+    const presentation = office.release(deskId);
+    if (presentation) toYou(presentation);
+  },
+  note: (text, deskId) => {
+    history.add({ kind: "audit", who: "office", text, worker: workerRef(deskId) });
+    broadcast({ t: "loop", goalId: progress.taskAt(deskId)?.goal.id ?? "", event: "warn", text: `🔍 ${text}` });
+  },
+  simulate: SIMULATE
+    ? {
+        // A scripted auditor finds two things the first time and approves the second.
+        verdict: (auditor, report) =>
+          setTimeout(() => {
+            const first = !/Audited|round 2/.test(report.slides.join(" ")) && !simAudited.has(auditor + report.title);
+            simAudited.add(auditor + report.title);
+            office.setReport(
+              auditor,
+              first
+                ? { status: "blocked", title: "Audit", summary: "Two things to fix before it's ready", slides: ["The empty case isn't handled", "A helper is misnamed"], at: Date.now() }
+                : { status: "ready", title: "Audit", summary: "Looks good now — both fixed", slides: [], at: Date.now() },
+            );
+          }, 4000).unref(),
+        recall: (builder) => setTimeout(() => office.roundup([builder]), 6000).unref(),
+      }
+    : undefined,
+});
+const simAudited = new Set<string>();
+setInterval(() => audits.tick(), 30_000).unref();
+
 office.onReport = (presentation) => {
   const { deskId, report } = presentation;
+  // An auditor's verdict on a builder's work isn't for you: it goes back and forth.
+  if (report && audits.auditorReport(deskId, report)) return;
   const check = loadConfig(CWD).check ?? null;
+  // Finished work an auditor reviews first; otherwise it comes to you.
+  const pass = (p: Presentation) => {
+    if (p.report?.status === "ready" && audits.builderReady(deskId, p.report)) return;
+    toYou(p);
+  };
   // Plans and questions come straight in; finished work is checked first.
   if (!report || report.status !== "ready" || (!check && !SIMULATE)) {
-    progress.reported(deskId);
-    broadcast({ t: "report", presentation });
+    pass(presentation);
     return;
   }
   office.setCheck(deskId, { status: "running", command: check ?? "npm test (simulated)", exitCode: null, ms: 0, tail: "" });
@@ -292,8 +359,7 @@ office.onReport = (presentation) => {
       return;
     }
     gateTries.delete(deskId);
-    progress.reported(deskId);
-    broadcast({ t: "report", presentation: { ...presentation, report: { ...worker.report } } });
+    pass({ ...presentation, report: { ...worker.report } });
   };
   if (check) runCheck(check, office.workdir(deskId), verdict);
   else simulateCheck(verdict);
@@ -309,7 +375,11 @@ const goalFiles = new GoalFiles(join(CWD, ".domain", "goals"), (goalId, file, te
   if (!goal) return;
   if (file === "plan") {
     const added = progress.addPlannedTasks(goalId, parsePlan(text));
-    if (added) broadcast({ t: "loop", goalId, event: "planned", text: `🧠 The plan for “${goal.title}” is in: ${added} task${added === 1 ? "" : "s"} added` });
+    if (added) {
+      broadcast({ t: "loop", goalId, event: "planned", text: `🧠 The plan for “${goal.title}” is in: ${added} task${added === 1 ? "" : "s"} added` });
+      history.add({ kind: "goal", who: "office", text: `The plan for “${goal.title}” is in: ${added} task${added === 1 ? "" : "s"}`, goalId });
+      if (goal.group?.length) setTimeout(() => groupContinue(goalId, goal.createdBy), 1500).unref();
+    }
   } else if (file === "deck") {
     if (progress.setDeck(goalId, parseDeck(text), goalFiles.path(goalId, "deck"))) {
       broadcast({ t: "loop", goalId, event: "deck", text: `📊 The deck for “${goal.title}” was updated — ${progress.getGoal(goalId)?.deck?.slides.length ?? 0} slides` });
@@ -318,6 +388,7 @@ const goalFiles = new GoalFiles(join(CWD, ".domain", "goals"), (goalId, file, te
     const { url, note } = parseShipped(text);
     if (progress.shipped(goal.ship?.by ?? goal.createdBy, goalId, { mode: goal.ship?.mode === "deploy" ? "deploy" : "agent", url, note })) {
       broadcast({ t: "loop", goalId, event: "shipped", text: `🚢 “${goal.title}” shipped${url ? ` — ${url}` : ""}` });
+      history.add({ kind: "shipped", who: "office", text: `“${goal.title}” shipped${url ? ` — ${url}` : ""}`, goalId });
     }
   }
 });
@@ -331,6 +402,7 @@ deployer.onExit = (goalId, code, log) => {
   if (code === 0) {
     if (progress.shipped(goal.ship?.by ?? goal.createdBy, goalId, { mode: "deploy", exitCode: 0, url: /https?:\/\/[^\s"'<>)\x1b]+/.exec(log.slice(-4000))?.[0] ?? null })) {
       broadcast({ t: "loop", goalId, event: "shipped", text: `🚢 “${goal.title}” deployed!` });
+      history.add({ kind: "shipped", who: "office", text: `“${goal.title}” deployed`, goalId });
     }
   } else {
     goalFiles.ensure(goalId);
@@ -496,6 +568,7 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
           : null;
         if (office.hire(msg.deskId, agent, client.name, model, leash, policy.isolate, identity)) {
           warnIfTooBig(model);
+          history.add({ kind: "hired", who: client.name, text: `${client.name} hired ${nameAt(msg.deskId)} at ${msg.deskId.replace("desk-", "desk ")}`, worker: workerRef(msg.deskId) });
           if (character) progress.characterHired(character.id);
           progress.hired(client.name);
           progress.recheck(client.name);
@@ -505,7 +578,10 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
       }
       case "fire": {
         const ws = office.workspaceOf(msg.deskId);
+        const leaving = workerRef(msg.deskId);
         if (office.fire(msg.deskId)) {
+          audits.forget(msg.deskId);
+          if (leaving) history.add({ kind: "left", who: client.name, text: `${leaving.name} went home`, worker: leaving });
           progress.unlinkDesk(msg.deskId);
           // Its MCP configs may hold tokens: they go with it.
           mcpCleanup(CWD, msg.deskId);
@@ -558,12 +634,53 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
           str(msg.text, 8000) ?? undefined,
           typeof msg.sketch === "string" ? msg.sketch : undefined,
         );
-        if (reviewed) progress.reviewed(client.name, msg.deskId, !!msg.approve, wasPlan);
+        if (reviewed) {
+          const task = progress.taskAt(msg.deskId);
+          progress.reviewed(client.name, msg.deskId, !!msg.approve, wasPlan);
+          history.add({
+            kind: msg.approve ? "approved" : "changes",
+            who: client.name,
+            text: msg.approve
+              ? `${client.name} approved ${wasPlan ? "the plan of" : "the work of"} ${nameAt(msg.deskId)}${task ? ` on “${task.title}”` : ""}`
+              : `${client.name} sent ${nameAt(msg.deskId)} back with changes${task ? ` on “${task.title}”` : ""}`,
+            worker: workerRef(msg.deskId),
+            goalId: task?.goal.id,
+            task: task?.title,
+          });
+          // A group's member who finished gets the goal's next task.
+          if (msg.approve && !wasPlan && task?.goal.group?.includes(msg.deskId)) setTimeout(() => groupContinue(task.goal.id, client.name), 2500).unref();
+        }
         break;
       }
       case "goalCreate": {
         const tasks = Array.isArray(msg.tasks) ? msg.tasks.filter((t): t is string => typeof t === "string").slice(0, 40) : [];
-        progress.createGoal(client.name, str(msg.title, 500) ?? "", str(msg.why, 1000) ?? "", tasks, msg.kind === "research" ? "research" : "build");
+        const due = num(msg.dueAt);
+        const goal = progress.createGoal(client.name, str(msg.title, 500) ?? "", str(msg.why, 1000) ?? "", tasks, msg.kind === "research" ? "research" : "build", due);
+        if (goal) history.add({ kind: "goal", who: client.name, text: `${client.name} set a goal: “${goal.title}”${due ? `, due ${new Date(due).toLocaleString()}` : ""}`, goalId: goal.id });
+        break;
+      }
+      case "goalDue": {
+        const goalId = str(msg.goalId, 64);
+        const due = msg.dueAt === null ? null : num(msg.dueAt);
+        if (goalId && progress.setDue(goalId, due)) {
+          const g = progress.getGoal(goalId)!;
+          history.add({ kind: "deadline", who: client.name, text: due ? `“${g.title}” is due ${new Date(due).toLocaleString()}` : `“${g.title}” has no deadline now`, goalId });
+        }
+        break;
+      }
+      case "goalGroup": {
+        const goalId = str(msg.goalId, 64);
+        const deskIds = Array.isArray(msg.deskIds) ? msg.deskIds.filter((d): d is string => typeof d === "string" && office.isStaffed(d)).slice(0, 12) : [];
+        if (!goalId || !progress.setGroup(goalId, deskIds)) break;
+        const g = progress.getGoal(goalId)!;
+        if (deskIds.length) {
+          history.add({ kind: "group", who: client.name, text: `${client.name} gave “${g.title}” to ${deskIds.map(nameAt).join(", ")}`, goalId });
+          groupContinue(goalId, client.name);
+        }
+        break;
+      }
+      case "historyGet": {
+        send(ws, { t: "history", events: history.latest() });
         break;
       }
       case "goalDelete": {
@@ -614,6 +731,7 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
                 why: str(ng.why, 1000) ?? "",
                 tasks: Array.isArray(ng.tasks) ? ng.tasks.filter((t): t is string => typeof t === "string").slice(0, 40) : [],
                 kind: ng.kind === "research" ? "research" : "build",
+                dueAt: num(ng.dueAt),
               }
             : undefined,
           tone: msg.tone,
@@ -699,6 +817,15 @@ function assignTask(who: string, goalId: string, taskId: string, deskId: string,
   const brief = coerceBrief(rawBrief ?? {}, progress.policy);
   const got = progress.assign(who, goalId, taskId, deskId, brief);
   if (!got) return false;
+  const paired = brief.auditor ? audits.start(deskId, brief.auditor, got.title, brief.rounds ?? DEFAULT_AUDIT_ROUNDS) : false;
+  history.add({
+    kind: "assigned",
+    who,
+    text: `${who} put ${nameAt(deskId)} on “${got.title}”${paired ? `, audited by ${nameAt(brief.auditor!)}` : ""}`,
+    worker: workerRef(deskId),
+    goalId,
+    task: got.title,
+  });
   if (brief.model) warnIfTooBig(brief.model);
   // Put the worker on the task's model first: Claude Code switches in
   // place; other CLIs restart on it, so give them a moment to boot.
@@ -721,6 +848,27 @@ function assignTask(who: string, goalId: string, taskId: string, deskId: string,
   if (delay) setTimeout(handOver, delay).unref();
   else handOver();
   return true;
+}
+
+/**
+ * A group works a goal together: if it has no tasks yet, its first member
+ * plans it; otherwise every member who's free gets the next task to do.
+ */
+function groupContinue(goalId: string, who: string): void {
+  const goal = progress.getGoal(goalId);
+  const group = (goal?.group ?? []).filter((d) => office.isStaffed(d));
+  if (!goal || !group.length || goal.shippedAt) return;
+  if (!goal.tasks.length) {
+    if (!goal.planningDesk) startPlan(who, goalId, group[0]);
+    return;
+  }
+  for (const deskId of group) {
+    const busy = goal.tasks.some((t) => t.deskId === deskId && t.status !== "done") || office.workerAt(deskId)?.status === "presenting";
+    if (busy) continue;
+    const next = progress.getGoal(goalId)?.tasks.find((t) => t.status === "todo" && !t.deskId);
+    if (!next) break;
+    assignTask(who, goalId, next.id, deskId, {});
+  }
 }
 
 function personaFor(deskId: string): string {

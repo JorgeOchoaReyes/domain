@@ -1,0 +1,16 @@
+/* ---------- History ---------- */
+.modal.history-modal { width: min(820px, 100%); height: min(760px, calc(100vh - 32px)); }
+.history { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.hi-filters { display: flex; gap: 6px; flex-wrap: wrap; }
+.hi-filters button { font: 800 12px var(--font); border: 2px solid var(--ink); border-radius: 999px; background: #fff; padding: 3px 10px; cursor: pointer; color: var(--ink); }
+.hi-filters button.on { background: var(--ink); color: var(--paper); }
+.hi-stats { display: flex; gap: 14px; font-size: 13px; font-weight: 800; color: var(--muted); }
+.hi-list { overflow-y: auto; display: flex; flex-direction: column; gap: 3px; padding-right: 4px; }
+.hi-day { margin: 10px 0 4px; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .05em; color: var(--accent); }
+.hi-row { display: flex; align-items: baseline; gap: 10px; padding: 6px 10px; border-radius: 10px; background: #fff; border: 2px solid #f0eadf; font-size: 13px; font-weight: 600; }
+.hi-row.k-approved, .hi-row.k-shipped { border-color: #b6ecd9; }
+.hi-row.k-changes, .hi-row.k-audit { border-color: #ffe2a8; }
+.hi-icon { flex: none; }
+.hi-text { flex: 1; min-width: 0; }
+.hi-time { flex: none; color: var(--muted); font-size: 12px; font-weight: 700; }
+.hi-empty { margin: 30px auto; color: var(--muted); font-weight: 700; }

@@ -35,6 +35,8 @@ import { loadSettings, openSettings, saveSettings, type Settings } from "./ui/se
 import { Music } from "./music.js";
 import { openJukebox } from "./ui/jukebox.js";
 import { TeamChat } from "./ui/chat.js";
+import { ingestHistory, openHistory } from "./ui/history.js";
+import { Reminders } from "./ui/reminders.js";
 import type { ChatThread } from "../shared/chat.js";
 import { openAssignCard } from "./ui/assign.js";
 import { Assistant, type Guide, type Tip, type TourStep } from "./ui/assistant.js";
@@ -212,6 +214,7 @@ hudRoot.querySelector('.dock [data-act="settings"]')?.before(officeBtn);
 const officeTiles: OfficeTile[] = [
   { key: "projects", icon: "github", title: "Projects & GitHub", text: "Which project your workers are on — switch, or clone one from GitHub", run: () => openProjects(projectActions()) },
   { key: "team", icon: "👥", title: "Your team", text: "Characters with names, looks, voices and personas you hire again and again", run: () => openTeam(teamCtx()) },
+  { key: "history", icon: "📜", title: "History", text: "Everything you and your workers have done — by day, or by worker", run: () => openHistory((m) => net.send(m)) },
   { key: "chat", icon: "💬", title: "Team chat", text: "Message any worker, or everyone — see what each is doing and what it has done", run: () => openChat() },
   { key: "ideas", icon: "💡", title: "Idea board", text: "Sketch an idea and hand it to a worker, or make it a goal — also at the whiteboards", run: () => openIdeas(null) },
   { key: "mcp", icon: "mcp", title: "MCP tools", text: "Tools your workers can use — add once, give to whoever needs them", hostOnly: true, run: () => openMcp({ progress: () => progress, send: (m) => net.send(m), isHost: () => !guestRole() }) },
@@ -266,7 +269,12 @@ const loopHandlers: LoopHandlers = {
 const laptop = new MyLaptop(loopHandlers);
 const goals = new GoalsWindow({
   loop: loopHandlers,
-  create: (title, why, tasks, kind) => net.send({ t: "goalCreate", title, why, tasks, kind }),
+  create: (title, why, tasks, kind, dueAt) => net.send({ t: "goalCreate", title, why, tasks, kind, dueAt: dueAt ?? null }),
+  due: (goalId, dueAt) => net.send({ t: "goalDue", goalId, dueAt }),
+  group: (goalId, deskIds) => {
+    net.send({ t: "goalGroup", goalId, deskIds });
+    if (deskIds.length) hud.toast(`👥 Given to ${deskIds.length} workers — one plans it if needed, then tasks go out as each finishes`);
+  },
   remove: (goalId) => net.send({ t: "goalDelete", goalId }),
   addTask: (goalId, title) => net.send({ t: "taskAdd", goalId, title }),
   assign: (goalId, taskId, deskId) => openAssignFor(goalId, taskId, deskId, true),
@@ -328,6 +336,7 @@ net.onMessage = (msg) => {
   ingestLogs(msg);
   ingestProjects(msg);
   ingestAgents(msg);
+  ingestHistory(msg);
   ingestGithub(msg);
   if (msg.t === "project") showProject();
   if (msg.t === "guest") showGuestBadge();
@@ -353,6 +362,7 @@ net.onMessage = (msg) => {
       net.send({ t: "ideasGet" });
       net.send({ t: "agentsGet" });
       net.send({ t: "chatGet" });
+      net.send({ t: "historyGet" });
       break;
     case "office":
       office = msg.office;
@@ -917,8 +927,30 @@ function endOfficeHours(): void {
 // --- Pip, the assistant ---------------------------------------------------------------------
 
 /** What Pip should mention right now, most urgent first. */
+// --- reminders: what needs you, and what's coming up ------------------------------------------
+
+const reminders = new Reminders({
+  office: () => office,
+  progress: () => progress,
+  goToDesk: (deskId) => goToDesk(deskId),
+  officeHours: () => startOfficeHours(),
+  openGoal: (goalId) => openGoals(goalId),
+  notify: (r, chime) => {
+    if (!joined) return;
+    if (chime) sound.chime();
+    hud.toast(`${r.icon} ${r.text}`, r.urgency === 3 ? "warn" : "");
+  },
+});
+setInterval(() => {
+  if (joined) reminders.update();
+}, 3000);
+
 function pipTips(): Tip[] {
   const tips: Tip[] = [];
+  // Deadlines, time budgets and idle hands (waiting workers and the line are below).
+  for (const r of reminders.list()) {
+    if (/^(due|budget|idle)-/.test(r.id)) tips.push({ id: r.id, urgency: r.urgency, text: `${r.icon} ${r.text}`, action: r.action });
+  }
   if (!joined) return tips;
   // No coding agent on this machine yet: nothing can be hired until one is.
   const agents = agentsState();

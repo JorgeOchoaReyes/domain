@@ -642,3 +642,12 @@ body[data-guest] .host-only { display: none !important; }
 .hint { white-space: nowrap; flex-wrap: nowrap; }
 .lan-chip-slot:empty { display: none; }
 .lan-chip-slot { margin-top: 4px; font-size: 12px; }
+
+/* Goals: deadlines and groups */
+.gd-due, .gd-group { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 0; font-size: 13px; font-weight: 800; }
+.gd-due input { font: inherit; border: 2px solid var(--ink); border-radius: 8px; padding: 3px 6px; }
+.g-member { display: inline-flex; gap: 4px; align-items: center; font-weight: 700; border: 2px solid #e8e1d6; border-radius: 999px; padding: 2px 8px; background: #fff; }
+.overdue { color: var(--bad); }
+.su-due-row { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 800; margin-top: 6px; }
+.su-due-row input { font: inherit; border: 2px solid var(--ink); border-radius: 8px; padding: 3px 6px; }
+.su-due-hint { color: var(--muted); font-weight: 700; font-size: 12px; }

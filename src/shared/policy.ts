@@ -27,7 +27,14 @@ export interface TaskBrief {
   planFirst: boolean;
   /** The definition of done, one line each. */
   done: string[];
+  /** Another worker (its desk) who audits the work before it comes to you. */
+  auditor?: string;
+  /** At most this many audit rounds (builder ↔ auditor) before it comes to you anyway. */
+  rounds?: number;
 }
+
+/** Audits go back and forth at most this many rounds by default. */
+export const DEFAULT_AUDIT_ROUNDS = 3;
 
 /** How a task is going against its brief. */
 export interface TaskRun {
@@ -124,6 +131,9 @@ export function coerceBrief(raw: unknown, policy: TeamPolicy): TaskBrief {
     onTimeUp: o.onTimeUp === "nudge" || o.onTimeUp === "wrapup" ? o.onTimeUp : policy.onTimeUp,
     planFirst: typeof o.planFirst === "boolean" ? o.planFirst : policy.planFirst,
     done: done.length ? done : [...policy.done],
+    ...(typeof o.auditor === "string" && /^desk-\d{1,2}$/.test(o.auditor)
+      ? { auditor: o.auditor, rounds: typeof o.rounds === "number" && o.rounds >= 1 ? Math.min(5, Math.round(o.rounds)) : DEFAULT_AUDIT_ROUNDS }
+      : {}),
   };
 }
 

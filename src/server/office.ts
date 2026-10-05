@@ -358,6 +358,61 @@ export class Office {
     this.changed();
   }
 
+  /** Type an instruction into a worker's terminal (simulated workers act things out themselves). */
+  instruct(deskId: string, text: string): void {
+    const seat = this.seats.find((s) => s.desk.id === deskId);
+    if (seat?.session && !seat.session.summon) typeLine(seat.session, text);
+  }
+
+  /** Whether someone's working at a desk (not asleep, not empty). */
+  isStaffed(deskId: string): boolean {
+    const seat = this.seats.find((s) => s.desk.id === deskId);
+    return !!seat?.session && !!seat.desk.worker;
+  }
+
+  /** Keep a worker's report out of the line for now (its auditor reviews it first). */
+  hold(deskId: string, activity: string): void {
+    const seat = this.seats.find((s) => s.desk.id === deskId);
+    if (!seat?.desk.worker) return;
+    this.dequeue(deskId);
+    seat.desk.worker.activity = activity;
+    this.changed();
+  }
+
+  /** Put a held report back in line for you. */
+  release(deskId: string): Presentation | null {
+    const seat = this.seats.find((s) => s.desk.id === deskId);
+    const report = seat?.desk.worker?.report;
+    if (!seat || !report) return null;
+    if (!this.queue.includes(deskId)) this.queue.push(deskId);
+    seat.desk.worker!.activity = report.status === "blocked" ? "Waiting to present (blocked)" : "Waiting to present";
+    this.changed();
+    return this.presentationFor(deskId, report, this.queue.indexOf(deskId));
+  }
+
+  /** Change a held report before it reaches you (e.g. add the audit's verdict). */
+  amendReport(deskId: string, change: (r: Report) => Report): void {
+    const w = this.seats.find((s) => s.desk.id === deskId)?.desk.worker;
+    if (w?.report) w.report = change(w.report);
+  }
+
+  /**
+   * A report that isn't for you (an auditor's verdict): take it off the desk
+   * without a review, and tell the worker what happens next.
+   */
+  dismiss(deskId: string, message: string): void {
+    const seat = this.seats.find((s) => s.desk.id === deskId);
+    if (!seat?.session || !seat.desk.worker) return;
+    seat.desk.worker.report = null;
+    seat.desk.worker.status = "working";
+    seat.desk.worker.activity = "Back to it";
+    this.dequeue(deskId);
+    this.watcher?.forget(deskId);
+    this.deleteReportFile(deskId);
+    typeLine(seat.session, message);
+    this.changed();
+  }
+
   /**
    * Call workers to your office. Each one not already in line stops to put
    * together a progress report and lines up; it presents once the report is

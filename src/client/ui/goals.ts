@@ -1,6 +1,6 @@
 import type { Desk, Presentation } from "../../shared/protocol.js";
 import { AGENT_LABELS } from "../../shared/protocol.js";
-import { STAGE_ICON, XP, briefLine, goalProgress, goalStage, stageLabel, type Goal, type GoalKind, type ProgressState, type TaskStatus } from "../../shared/progress.js";
+import { STAGE_ICON, XP, briefLine, goalProgress, goalStage, stageLabel, type Goal, type GoalKind, type ProgressState, type TaskStatus, dueLabel, toLocalInput } from "../../shared/progress.js";
 import { AGENT_COLOR } from "../scene/characters.js";
 import { esc, openModal, type Modal } from "./modal.js";
 import { onLoop, renderLoop, type LoopHandlers } from "./loop.js";
@@ -18,7 +18,11 @@ import { openIssuesImport, prChipHtml } from "./github.js";
  */
 
 export interface GoalActions {
-  create(title: string, why: string, tasks: string[], kind: GoalKind): void;
+  create(title: string, why: string, tasks: string[], kind: GoalKind, dueAt?: number | null): void;
+  /** When a goal is due (null: no deadline). */
+  due?(goalId: string, dueAt: number | null): void;
+  /** Give a goal to a group of workers (empty: none). */
+  group?(goalId: string, deskIds: string[]): void;
   /** The loop's actions (plan, ship, round up…). Without it the window shows no loop controls. */
   loop?: LoopHandlers;
   remove(goalId: string): void;
@@ -163,7 +167,7 @@ export class GoalsWindow {
           const st = goalStage(g);
           return `<button class="goal-card ${g.id === this.selected ? "sel" : ""} ${g.shippedAt ? "done" : ""}" data-goal="${g.id}">
             <span class="gc-title">${g.shippedAt ? "🏁 " : g.kind === "research" ? "📊 " : ""}${esc(g.title)}</span>
-            <span class="gc-meta">${STAGE_ICON[st]} ${stageLabel(st, g.kind)} · ${pr.done}/${pr.total} tasks</span>
+            <span class="gc-meta">${STAGE_ICON[st]} ${stageLabel(st, g.kind)} · ${pr.done}/${pr.total} tasks${g.dueAt && !g.shippedAt ? ` · <b class="${g.dueAt < Date.now() ? "overdue" : ""}">${esc(dueLabel(g.dueAt))}</b>` : ""}${g.group?.length ? ` · 👥 ${g.group.length}` : ""}</span>
             <span class="bar"><span style="width:${Math.round(pr.pct * 100)}%"></span></span>
           </button>`;
         })
@@ -203,6 +207,18 @@ export class GoalsWindow {
         <div class="gd-pct ${goal.doneAt ? "done" : ""}">${Math.round(pr.pct * 100)}%</div>
       </div>
       <div class="bar big"><span style="width:${Math.round(pr.pct * 100)}%"></span></div>
+      ${
+        this.actions.due
+          ? `<div class="gd-due"><span>📅 Due</span><input type="datetime-local" class="g-due" value="${goal.dueAt ? toLocalInput(goal.dueAt) : ""}" />${goal.dueAt ? `<b class="${goal.dueAt < Date.now() ? "overdue" : ""}">${esc(dueLabel(goal.dueAt))}</b><button class="btn small g-due-clear">No deadline</button>` : `<span class="hint-sm">I'll remind you as it gets close</span>`}</div>`
+          : ""
+      }
+      ${
+        this.actions.group && staffed.length > 1
+          ? `<div class="gd-group"><span>👥 Group</span>${staffed
+              .map((d) => `<label class="g-member"><input type="checkbox" value="${d.id}" ${goal.group?.includes(d.id) ? "checked" : ""} /> ${esc(AGENT_LABELS[d.worker!.agent])} · ${esc(d.label)}</label>`)
+              .join("")}<button class="btn small g-group-go">${goal.group?.length ? "Update the group" : "Give it to them"}</button><span class="hint-sm">One plans it, then tasks go out across them as each finishes.</span></div>`
+          : ""
+      }
       <div class="gd-loop"></div>
       <ul class="tasks">
         ${goal.tasks
@@ -283,6 +299,16 @@ export class GoalsWindow {
       }
     });
     this.detailEl.querySelector(".focus")!.addEventListener("click", () => this.actions.focus(goal.id));
+    const dueEl = this.detailEl.querySelector<HTMLInputElement>(".g-due");
+    dueEl?.addEventListener("change", () => {
+      const t = dueEl.value ? new Date(dueEl.value).getTime() : NaN;
+      if (Number.isFinite(t)) this.actions.due?.(goal.id, t);
+    });
+    this.detailEl.querySelector(".g-due-clear")?.addEventListener("click", () => this.actions.due?.(goal.id, null));
+    this.detailEl.querySelector(".g-group-go")?.addEventListener("click", () => {
+      const ids = [...this.detailEl.querySelectorAll<HTMLInputElement>(".g-member input:checked")].map((c) => c.value);
+      this.actions.group?.(goal.id, ids);
+    });
     this.detailEl.querySelector(".gh-import")?.addEventListener("click", () => openIssuesImport(goal.id, (m) => this.actions.loop!.send(m)));
   }
 
@@ -302,6 +328,8 @@ export class GoalsWindow {
       <input type="text" class="g-why" maxlength="240" placeholder="e.g. So the first 100 users can try it" />
       <label>Tasks <span class="opt">(one per line — or leave empty and have a worker plan it)</span></label>
       <textarea class="g-tasks" rows="6" placeholder="Build the sign-up flow&#10;Add analytics&#10;Write the launch post"></textarea>
+      <label>Due <span class="opt">(optional — reminders as it gets close)</span></label>
+      <input type="datetime-local" class="g-new-due" />
       <div class="gd-actions"><span class="grow">+${XP.createGoal} XP for setting it</span><button class="btn primary create">🎯 Set goal</button></div>`;
     const title = this.detailEl.querySelector<HTMLInputElement>(".g-title")!;
     const why = this.detailEl.querySelector<HTMLInputElement>(".g-why")!;
@@ -335,7 +363,9 @@ export class GoalsWindow {
         return;
       }
       this.pendingTitle = t.replace(/\s+/g, " ").slice(0, 120);
-      this.actions.create(t, why.value.trim(), tasks.value.split("\n").map((x) => x.trim()).filter(Boolean), kind);
+      const dueVal = this.detailEl.querySelector<HTMLInputElement>(".g-new-due")?.value;
+      const dueAt = dueVal ? new Date(dueVal).getTime() : null;
+      this.actions.create(t, why.value.trim(), tasks.value.split("\n").map((x) => x.trim()).filter(Boolean), kind, Number.isFinite(dueAt) ? dueAt : null);
       create.disabled = true;
       create.textContent = "Setting…";
     });

@@ -2,6 +2,7 @@ import type { Desk } from "../../shared/protocol.js";
 import { AGENT_LABELS } from "../../shared/protocol.js";
 import type { Goal, GoalTask } from "../../shared/progress.js";
 import {
+  DEFAULT_AUDIT_ROUNDS,
   ON_TIME_UP_LABEL,
   TIME_BUDGETS,
   modelLabel,
@@ -46,6 +47,9 @@ export function openAssignCard(o: AssignOptions): void {
   let onTimeUp: OnTimeUp = start?.onTimeUp ?? o.policy.onTimeUp;
   let planFirst = start?.planFirst ?? o.policy.planFirst;
   const done = [...(start?.done ?? o.policy.done)];
+  // Pair workers: another worker audits it before it comes to you.
+  let auditor = start?.auditor ?? "";
+  let rounds = start?.rounds ?? DEFAULT_AUDIT_ROUNDS;
 
   const body = document.createElement("div");
   body.className = "assign";
@@ -89,6 +93,11 @@ export function openAssignCard(o: AssignOptions): void {
         <span><b>🧠 Plan first</b> — it presents a plan in your office before touching any code; you approve it, then it builds</span></label>
     </section>
     <section>
+      <h4>🔍 Audited by <span class="as-hint">another worker checks it, back and forth, before it reaches you</span></h4>
+      <div class="seg as-auditors"></div>
+      <div class="seg as-rounds"><span class="as-hint">At most</span>${[1, 2, 3, 4, 5].map((n) => `<button data-r="${n}">${n} round${n === 1 ? "" : "s"}</button>`).join("")}</div>
+    </section>
+    <section>
       <h4>Done means <span class="as-hint">one per line — it's held to these in the review</span></h4>
       <textarea class="as-done" rows="3">${esc(done.join("\n"))}</textarea>
     </section>`;
@@ -122,6 +131,30 @@ export function openAssignCard(o: AssignOptions): void {
       }),
     );
   };
+  // Anyone but the worker doing it can audit it.
+  const renderAuditors = () => {
+    if (auditor === deskId) auditor = "";
+    const others = staffed.filter((d) => d.id !== deskId);
+    body.querySelector(".as-auditors")!.innerHTML = [
+      `<button data-a="" class="${auditor ? "" : "on"}">Nobody — it comes straight to you</button>`,
+      ...others.map((d) => `<button data-a="${esc(d.id)}" class="${auditor === d.id ? "on" : ""}">${esc(workerName(d.worker!))} · ${esc(d.label)}</button>`),
+    ].join("");
+    body.querySelectorAll<HTMLButtonElement>(".as-auditors button").forEach((b) =>
+      b.addEventListener("click", () => {
+        auditor = b.dataset.a ?? "";
+        renderAuditors();
+      }),
+    );
+    const roundsEl = body.querySelector<HTMLElement>(".as-rounds")!;
+    roundsEl.style.display = auditor ? "" : "none";
+    roundsEl.querySelectorAll<HTMLButtonElement>("button").forEach((b) => b.classList.toggle("on", Number(b.dataset.r) === rounds));
+  };
+  body.querySelectorAll<HTMLButtonElement>(".as-rounds button").forEach((b) =>
+    b.addEventListener("click", () => {
+      rounds = Number(b.dataset.r);
+      renderAuditors();
+    }),
+  );
   const renderTime = () => {
     body.querySelectorAll<HTMLElement>(".as-time button").forEach((b) => b.classList.toggle("on", Number(b.dataset.m) === minutes));
     body.querySelectorAll<HTMLElement>(".as-timeup button").forEach((b) => {
@@ -135,6 +168,7 @@ export function openAssignCard(o: AssignOptions): void {
       deskId = b.dataset.desk!;
       renderWorkers();
       renderModels();
+      renderAuditors();
     }),
   );
   body.querySelectorAll<HTMLElement>(".as-time button").forEach((b) =>
@@ -161,11 +195,12 @@ export function openAssignCard(o: AssignOptions): void {
   footer.querySelector(".go")!.addEventListener("click", () => {
     const lines = doneEl.value.split("\n").map((x) => x.trim()).filter(Boolean);
     modal.close();
-    o.onAssign(deskId, { model, minutes, onTimeUp, planFirst, done: lines.length ? lines : [...o.policy.done] });
+    o.onAssign(deskId, { model, minutes, onTimeUp, planFirst, done: lines.length ? lines : [...o.policy.done], ...(auditor ? { auditor, rounds } : {}) });
   });
 
   renderWorkers();
   renderModels();
   renderTime();
+  renderAuditors();
   footer.querySelector<HTMLButtonElement>(".go")!.focus();
 }

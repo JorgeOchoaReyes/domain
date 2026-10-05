@@ -24,7 +24,7 @@ import { esc, openModal } from "./modal.js";
 
 export interface StandupPlan {
   goalId: string | null;
-  newGoal?: { title: string; why: string; tasks: string[]; kind: GoalKind };
+  newGoal?: { title: string; why: string; tasks: string[]; kind: GoalKind; dueAt?: number | null };
   tone: ToneId;
   intention: string;
   minutes: number;
@@ -144,6 +144,7 @@ export function openStandup(
         <div class="templates">${STARTERS.map((t, i) => `<button class="btn chip" data-t="${i}">${t.icon} ${esc(t.title)}</button>`).join("")}</div>
         <input type="text" class="su-title" maxlength="120" placeholder="What are we going after? e.g. Launch the public beta" />
         <textarea class="su-tasks" rows="3" placeholder="Tasks, one per line (optional — a worker can plan it for you)"></textarea>
+        <label class="su-due-row">📅 Due <input type="datetime-local" class="su-due" /> <span class="su-due-hint">optional — I'll remind you as it gets close</span></label>
       </div>
 
       <div class="su-step"><span class="su-n">2</span><h3>Set the tone</h3></div>
@@ -242,7 +243,17 @@ export function openStandup(
       }
       plan = {
         goalId: null,
-        newGoal: { title: t, why: "", tasks: tasks.value.split("\n").map((x) => x.trim()).filter(Boolean), kind },
+        newGoal: {
+          title: t,
+          why: "",
+          tasks: tasks.value.split("\n").map((x) => x.trim()).filter(Boolean),
+          kind,
+          dueAt: (() => {
+            const v = $<HTMLInputElement>(".su-due").value;
+            const at = v ? new Date(v).getTime() : NaN;
+            return Number.isFinite(at) ? at : null;
+          })(),
+        },
         tone,
         intention: intent.value.trim(),
         minutes,

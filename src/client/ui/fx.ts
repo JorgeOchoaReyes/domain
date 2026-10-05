@@ -135,6 +135,11 @@ export const sound = {
   click(): void {
     tone(660, 0, 0.05, "square", 0.03);
   },
+  /** Something needs you: a bright two-note ding, easy to hear over music. */
+  chime(): void {
+    tone(1319, 0, 0.35, "sine", 0.1);
+    tone(1760, 0.16, 0.5, "sine", 0.09);
+  },
 };
 
 // --- confetti ---------------------------------------------------------------------
