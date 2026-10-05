@@ -1,6 +1,6 @@
 import { buildUpstairs, type Upstairs } from "./upstairs.js";
 import { buildParkland, type Parkland } from "./parkland.js";
-import { UPSTAIRS, UP_HEIGHT, inUpstairs } from "../../shared/layout.js";
+import { UPSTAIRS, UP_HEIGHT, inUpstairs, BREAK_SPOTS } from "../../shared/layout.js";
 import * as THREE from "three";
 import { OutlineEffect } from "three/examples/jsm/effects/OutlineEffect.js";
 import type { Desk, Look, Peer, Presentation } from "../../shared/protocol.js";
@@ -138,6 +138,9 @@ export class World {
   /** Seconds left in the gong's swing. */
   private gongT = 0;
   private tmp = new THREE.Vector3();
+  /** When each worker last ran out of things to do (for its breaks). */
+  private idleSince = new Map<string, number>();
+  private lastBreakLook = 0;
   private camAt = new THREE.Vector3();
 
   constructor(canvas: HTMLCanvasElement, look: Look, name: string) {
@@ -464,7 +467,18 @@ export class World {
       if (!def) continue;
       const seat = deskSeat(def, 0.93);
       const atDesk = { x: seat.x, z: seat.z, facing: def.rotY + Math.PI, seated: true, key: "desk" };
-      const dest = spots.get(desk.id) ?? atDesk;
+      // Nothing to do for a while: off for a break round the lounge (back the moment there's work).
+      const hasTask = this.progress?.goals.some((g) => g.tasks.some((t) => t.deskId === desk.id && t.status !== "done")) ?? false;
+      const free = w.status === "idle" && !hasTask && !spots.has(desk.id);
+      const now = performance.now();
+      if (!free) this.idleSince.delete(desk.id);
+      else if (!this.idleSince.has(desk.id)) this.idleSince.set(desk.id, now);
+      let dest = spots.get(desk.id) ?? atDesk;
+      if (free && now - this.idleSince.get(desk.id)! > 20_000) {
+        const n = Number(desk.id.replace(/\D/g, "")) || 0;
+        const i = (n + Math.floor(now / 45_000)) % BREAK_SPOTS.length;
+        dest = { ...BREAK_SPOTS[i], seated: false, key: `break-${i}` };
+      }
 
       // One of your characters looks like itself; rebuild the bot if that changed.
       const look = w.identity?.look ?? null;
@@ -650,6 +664,11 @@ export class World {
     this.rooms.update(dt, now, { x: pp.x, z: pp.z });
     this.cullAreas();
     this.gameRoom.update(dt, now);
+    // Breaks start (and move on) with time, not just when the office changes.
+    if (now - this.lastBreakLook > 3000 && this.desks.length) {
+      this.lastBreakLook = now;
+      this.syncWorkers(this.desks, this.line);
+    }
     this.upstairs.update(dt);
     this.park.update(dt, now);
     this.events.hoop = this.hoops.update(dt);

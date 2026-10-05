@@ -1,3 +1,4 @@
+import { alumnusHtml, formerWorkers, onAlumniChange } from "./fire.js";
 import { onSkillsChange, skillsLine, skillsOf } from "./skills.js";
 import { mcpToolsFor, onMcpChange } from "./mcp.js";
 import * as THREE from "three";
@@ -147,6 +148,9 @@ export interface TeamContext {
 export interface HireContext extends TeamContext {
   /** Put a character (by id), or a plain agent, at the desk. */
   onHire(choice: string | { agent: AgentKind; model: string; leash: Leash }): void;
+  /** Bring a former worker back to the desk. */
+  onRehire?(id: string): void;
+  getAlumni?(): void;
 }
 
 /** Characters as you see them now: the saved team plus anything just saved here. */
@@ -226,7 +230,8 @@ function openRoster(ctx: TeamContext & Partial<Pick<HireContext, "onHire">>, des
           <span class="tm-tools" data-agent="${k}"></span><span class="tm-skills" data-agent="${k}"></span>
           <button class="btn small primary tm-install" title="Install it with npm">⬇ Install</button></li>`;
       }).join("")}</ul>
-    </section>`
+    </section>
+    <section class="tm-former"></section>`
         : ""
     }`;
   const footer = document.createElement("div");
@@ -263,6 +268,21 @@ function openRoster(ctx: TeamContext & Partial<Pick<HireContext, "onHire">>, des
       el.title = l.title;
     });
   const stopSkills = onSkillsChange(showSkills);
+  // Former workers: everyone you let go, to bring back here.
+  const showFormer = () => {
+    const el = body.querySelector<HTMLElement>(".tm-former");
+    if (!el) return;
+    const list = formerWorkers();
+    el.innerHTML = list.length ? `<h4>↩ Former workers <span class="tm-sub">bring one back to this desk</span></h4><ul class="fw-list">${list.map(alumnusHtml).join("")}</ul>` : "";
+    el.querySelectorAll<HTMLElement>(".fw-row").forEach((row) =>
+      row.querySelector(".fw-back")!.addEventListener("click", () => {
+        modal.close();
+        (ctx as HireContext).onRehire?.(row.dataset.alum!);
+      }),
+    );
+  };
+  const stopFormer = onAlumniChange(showFormer);
+  (ctx as HireContext).getAlumni?.();
   const stopTools = onMcpChange(showTools);
   ctx.scanMcp?.();
   ctx.getSkills?.();
@@ -271,11 +291,13 @@ function openRoster(ctx: TeamContext & Partial<Pick<HireContext, "onHire">>, des
     stopAgents();
     stopTools();
     stopSkills();
+    stopFormer();
   };
   const modal = openModal({ title: hiring ? `Hire a worker · ${desk!.label}` : "Your team", icon: "👥", className: "team-modal", body, footer, onClose: stopWatching });
   showInstalled();
   showTools();
   showSkills();
+  showFormer();
 
   footer.querySelector(".tm-policy")!.addEventListener("click", () => {
     modal.close();

@@ -232,3 +232,16 @@ test("permission levels: each CLI's own flags, and the worker is told", async ()
   assert.match(taskBriefText("Goal", "Task", "", undefined, null, "auto"), /Your permissions: edit files in your folder without asking; ask before running commands\./);
   assert.match(taskBriefText("Goal", "Task", "", undefined, null, "full"), /stay inside your own folder/);
 });
+
+test("Claude Code on a local model starts lean: none of your global MCP tools", async () => {
+  const { leanLocalArgs } = await import("../src/server/workerSession.ts");
+  const { mkdtempSync, readFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "lean-"));
+  const args = leanLocalArgs("claude", "ollama/qwen3:8b", [], dir);
+  assert.equal(args[0], "--strict-mcp-config");
+  assert.deepEqual(JSON.parse(readFileSync(join(dir, ".domain", "mcp-none.json"), "utf8")), { mcpServers: {} });
+  assert.deepEqual(leanLocalArgs("claude", "sonnet", [], dir), [], "a cloud model keeps your tools");
+  assert.deepEqual(leanLocalArgs("claude", "ollama/x", ["--mcp-config", "office.json"], dir), [], "the office's own servers, when given, are kept");
+});

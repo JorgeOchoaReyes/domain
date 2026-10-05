@@ -12,7 +12,7 @@ import type { Role } from "./ctx.js";
 
 type T = ClientMessage["t"];
 
-const VISITOR: ReadonlySet<T> = new Set<T>(["join", "move", "open", "logs", "projectInfo", "ideasGet", "agentsGet", "chatGet", "historyGet", "skillsGet", "lessonsGet"]);
+const VISITOR: ReadonlySet<T> = new Set<T>(["join", "move", "open", "logs", "projectInfo", "ideasGet", "agentsGet", "chatGet", "historyGet", "skillsGet", "lessonsGet", "alumniGet"]);
 
 const HOST_ONLY: ReadonlySet<T> = new Set<T>([
   "projectOpen",

@@ -1,3 +1,4 @@
+import { Alumni } from "./alumni.js";
 import { Autopilot } from "./autopilot.js";
 import { BAY_DESK_IDS, DESKS } from "../shared/layout.js";
 import { Lessons } from "./lessons.js";
@@ -47,8 +48,7 @@ import {
   saveLog,
   shipBrief,
   simAppendSlides,
-  simPlan,
-} from "./loop.js";
+  simPlan, MIN_AGENT_CONTEXT, ollamaContext } from "./loop.js";
 
 const PORT = Number(process.env.PORT ?? 8787);
 const HOST = process.env.HOST ?? "127.0.0.1";
@@ -281,6 +281,11 @@ function workerRef(deskId: string): HistoryEvent["worker"] {
   return { deskId, name, agent: w.agent, ...(w.identity ? { characterId: w.identity.characterId } : {}) };
 }
 const nameAt = (deskId: string) => workerRef(deskId)?.name ?? deskId;
+
+// --- former workers, kept to bring back -------------------------------------------------------
+
+const alumni = new Alumni(SIMULATE ? null : join(CWD, ".domain", "alumni.json"));
+alumni.onChange = (list) => broadcast({ t: "alumni", list });
 
 // --- what the team learns: your feedback, audit findings, and the end-of-day sync ----------
 
@@ -610,6 +615,7 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
           : null;
         if (office.hire(msg.deskId, agent, client.name, model, leash, policy.isolate, identity)) {
           warnIfTooBig(model);
+          watchLocalContext(model);
           history.add({ kind: "hired", who: client.name, text: `${client.name} hired ${nameAt(msg.deskId)} at ${msg.deskId.replace("desk-", "desk ")}`, worker: workerRef(msg.deskId) });
           if (character) progress.characterHired(character.id);
           progress.hired(client.name);
@@ -619,7 +625,22 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
         break;
       }
       case "fire": {
-        fireWorker(client.name, msg.deskId);
+        fireWorker(client.name, msg.deskId, str(msg.reason, 1000)?.trim() || undefined);
+        break;
+      }
+      case "alumniGet": {
+        send(ws, { t: "alumni", list: alumni.all });
+        break;
+      }
+      case "rehire": {
+        const a = alumni.get(str(msg.id, 32) ?? "");
+        if (!a || office.workerAt(msg.deskId)) break;
+        const character = a.characterId ? progress.character(a.characterId) : null;
+        const identity: WorkerIdentity | null = character ? { characterId: character.id, name: character.name, look: character.look, voice: character.voice } : null;
+        if (office.hire(msg.deskId, a.agent, client.name, a.model, a.leash, progress.policy.isolate, identity)) {
+          alumni.remove(a.id);
+          history.add({ kind: "hired", who: client.name, text: `${client.name} brought ${a.name} back, at ${msg.deskId.replace("desk-", "desk ")}`, worker: workerRef(msg.deskId) });
+        }
         break;
       }
       case "open": {
@@ -868,14 +889,25 @@ function assignTask(who: string, goalId: string, taskId: string, deskId: string,
   return true;
 }
 
-/** Send a worker home: its pairing, its MCP configs and (if it's merged) its branch go with it. */
-function fireWorker(who: string, deskId: string): boolean {
+/**
+ * Send a worker home: its pairing, its MCP configs and (if it's merged) its
+ * branch go with it. It's kept among your former workers (to bring back), and
+ * why you let it go — if you say — is something the whole team learns from.
+ */
+function fireWorker(who: string, deskId: string, reason?: string): boolean {
   const ws = office.workspaceOf(deskId);
   const leaving = workerRef(deskId);
+  const w = office.workerAt(deskId);
+  const tasksDone = history.of({ deskId, characterId: w?.identity?.characterId }).filter((e) => e.kind === "approved").length;
+  const isIntern = !!office.snapshot().desks.find((d) => d.id === deskId)?.worker?.internOf;
   if (!office.fire(deskId)) return false;
   office.setInternOf(deskId, undefined);
   audits.forget(deskId);
-  if (leaving) history.add({ kind: "left", who, text: `${leaving.name} went home`, worker: leaving });
+  if (leaving) history.add({ kind: "left", who, text: `${leaving.name} went home${reason ? ` — “${reason}”` : ""}`, worker: leaving });
+  if (w && leaving && !isIntern) {
+    alumni.add({ name: leaving.name, agent: w.agent, model: w.model, leash: w.leash, characterId: w.identity?.characterId, reason, desk: deskId, branch: ws?.branch, tasksDone });
+  }
+  if (reason && leaving) lessons.note({ from: "you", text: `Let ${leaving.name} go: ${reason}`, kind: "feedback" });
   progress.unlinkDesk(deskId);
   // Its MCP configs may hold tokens: they go with it.
   mcpCleanup(CWD, deskId);
@@ -986,11 +1018,12 @@ const ctx: ServerCtx = {
 mcpCleanup(CWD);
 
 // What a worker's tools are, to show: its CLI's own MCP servers (user and project config) plus the office's.
-office.mcpNames = (agent, identity) => {
+office.mcpNames = (agent, identity, model) => {
   const picks = identity ? (progress.character(identity.characterId)?.mcp ?? []) : null;
   let own: string[] = [];
   try {
-    own = scanAgents({ home: homedir(), projectDir: CWD }).filter((s) => s.agent === agent).map((s) => s.name);
+    // Claude Code on a local model starts lean (see leanLocalArgs): none of your own.
+    if (!(agent === "claude" && model.startsWith("ollama/"))) own = scanAgents({ home: homedir(), projectDir: CWD }).filter((s) => s.agent === agent).map((s) => s.name);
   } catch {
     /* unreadable config: just the office's */
   }
@@ -1029,6 +1062,33 @@ office.mcpFor = (deskId, agent, identity) => {
     return null;
   }
 };
+
+/**
+ * A local model on Ollama: once it's loaded, check the context window it got.
+ * Ollama's default (4K) is far too small for an agent — it can't even read its
+ * own instructions — so say how to raise it.
+ */
+function watchLocalContext(model: string): void {
+  if (!model.startsWith("ollama/")) return;
+  const name = model.slice("ollama/".length);
+  const started = Date.now();
+  const look = async () => {
+    const ctxLen = await ollamaContext(name);
+    if (ctxLen === null) {
+      if (Date.now() - started < 4 * 60_000) setTimeout(() => void look(), 10_000).unref();
+      return;
+    }
+    if (ctxLen < MIN_AGENT_CONTEXT) {
+      broadcast({
+        t: "loop",
+        goalId: "",
+        event: "warn",
+        text: `🧠 ${name} is running with a ${Math.round(ctxLen / 1024)}K context window — an agent needs 32K or more. In Ollama's settings set Context length to 32K (or start Ollama with OLLAMA_CONTEXT_LENGTH=32768), then hire it again. And keep its tasks small.`,
+      });
+    }
+  };
+  setTimeout(() => void look(), 15_000).unref();
+}
 
 // --- autopilot: the office runs itself --------------------------------------------------------
 
@@ -1080,8 +1140,8 @@ const autopilot = new Autopilot({
 setInterval(() => autopilot.tick(), 20_000).unref();
 
 // Workers can ask for interns when the policy allows it.
-briefNotes.push(() =>
-  progress.policy.autopilot.interns
+briefNotes.push((_g, _t, deskId) =>
+  progress.policy.autopilot.interns && !/^(ollama|lmstudio)\//.test(office.workerAt(deskId)?.model ?? "")
     ? ` If this task splits into independent pieces, you can bring in up to three interns: write {"interns": ["one piece, described fully", "…"]} to .domain/requests/$DOMAIN_DESK.json — each gets one piece at the intern bay, and you review their work before it reaches your manager.`
     : "",
 );

@@ -524,3 +524,23 @@ export async function detectLocalModels(env: NodeJS.ProcessEnv = process.env): P
   for (const m of l?.data ?? []) if (typeof m.id === "string") out.push(`lmstudio/${m.id}`);
   return out.filter((m) => /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}$/.test(m)).slice(0, 40);
 }
+
+/** Agents' instructions alone run to tens of thousands of tokens: below this a local model can't follow them. */
+export const MIN_AGENT_CONTEXT = 16_384;
+
+/**
+ * The context window Ollama is running a model with (once it's loaded), or
+ * null if it isn't loaded or Ollama isn't there.
+ */
+export async function ollamaContext(model: string, env: NodeJS.ProcessEnv = process.env): Promise<number | null> {
+  const base = env.OLLAMA_HOST ? (/^https?:\/\//.test(env.OLLAMA_HOST) ? env.OLLAMA_HOST : `http://${env.OLLAMA_HOST}`) : "http://127.0.0.1:11434";
+  try {
+    const r = await fetch(`${base.replace(/\/+$/, "")}/api/ps`, { signal: AbortSignal.timeout(3000) });
+    const j = (await r.json()) as { models?: { name?: string; model?: string; context_length?: number }[] };
+    const m = j.models?.find((x) => x.name === model || x.model === model);
+    return typeof m?.context_length === "number" ? m.context_length : null;
+  } catch {
+    return null;
+  }
+}
+

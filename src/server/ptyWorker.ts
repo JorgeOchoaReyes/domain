@@ -160,7 +160,7 @@ export class PtyWorker implements IWorkerSession {
       rows: 24,
       cwd: opts.cwd,
       env: {
-        ...process.env,
+        ...workerEnv(process.env),
         DOMAIN_WORKER: "1",
         TERM: "xterm-256color",
         // Where the agent should drop its presentation when it reaches a
@@ -316,6 +316,13 @@ export class PtyWorker implements IWorkerSession {
     }
     if (this.trustAsked) return;
     if (this.skipUpdateMenu()) return;
+    // Still loading (Codex shows "model: loading" until it's connected): anything typed now is lost.
+    if (STILL_LOADING.test(this.screen().join("\n"))) {
+      if (now - this.launchedAt > 90_000 && this.status !== "waiting") {
+        this.setStatus("waiting", `${AGENT_LABELS[this.agent]} is stuck starting up (its model won't load) — check its terminal: signed in? online?`);
+      }
+      return;
+    }
     // Settled: the agent drew its screen (more than the shell echoing the command) and went quiet.
     const drawn = this.scrollback.length - this.scanFrom > DRAWN;
     const settled = drawn && now - this.lastOutputAt > 1500 && now - this.launchedAt > 2500;
@@ -515,5 +522,21 @@ export function looksLikeShellPrompt(screen: string[], cwd: string): boolean {
   // A long cmd prompt wraps: its last line ends "\desk-2>".
   if (base && last.toLowerCase().endsWith(`\\${base.toLowerCase()}>`)) return true;
   return /[$%#]$/.test(last) && !!base && last.includes(base);
+}
+
+
+/** An agent still connecting: Codex's header reads "model: loading" until it is. */
+export const STILL_LOADING = /model:\s*loading\b/i;
+
+/**
+ * The environment a worker's shell starts with: yours, minus the markers a
+ * Claude Code session sets for its own children (the app launched from a
+ * Claude Code terminal would otherwise pass them on, and a worker's Claude
+ * Code would think it's a sub-session — no transcripts, odd behaviour).
+ */
+export function workerEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(env)) if (!/^(CLAUDECODE|CLAUDE_CODE_[A-Z_]*|CLAUDE_AGENT_SDK_[A-Z_]*)$/.test(k)) out[k] = v;
+  return out;
 }
 

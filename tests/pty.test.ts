@@ -72,3 +72,15 @@ test("an agent that quit is told apart from one that's running", async () => {
     assert.ok(!looksLikeShellPrompt(running, cwd), running.join(" / "));
   }
 });
+
+test("an agent still connecting isn't ready (Codex: 'model: loading')", async () => {
+  const { STILL_LOADING } = await import("../src/server/ptyWorker.ts");
+  assert.ok(STILL_LOADING.test("│ >_ OpenAI Codex (v0.157.1) │\n│ model:     loading   /model to change │"));
+  assert.ok(!STILL_LOADING.test("│ model:     gpt-6-sol high   /model to change │"));
+});
+
+test("workers don't inherit a Claude Code session's markers", async () => {
+  const { workerEnv } = await import("../src/server/ptyWorker.ts");
+  const env = workerEnv({ PATH: "/bin", HOME: "/h", CLAUDECODE: "1", CLAUDE_CODE_CHILD_SESSION: "x", CLAUDE_CODE_ENTRYPOINT: "cli", ANTHROPIC_API_KEY: "k" });
+  assert.deepEqual(Object.keys(env).sort(), ["ANTHROPIC_API_KEY", "HOME", "PATH"]);
+});

@@ -1,3 +1,4 @@
+import type { Alumnus } from "./alumni.js";
 import type { LessonsState } from "./lessons.js";
 import type { SkillSeen } from "./skills.js";
 import type { Idea } from "./ideas.js";
@@ -232,7 +233,11 @@ export type ClientMessage =
   /** Open a worker's terminal; the server replies with its scrollback. */
   | { t: "open"; deskId: string }
   /** Send a worker home and free its desk. */
-  | { t: "fire"; deskId: string }
+  /** Let a worker go, with (optionally) why: the team learns from it, and they can be brought back. */
+  | { t: "fire"; deskId: string; reason?: string }
+  /** Former workers (answered with "alumni"), and bringing one back to a desk. */
+  | { t: "alumniGet" }
+  | { t: "rehire"; id: string; deskId: string }
   /** Keystrokes typed into a worker's terminal. */
   | { t: "input"; deskId: string; data: string }
   /** Resize a worker's terminal. */
@@ -430,6 +435,7 @@ export type ServerMessage =
   | { t: "history"; events: HistoryEvent[] }
   | { t: "skills"; seen: SkillSeen[] }
   | { t: "lessons"; state: LessonsState; syncing: boolean }
+  | { t: "alumni"; list: Alumnus[] }
   | { t: "historyEvent"; event: HistoryEvent }
   /** Every chat thread, with its history. */
   | { t: "chat"; threads: ChatThread[] }

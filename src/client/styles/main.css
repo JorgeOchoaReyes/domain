@@ -703,3 +703,17 @@ body[data-guest] .host-only { display: none !important; }
 .po-auto { border: 2px solid var(--ink); border-radius: 14px; padding: 10px 12px; background: #fff8e6; }
 .po-eod { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .po-eod input { font: inherit; border: 2px solid var(--ink); border-radius: 8px; padding: 2px 6px; }
+
+/* Letting a worker go, and former workers */
+.modal.fire-modal { width: min(560px, 100%); }
+.fire { display: flex; flex-direction: column; gap: 10px; }
+.fi-lead { margin: 0; font-weight: 600; }
+.fi-why { width: 100%; box-sizing: border-box; font: 600 14px var(--font); border: 2px solid var(--ink); border-radius: 10px; padding: 8px; resize: vertical; }
+.fi-alt, .fi-note, .fi-nudge { margin: 0; color: var(--muted); font-weight: 700; font-size: 13px; }
+.fi-quote { margin: 0; padding: 8px 12px; border-left: 4px solid var(--accent); background: #fff8ef; font-weight: 700; }
+button.link { border: 0; background: none; color: var(--accent); font: inherit; font-weight: 800; cursor: pointer; padding: 0; text-decoration: underline; }
+.tm-former h4 { margin: 12px 0 6px; }
+.fw-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow-y: auto; }
+.fw-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; border: 2px solid #eadfce; border-radius: 12px; padding: 6px 10px; background: #fff; }
+.fw-why { font-size: 12px; color: var(--muted); font-style: italic; margin-top: 2px; }
+.modal.term.big { width: calc(100vw - 24px); height: calc(100vh - 24px); max-width: none; }

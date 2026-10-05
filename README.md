@@ -156,6 +156,14 @@ offers them in **Team policy** with one click (`ollama/<model>`,
 - **OpenCode** takes `ollama/<model>` once Ollama is set up as a provider in
   OpenCode's own config.
 
+**Keep local workers' tasks small and simple** — a small model on a laptop is
+slow, and loses the thread on anything big. A local Claude Code worker starts
+**lean** (none of your own MCP tools, which crowd out a small model), and if
+Ollama runs the model with too small a context window you're told how to raise
+it: agents need 32K or more — Claude Code's own instructions alone are about
+35K tokens, so on modest hardware **Codex** (whose prompt is much smaller) is
+the better local agent.
+
 Agents work through tool calls, so only models that support them are offered
 (Ollama's `llama3`, for one, doesn't, so it's left out). A model that can't
 “think”, like `llama3.1`, runs in Codex with reasoning off
@@ -384,6 +392,20 @@ keeps itself going:
 
 Questions, plans, and anything an audit couldn't settle still come to you,
 with reminders.
+
+### 👋 Letting someone go, and bringing them back
+
+**Send home** (in a worker's terminal) takes two steps: first *why* — optional,
+but the reason goes into the team's lessons so the next one doesn't make the
+same mistake (or give them different work instead) — then a clear yes. They're
+kept among your **former workers**: hire at any free desk and **bring them
+back**, same agent, model, permissions and character.
+
+### ☕ Breaks
+
+A worker with nothing to do wanders off round the lounge — the poufs, the TV —
+and walks back to its desk the moment there's work. It's only them walking
+about: no agent is doing anything, so it costs nothing.
 
 ### 🎓 Interns
 
@@ -753,6 +775,7 @@ Environment variables:
 | `M`           | Show or hide the minimap |
 | `← →`         | Flip slides in a presentation |
 | `H`           | Controls |
+| Terminal      | **⤢ Enlarge** to (nearly) fill the window · **📋 Copy** the selection, or all of it |
 | `Esc`         | Close a window · with nothing open, **Settings**: view, walk speed, sprint, mouse sensitivity, field of view, **graphics** (High / Balanced / Fast — it lowers itself if the game runs slow), hand, head bob, minimap, day and night, sound (`Ctrl+[` sends Esc to a terminal) |
 
 ## Layout

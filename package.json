@@ -1,6 +1,6 @@
 {
   "name": "domain",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "A 3D workspace where you walk up to desks and put coding agents to work, each with its own live terminal.",
   "type": "module",
   "bin": {

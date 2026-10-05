@@ -1,6 +1,6 @@
 import { freemem, totalmem } from "node:os";
-import { existsSync } from "node:fs";
-import { join, delimiter } from "node:path";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { delimiter, dirname, join } from "node:path";
 import type { AgentKind, Report, WorkerStatus } from "../shared/protocol.js";
 import { AGENT_LABELS } from "../shared/protocol.js";
 import { SimulatedWorker } from "./worker.js";
@@ -199,6 +199,23 @@ export function localEnv(agent: AgentKind, model: string, env: NodeJS.ProcessEnv
   return { ANTHROPIC_BASE_URL: host.replace(/\/+$/, ""), ANTHROPIC_AUTH_TOKEN: "ollama", ANTHROPIC_API_KEY: "" };
 }
 
+/**
+ * A local model is small: your own MCP tools (their long descriptions, and the
+ * temptation to call them) crowd out the task. Claude Code on one starts with
+ * only the office's MCP servers, if any — never your global ones.
+ */
+export function leanLocalArgs(agent: AgentKind, model: string, extraArgs: string[], cwd: string): string[] {
+  if (agent !== "claude" || !/^ollama\//.test(model) || extraArgs.includes("--mcp-config")) return [];
+  const file = join(cwd, ".domain", "mcp-none.json");
+  try {
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, JSON.stringify({ mcpServers: {} }));
+  } catch {
+    return [];
+  }
+  return ["--strict-mcp-config", "--mcp-config", `"${file}"`];
+}
+
 export function createWorker(agent: AgentKind, opts: CreateWorkerOptions): IWorkerSession {
   if (opts.simulate || !ptyAvailable) {
     const note = ptyAvailable ? undefined : "no local terminal backend — running simulated";
@@ -210,7 +227,9 @@ export function createWorker(agent: AgentKind, opts: CreateWorkerOptions): IWork
     cwd: opts.cwd,
     // Launch the agent CLI if it is on PATH; otherwise hand over a plain shell
     // with a note, which is still a real local terminal.
-    launch: found ? launchCommand(agent, opts.model ?? "", opts.leash ?? "ask", opts.extraArgs ?? [], opts.resume ?? false) : null,
+    launch: found
+      ? launchCommand(agent, opts.model ?? "", opts.leash ?? "ask", [...(opts.extraArgs ?? []), ...leanLocalArgs(agent, opts.model ?? "", opts.extraArgs ?? [], opts.cwd)], opts.resume ?? false)
+      : null,
     env: { ...localEnv(agent, opts.model ?? ""), ...opts.env },
     missingLabel: found ? null : AGENT_LABELS[agent],
     deskId: opts.deskId,

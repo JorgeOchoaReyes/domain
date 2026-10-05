@@ -1,3 +1,4 @@
+import { ingestAlumni, openFire } from "./ui/fire.js";
 import { ingestLessons, openLessons } from "./ui/lessons.js";
 import { ingestSkills } from "./ui/skills.js";
 import { osDictationHint } from "./voice.js";
@@ -348,6 +349,7 @@ net.onMessage = (msg) => {
   ingestHistory(msg);
   ingestSkills(msg);
   ingestLessons(msg);
+  ingestAlumni(msg);
   ingestGithub(msg);
   if (msg.t === "project") showProject();
   if (msg.t === "guest") showGuestBadge();
@@ -608,9 +610,18 @@ function openTerminal(deskId: string): void {
     onInput: (data) => net.send({ t: "input", deskId, data }),
     onResize: (cols, rows) => net.send({ t: "resize", deskId, cols, rows }),
     onFire: () => {
-      net.send({ t: "fire", deskId });
+      const w = deskById(deskId)?.worker;
+      if (!w) return;
+      const name = w.identity?.name ?? AGENT_LABELS[w.agent];
       terminal.close();
-      hud.toast(`👋 Sent ${AGENT_LABELS[desk.worker!.agent]} home`);
+      openFire({
+        name,
+        onFire: (reason) => {
+          net.send({ t: "fire", deskId, ...(reason ? { reason } : {}) });
+          hud.toast(`👋 ${name} went home${reason ? " — the team will learn from why" : ""} · bring them back from Hire → Former workers`);
+        },
+        onReassign: () => openGoals(),
+      });
     },
     onClose: () => {
       terminalPending = null;
@@ -624,6 +635,11 @@ function hire(desk: Desk): void {
     { id: desk.id, label: desk.label },
     {
       ...teamCtx(),
+      onRehire: (id) => {
+        net.send({ t: "rehire", id, deskId: desk.id });
+        pendingOpen = desk.id;
+      },
+      getAlumni: () => net.send({ t: "alumniGet" }),
       onHire: (choice) => {
         net.send(
           typeof choice === "string"
@@ -1945,7 +1961,7 @@ void pickCharacter(myName, myLook).then(({ name, look }) => {
 
 // A handle for poking at the office from the console (and screenshot scripts) in dev builds.
 if (import.meta.env.DEV) {
-  (window as unknown as { domain: unknown }).domain = { world, player, vr, music, startOfficeHours, openLaptop, openTravel, openGoals, openHistory: () => openHistory((m) => net.send(m)), phone, escapeModal, net, laptop, progress: () => progress, office: () => office };
+  (window as unknown as { domain: unknown }).domain = { world, player, vr, music, startOfficeHours, openLaptop, openTravel, openGoals, openHistory: () => openHistory((m) => net.send(m)), openTerminal, phone, escapeModal, net, laptop, progress: () => progress, office: () => office };
   (window as unknown as { __roomAt: unknown }).__roomAt = (x: number, z: number) => roomAt(x, z).id;
 }
 

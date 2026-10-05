@@ -108,6 +108,20 @@ export const BOARDS = {
 /** The big TV on the east wall of the lounge. */
 export const TV = { x: FLOOR.maxX - 0.1, y: 2.4, z: -1, width: 6.4, height: 3.6 } as const;
 
+/**
+ * Where a worker with nothing to do takes a break: round the lounge — the
+ * poufs, in front of the TV, by the couch. (It's only them walking about: no
+ * agent's doing anything, so it costs nothing.)
+ */
+export const BREAK_SPOTS: readonly { x: number; z: number; facing: number }[] = [
+  { x: 13.2, z: -3.4, facing: Math.PI / 2 },
+  { x: 15.4, z: -3.6, facing: Math.PI / 2 },
+  { x: 13.6, z: 1.8, facing: Math.PI / 2 },
+  { x: 15.2, z: 2.6, facing: Math.PI / 2 },
+  { x: 11.6, z: -2.6, facing: Math.PI / 2 },
+  { x: 11.6, z: 0.8, facing: Math.PI / 2 },
+];
+
 /** The lounge in front of the TV. */
 export const LOUNGE = {
   couch: { x: 10.5, z: -1, rotY: Math.PI / 2 },

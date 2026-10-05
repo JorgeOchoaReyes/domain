@@ -94,7 +94,7 @@ export class TerminalOverlay {
       icon: "💻",
       className: "term",
       body: this.host,
-      footer: `<span class="pill status"></span><span class="grow">Esc closes · Ctrl+[ sends Esc to the agent</span><button class="btn danger fire">👋 Send home</button>`,
+      footer: `<span class="pill status"></span><span class="grow">Esc closes · Ctrl+[ sends Esc to the agent</span><button class="btn small term-copy" title="Copy what's selected — or all of it">📋 Copy</button><button class="btn small term-big" title="Bigger / smaller">⤢ Enlarge</button><button class="btn danger fire">👋 Send home</button>`,
       onClose: () => {
         this.modal = null;
         this.deskId = null;
@@ -105,6 +105,35 @@ export class TerminalOverlay {
     });
     this.pill = this.modal.footer!.querySelector(".status");
     this.modal.footer!.querySelector(".fire")!.addEventListener("click", () => this.handlers?.onFire());
+    // Bigger: nearly the whole window (and back).
+    const big = this.modal.footer!.querySelector<HTMLButtonElement>(".term-big")!;
+    big.addEventListener("click", () => {
+      const el = this.host.closest(".modal");
+      const on = !el?.classList.contains("big");
+      el?.classList.toggle("big", on);
+      big.textContent = on ? "⤡ Smaller" : "⤢ Enlarge";
+      requestAnimationFrame(() => this.refit());
+    });
+    // Copy: the selection if there is one, else everything in the terminal.
+    const copy = this.modal.footer!.querySelector<HTMLButtonElement>(".term-copy")!;
+    copy.addEventListener("click", () => {
+      const t = this.term;
+      if (!t) return;
+      let text = t.getSelection();
+      if (!text) {
+        const b = t.buffer.active;
+        const lines: string[] = [];
+        for (let i = 0; i < b.length; i++) lines.push(b.getLine(i)?.translateToString(true) ?? "");
+        text = lines.join("\n").replace(/\n+$/, "\n");
+      }
+      void navigator.clipboard.writeText(text).then(
+        () => {
+          copy.textContent = "✅ Copied";
+          setTimeout(() => (copy.textContent = "📋 Copy"), 1500);
+        },
+        () => (copy.textContent = "Couldn't copy"),
+      );
+    });
     this.setStatus(status);
     this.term!.reset();
     requestAnimationFrame(() => {

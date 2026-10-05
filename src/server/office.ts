@@ -105,7 +105,7 @@ export class Office {
   /** The MCP servers a worker launches with: extra CLI args and env (set by the server). */
   mcpFor: ((deskId: string, agent: AgentKind, identity: WorkerIdentity | null) => { args: string[]; env: Record<string, string> } | null) | null = null;
   /** The names of the MCP servers a worker will have (its CLI's own and the office's), to show. */
-  mcpNames: ((agent: AgentKind, identity: WorkerIdentity | null) => string[]) | null = null;
+  mcpNames: ((agent: AgentKind, identity: WorkerIdentity | null, model: string) => string[]) | null = null;
   /** A worker's skills (on, and turned off), to show and to block. */
   skillsFor: ((agent: AgentKind, identity: WorkerIdentity | null) => { on: string[]; off: string[] }) | null = null;
   /** Called when you or a worker says something during its review. */
@@ -232,7 +232,7 @@ export class Office {
 
   private launch(deskId: string, agent: AgentKind, model: string, leash: Leash, cwd: string, identity: WorkerIdentity | null, resume = false): IWorkerSession {
     const mcp = this.simulate ? null : this.mcpFor?.(deskId, agent, identity);
-    const mcpNames = this.simulate ? [] : (this.mcpNames?.(agent, identity) ?? []);
+    const mcpNames = this.simulate ? [] : (this.mcpNames?.(agent, identity, model) ?? []);
     const skills = this.simulate ? { on: [], off: [] } : (this.skillsFor?.(agent, identity) ?? { on: [], off: [] });
     const seat = this.seats.find((s) => s.desk.id === deskId);
     if (seat) {
