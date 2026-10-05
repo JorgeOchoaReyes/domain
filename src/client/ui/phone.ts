@@ -37,6 +37,9 @@ export interface PhoneActions {
   standup(): void;
   focus(): void;
   lessons(): void;
+  /** Is autopilot on, and turn it on or off. */
+  autopilot(): boolean;
+  setAutopilot(on: boolean): void;
   openHistory(): void;
   openLaptop(): void;
   travel(place: (typeof PLACES)[number]): void;
@@ -198,6 +201,7 @@ export class Phone {
             <button data-do="hours"><span>🎤</span>Reviews${b.reviews ? ` <i>${b.reviews}</i>` : ""}</button>
             <button data-do="lessons"><span>🌙</span>Lessons</button>
           </div>
+          <button class="ph-wide ph-auto ${this.a.autopilot() ? "primary" : ""}" data-do="autopilot">🤖 Autopilot ${this.a.autopilot() ? "on — the office runs itself" : "off — tap to let the office run itself"}</button>
           ${next ? `<button class="ph-next u${next.urgency}" data-app="alerts">${next.icon} ${esc(next.text)}</button>` : `<div class="ph-next calm">✨ Nothing needs you right now</div>`}
           <div class="ph-grid">
             ${APPS.map((x) => `<button class="ph-app" data-app="${x.id}"><span class="ph-icon" style="background:${x.color}">${x.icon}${b[x.id] ? `<i>${b[x.id]}</i>` : ""}</span>${x.label}</button>`).join("")}
@@ -306,6 +310,10 @@ export class Phone {
       if (d === "standup") away(() => this.a.standup());
       else if (d === "focus") away(() => this.a.focus());
       else if (d === "lessons") away(() => this.a.lessons());
+      else if (d === "autopilot") {
+        this.a.setAutopilot(!this.a.autopilot());
+        this.refresh(true);
+      }
       else if (d === "laptop") away(() => this.a.openLaptop());
       else if (d === "chat") away(() => this.a.openChat());
       else if (d === "hours") away(() => this.a.officeHours());

@@ -111,6 +111,8 @@ export interface Worker {
   mcp?: string[];
   /** The skills it can use (its CLI's, minus any its character turned off). */
   skills?: string[];
+  /** An intern: the desk of the worker who brought it in (and reviews its work). */
+  internOf?: string;
   /** What it's doing right now, in a word or three ("Editing math.js", "Running tests"). */
   doing?: string;
 }

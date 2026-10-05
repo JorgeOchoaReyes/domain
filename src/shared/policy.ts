@@ -84,7 +84,21 @@ export interface TeamPolicy {
   isolate: boolean;
   merge: MergeMode;
   gate: GateMode;
+  autopilot: AutopilotPolicy;
 }
+
+/** The office running itself (see server/autopilot.ts). */
+export interface AutopilotPolicy {
+  on: boolean;
+  /** Approve work that passed its check and its audit, without you. */
+  approveAudited: boolean;
+  /** Workers may bring in interns for the independent pieces of a task. */
+  interns: boolean;
+  /** When the end-of-day sync runs ("17:30"; "" = never on its own). */
+  eodAt: string;
+}
+
+export const DEFAULT_AUTOPILOT: AutopilotPolicy = { on: false, approveAudited: true, interns: true, eodAt: "17:30" };
 
 export const TIME_BUDGETS = [0, 15, 30, 45, 60, 90] as const;
 
@@ -104,6 +118,7 @@ export const DEFAULT_POLICY: TeamPolicy = {
   isolate: true,
   merge: "auto",
   gate: "fix",
+  autopilot: DEFAULT_AUTOPILOT,
 };
 
 /** How many times a failed check sends the same work back before it reaches you anyway. */
@@ -192,5 +207,16 @@ export function coercePolicy(raw: unknown, base: TeamPolicy = DEFAULT_POLICY): T
     isolate: typeof o.isolate === "boolean" ? o.isolate : base.isolate,
     merge: o.merge === "auto" || o.merge === "manual" ? o.merge : base.merge,
     gate: o.gate === "fix" || o.gate === "show" ? o.gate : base.gate,
+      autopilot: coerceAutopilot((o as { autopilot?: unknown }).autopilot, base.autopilot ?? DEFAULT_AUTOPILOT),
+};
+}
+
+export function coerceAutopilot(raw: unknown, base: AutopilotPolicy = DEFAULT_AUTOPILOT): AutopilotPolicy {
+  const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  return {
+    on: typeof o.on === "boolean" ? o.on : base.on,
+    approveAudited: typeof o.approveAudited === "boolean" ? o.approveAudited : base.approveAudited,
+    interns: typeof o.interns === "boolean" ? o.interns : base.interns,
+    eodAt: typeof o.eodAt === "string" && (o.eodAt === "" || /^\d{1,2}:\d{2}$/.test(o.eodAt)) ? o.eodAt : base.eodAt,
   };
 }

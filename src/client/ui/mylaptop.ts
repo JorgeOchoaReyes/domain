@@ -57,10 +57,11 @@ export class MyLaptop {
   private loopGoal: string | null = null;
   private renderKey = "";
 
-  // Browser
-  private url: string | null = null;
-  private back: string[] = [];
-  private fwd: string[] = [];
+  // Browser: tabs, each with its own page and history (kept across visits).
+  private tabs: BrowserTab[] = loadTabs();
+  private activeTab = 0;
+  private frames = new Map<number, HTMLIFrameElement>();
+  private nextTabId = 1;
 
   // Workers' terminal
   private term: Terminal | null = null;
@@ -291,8 +292,16 @@ export class MyLaptop {
 
   // --- browser ----------------------------------------------------------------------
 
+  private get tab(): BrowserTab {
+    if (!this.tabs.length) this.tabs.push(newTab());
+    this.activeTab = Math.min(this.activeTab, this.tabs.length - 1);
+    return this.tabs[this.activeTab];
+  }
+
   private showBrowser(): void {
+    this.frames.clear();
     this.content.innerHTML = `
+      <div class="br-tabs"></div>
       <div class="br-bar">
         <button class="br-btn back" title="Back">←</button>
         <button class="br-btn fwd" title="Forward">→</button>
@@ -300,7 +309,6 @@ export class MyLaptop {
         <form class="br-url"><input type="text" spellcheck="false" placeholder="localhost:3000" /></form>
         <button class="br-btn ext" title="Open in your browser">↗</button>
       </div>
-      <div class="br-chips"></div>
       <div class="br-view"></div>`;
     const input = this.content.querySelector<HTMLInputElement>(".br-url input")!;
     input.addEventListener("keydown", (e) => {
@@ -311,50 +319,101 @@ export class MyLaptop {
       this.navigate(input.value);
     });
     this.content.querySelector(".back")!.addEventListener("click", () => {
-      const u = this.back.pop();
+      const t = this.tab;
+      const u = t.back.pop();
       if (!u) return;
-      if (this.url) this.fwd.push(this.url);
+      if (t.url) t.fwd.push(t.url);
       this.navigate(u, false);
     });
     this.content.querySelector(".fwd")!.addEventListener("click", () => {
-      const u = this.fwd.pop();
+      const t = this.tab;
+      const u = t.fwd.pop();
       if (!u) return;
-      if (this.url) this.back.push(this.url);
+      if (t.url) t.back.push(t.url);
       this.navigate(u, false);
     });
     this.content.querySelector(".reload")!.addEventListener("click", () => {
-      const f = this.content.querySelector<HTMLIFrameElement>(".br-view iframe");
+      const f = this.frames.get(this.tab.id);
       if (f) f.src = f.src;
       else this.actions.send({ t: "probe" });
     });
     this.content.querySelector(".ext")!.addEventListener("click", () => {
-      if (this.url) window.open(this.url, "_blank", "noopener");
+      if (this.tab.url) window.open(this.tab.url, "_blank", "noopener");
     });
-    this.content.querySelector(".br-chips")!.addEventListener("click", (e) => {
+    this.content.querySelector(".br-tabs")!.addEventListener("click", (e) => {
+      const el = e.target as HTMLElement;
+      const close = el.closest<HTMLElement>("[data-close]");
+      if (close) return this.closeTab(Number(close.dataset.close));
+      if (el.closest(".br-new")) return this.openTab(null);
+      const t = el.closest<HTMLElement>("[data-tab]");
+      if (t) this.switchTab(Number(t.dataset.tab));
+    });
+    // Middle-click closes a tab, like any browser.
+    this.content.querySelector(".br-tabs")!.addEventListener("auxclick", (e) => {
+      const t = (e.target as HTMLElement).closest<HTMLElement>("[data-tab]");
+      if (t && (e as MouseEvent).button === 1) this.closeTab(Number(t.dataset.tab));
+    });
+    this.content.querySelector(".br-view")!.addEventListener("click", (e) => {
       const c = (e.target as HTMLElement).closest<HTMLElement>("[data-url]");
       if (c) this.navigate(c.dataset.url!);
       else if ((e.target as HTMLElement).closest(".scan")) this.actions.send({ t: "probe" });
     });
-    if (!this.url) this.url = loopState.config?.preview ?? loopState.devServers.find((u) => !isSelf(u)) ?? null;
+    // The first visit opens your app, if it's running.
+    if (!this.tab.url && this.tabs.length === 1) this.tab.url = loopState.config?.preview ?? loopState.devServers.find((u) => !isSelf(u)) ?? null;
     this.renderBrowserChrome();
     this.loadFrame();
   }
 
+  /** The URLs worth a click: the preview and any dev servers running. */
+  private devUrls(): string[] {
+    return [...new Set([loopState.config?.preview, ...loopState.devServers].filter((u): u is string => !!u && !isSelf(u)))];
+  }
+
   private renderBrowserChrome(): void {
-    if (this.app !== "browser" || !this.content.querySelector(".br-chips")) return;
-    const urls = [...new Set([loopState.config?.preview, ...loopState.devServers].filter((u): u is string => !!u && !isSelf(u)))];
-    this.content.querySelector(".br-chips")!.innerHTML =
-      urls.map((u) => `<button class="chip ${u === this.url ? "on" : ""}" data-url="${esc(u)}">${u === loopState.config?.preview ? "⭐ " : "🟢 "}${esc(u.replace(/^https?:\/\//, ""))}</button>`).join("") +
-      `<button class="chip scan" title="Look for dev servers again">🔎 Scan</button>`;
+    if (this.app !== "browser" || !this.content.querySelector(".br-tabs")) return;
+    const label = (t: BrowserTab) => (t.url ? t.url.replace(/^https?:\/\//, "").replace(/\/$/, "") : "New tab");
+    this.content.querySelector(".br-tabs")!.innerHTML =
+      this.tabs
+        .map(
+          (t, i) =>
+            `<div class="br-tab ${i === this.activeTab ? "on" : ""}" data-tab="${t.id}" title="${esc(t.url ?? "New tab")}"><span>${t.url ? "🌐" : "✨"} ${esc(label(t).slice(0, 28))}</span><button class="br-x" data-close="${t.id}" title="Close tab">×</button></div>`,
+        )
+        .join("") + `<button class="br-new" title="New tab">＋</button>`;
     const input = this.content.querySelector<HTMLInputElement>(".br-url input")!;
-    if (document.activeElement !== input) input.value = this.url ?? "";
-    this.content.querySelector<HTMLButtonElement>(".back")!.disabled = !this.back.length;
-    this.content.querySelector<HTMLButtonElement>(".fwd")!.disabled = !this.fwd.length;
-    // A dev server turned up while the browser was empty: open it.
-    if (!this.url && urls[0]) {
-      this.url = urls[0];
-      this.loadFrame();
-    }
+    if (document.activeElement !== input) input.value = this.tab.url ?? "";
+    this.content.querySelector<HTMLButtonElement>(".back")!.disabled = !this.tab.back.length;
+    this.content.querySelector<HTMLButtonElement>(".fwd")!.disabled = !this.tab.fwd.length;
+    // A blank tab lists what's running: refresh it when that changes.
+    if (!this.tab.url) this.loadFrame();
+    saveTabs(this.tabs);
+  }
+
+  private openTab(url: string | null): void {
+    this.tabs.push({ ...newTab(), id: this.nextTabId++ + Date.now(), url });
+    this.activeTab = this.tabs.length - 1;
+    this.renderBrowserChrome();
+    this.loadFrame();
+    if (!url) setTimeout(() => this.content.querySelector<HTMLInputElement>(".br-url input")?.focus(), 0);
+  }
+
+  private closeTab(id: number): void {
+    const i = this.tabs.findIndex((t) => t.id === id);
+    if (i < 0) return;
+    this.frames.get(id)?.remove();
+    this.frames.delete(id);
+    this.tabs.splice(i, 1);
+    if (!this.tabs.length) this.tabs.push(newTab());
+    if (this.activeTab >= i) this.activeTab = Math.max(0, this.activeTab - 1);
+    this.renderBrowserChrome();
+    this.loadFrame();
+  }
+
+  private switchTab(id: number): void {
+    const i = this.tabs.findIndex((t) => t.id === id);
+    if (i < 0 || i === this.activeTab) return;
+    this.activeTab = i;
+    this.renderBrowserChrome();
+    this.loadFrame();
   }
 
   private navigate(raw: string, record = true): void {
@@ -367,30 +426,44 @@ export class MyLaptop {
     } catch {
       return;
     }
-    if (record && this.url && this.url !== u) {
-      this.back.push(this.url);
-      this.fwd = [];
+    const t = this.tab;
+    if (record && t.url && t.url !== u) {
+      t.back.push(t.url);
+      t.fwd = [];
     }
-    this.url = u;
+    t.url = u;
+    const f = this.frames.get(t.id);
+    if (f) f.src = u;
     this.loadFrame();
     this.renderBrowserChrome();
   }
 
+  /** Show the active tab: its page (each tab keeps its own, so switching doesn't reload), or a blank tab's start page. */
   private loadFrame(): void {
     const view = this.content.querySelector<HTMLElement>(".br-view");
     if (!view) return;
-    if (!this.url) {
-      view.innerHTML = `<div class="lt-empty"><div class="big">🌐</div><h3>Nothing running yet</h3>
-        <p>Start your app's dev server (for example <code>npm run dev</code>) or ask a worker to, then hit <b>🔎 Scan</b>.<br/>
-        Set <code>"preview"</code> in <code>domain.config.json</code> to open it here every time.</p></div>`;
+    const t = this.tab;
+    view.querySelector(".lt-empty")?.remove();
+    for (const [id, f] of this.frames) f.style.display = id === t.id ? "" : "none";
+    if (!t.url) {
+      const urls = this.devUrls();
+      view.insertAdjacentHTML(
+        "beforeend",
+        `<div class="lt-empty"><div class="big">🌐</div><h3>${urls.length ? "Open something" : "Nothing running yet"}</h3>
+        ${urls.length ? `<div class="br-start">${urls.map((u) => `<button class="chip" data-url="${esc(u)}">${u === loopState.config?.preview ? "⭐ " : "🟢 "}${esc(u.replace(/^https?:\/\//, ""))}</button>`).join("")}</div>` : ""}
+        <p>Type an address above, or start your app's dev server (for example <code>npm run dev</code>) or ask a worker to.<br/>
+        <button class="chip scan">🔎 Scan for dev servers</button> · set <code>"preview"</code> in <code>domain.config.json</code> to open it here every time.</p></div>`,
+      );
       return;
     }
-    view.innerHTML = "";
-    const f = document.createElement("iframe");
-    f.src = this.url;
-    f.allow = "clipboard-read; clipboard-write; fullscreen";
-    f.referrerPolicy = "no-referrer";
-    view.appendChild(f);
+    if (!this.frames.has(t.id)) {
+      const f = document.createElement("iframe");
+      f.src = t.url;
+      f.allow = "clipboard-read; clipboard-write; fullscreen";
+      f.referrerPolicy = "no-referrer";
+      view.appendChild(f);
+      this.frames.set(t.id, f);
+    }
   }
 
   // --- workers' terminals -------------------------------------------------------------
@@ -619,3 +692,38 @@ function isSelf(u: string): boolean {
     return false;
   }
 }
+
+// --- browser tabs, remembered in this browser ------------------------------------------------
+
+interface BrowserTab {
+  id: number;
+  url: string | null;
+  back: string[];
+  fwd: string[];
+}
+
+const TABS_KEY = "domain.laptopTabs";
+let tabSeq = 1;
+function newTab(): BrowserTab {
+  return { id: tabSeq++, url: null, back: [], fwd: [] };
+}
+
+function loadTabs(): BrowserTab[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(TABS_KEY) ?? "[]") as unknown;
+    const urls = Array.isArray(raw) ? raw.filter((u): u is string => typeof u === "string" && /^https?:\/\//.test(u)).slice(0, 12) : [];
+    if (urls.length) return urls.map((url) => ({ ...newTab(), url }));
+  } catch {
+    /* none saved */
+  }
+  return [newTab()];
+}
+
+function saveTabs(tabs: BrowserTab[]): void {
+  try {
+    localStorage.setItem(TABS_KEY, JSON.stringify(tabs.map((t) => t.url).filter(Boolean)));
+  } catch {
+    /* fine */
+  }
+}
+

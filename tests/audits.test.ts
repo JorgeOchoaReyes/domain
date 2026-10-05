@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Audits, type AuditOffice } from "../src/server/audits.ts";
@@ -133,4 +133,22 @@ test("at the end only: a checkpoint-titled report is just finished work", () => 
   const { audits, log } = setup(3);
   audits.builderReady("desk-1", checkpoint(1));
   assert.ok(log.some((l) => /Being audited by Grace \(round 1 of 3\)/.test(l)));
+});
+
+test("an auditor with work of its own waiting: its verdict comes by its own file, its own report untouched", async () => {
+  const { audits, log, released, dirs } = setup(3);
+  // desk-2 audits desk-1, and desk-1 audits desk-2: both finish at once.
+  audits.start("desk-2", "desk-1", "Pricing", 3);
+  audits.builderReady("desk-1", done("Login done"));
+  audits.builderReady("desk-2", done("Pricing done"));
+  // desk-2's own report isn't a verdict on desk-1's work.
+  assert.equal(audits.auditorReport("desk-2", { ...done("Pricing done") }), false);
+  assert.ok(!log.some((l) => l === "dismiss desk-2"), "its own work stays in place");
+  // Its verdict on desk-1 comes by the verdict file named in its brief.
+  for (let i = 0; i < 100 && !log.some((l) => l.startsWith("tell desk-2")); i++) await new Promise((r) => setTimeout(r, 50));
+  const file = /verdict as JSON to (\S+\.json)/.exec(log.find((l) => l.startsWith("tell desk-2"))!)![1];
+  assert.ok(file.startsWith(dirs["desk-2"]));
+  writeFileSync(file, JSON.stringify({ status: "ready", summary: "Good" }));
+  audits.checkVerdicts();
+  assert.deepEqual(released, ["desk-1"]);
 });

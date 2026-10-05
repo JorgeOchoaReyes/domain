@@ -1,3 +1,5 @@
+import { Autopilot } from "./autopilot.js";
+import { BAY_DESK_IDS, DESKS } from "../shared/layout.js";
 import { Lessons } from "./lessons.js";
 import { EodSync } from "./sync.js";
 import { scanSkills } from "./skills.js";
@@ -12,7 +14,7 @@ import { localModelWarning } from "./workerSession.js";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, normalize, extname } from "node:path";
 import { WebSocketServer, WebSocket } from "ws";
@@ -333,18 +335,20 @@ const audits = new Audits({
   simulate: SIMULATE
     ? {
         // A scripted auditor finds two things the first time and approves the second.
-        verdict: (auditor, report) =>
+        verdict: (auditor, report, file) =>
           setTimeout(() => {
             // Every other look finds something: issues first, then an approval.
             const n = simAudited.get(auditor) ?? 0;
             simAudited.set(auditor, n + 1);
             const first = n % 2 === 0;
             void report;
-            office.setReport(
-              auditor,
-              first
-                ? { status: "blocked", title: "Audit", summary: "Two things to fix before it's ready", slides: ["The empty case isn't handled", "A helper is misnamed"], at: Date.now() }
-                : { status: "ready", title: "Audit", summary: "Looks good now — both fixed", slides: [], at: Date.now() },
+            writeFileSync(
+              file,
+              JSON.stringify(
+                first
+                  ? { status: "blocked", summary: "Two things to fix before it's ready", slides: ["The empty case isn't handled", "A helper is misnamed"] }
+                  : { status: "ready", summary: "Looks good now — both fixed" },
+              ),
             );
           }, 4000).unref(),
         recall: (builder) => setTimeout(() => office.roundup([builder]), 6000).unref(),
@@ -353,6 +357,7 @@ const audits = new Audits({
 });
 const simAudited = new Map<string, number>();
 setInterval(() => audits.tick(), 10_000).unref();
+setInterval(() => audits.checkVerdicts(), 3_000).unref();
 
 office.onReport = (presentation) => {
   const { deskId, report } = presentation;
@@ -614,19 +619,7 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
         break;
       }
       case "fire": {
-        const ws = office.workspaceOf(msg.deskId);
-        const leaving = workerRef(msg.deskId);
-        if (office.fire(msg.deskId)) {
-          audits.forget(msg.deskId);
-          if (leaving) history.add({ kind: "left", who: client.name, text: `${leaving.name} went home`, worker: leaving });
-          progress.unlinkDesk(msg.deskId);
-          // Its MCP configs may hold tokens: they go with it.
-          mcpCleanup(CWD, msg.deskId);
-          gateTries.delete(msg.deskId);
-          if (ws && office.workspaces?.remove(ws) === "kept") {
-            broadcast({ t: "loop", goalId: "", event: "mergeFailed", text: `🌿 Kept ${ws.branch} — it has work that isn't on your branch yet` });
-          }
-        }
+        fireWorker(client.name, msg.deskId);
         break;
       }
       case "open": {
@@ -646,50 +639,7 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
         break;
       }
       case "review": {
-        const wasPlan = office.reportStatus(msg.deskId) === "plan";
-        const ws = office.workspaceOf(msg.deskId);
-        if (msg.approve && !wasPlan && ws && office.workspaces && progress.policy.merge === "auto") {
-          const at = progress.taskAt(msg.deskId);
-          const title = at?.title ?? "work";
-          office.workspaces.commitAll(office.workdir(msg.deskId), `domain: ${title}`);
-          const m = office.workspaces.merge(ws.branch, title);
-          if (m.outcome === "conflict") {
-            // It can't land cleanly: back to the worker to resolve, not onto your branch.
-            const base = office.workspaces.base() ?? "your branch";
-            if (office.review(msg.deskId, false, `Approved — but your branch conflicts with ${base}. Merge ${base} into your branch, resolve the conflicts, make sure the checks pass, and present again.`)) {
-              progress.reviewed(client.name, msg.deskId, false);
-            }
-            broadcast({ t: "loop", goalId: at?.goal.id ?? "", event: "mergeFailed", text: `🌿 ${m.message} — sent back to resolve` });
-            break;
-          }
-          if (m.outcome === "merged") broadcast({ t: "loop", goalId: at?.goal.id ?? "", event: "merged", text: `🌿 ${m.message}` });
-          else if (m.outcome === "dirty" || m.outcome === "error") broadcast({ t: "loop", goalId: at?.goal.id ?? "", event: "mergeFailed", text: `🌿 ${m.message}` });
-        }
-        const reviewed = office.review(
-          msg.deskId,
-          !!msg.approve,
-          str(msg.text, 8000) ?? undefined,
-          typeof msg.sketch === "string" ? msg.sketch : undefined,
-        );
-        if (reviewed) {
-          const task = progress.taskAt(msg.deskId);
-          // Your feedback is something the whole team learns from.
-          const said = str(msg.text, 8000)?.trim();
-          if (!msg.approve && said && !wasPlan) lessons.note({ from: "you", text: said, about: task?.title, kind: "feedback" });
-          progress.reviewed(client.name, msg.deskId, !!msg.approve, wasPlan);
-          history.add({
-            kind: msg.approve ? "approved" : "changes",
-            who: client.name,
-            text: msg.approve
-              ? `${client.name} approved ${wasPlan ? "the plan of" : "the work of"} ${nameAt(msg.deskId)}${task ? ` on “${task.title}”` : ""}`
-              : `${client.name} sent ${nameAt(msg.deskId)} back with changes${task ? ` on “${task.title}”` : ""}`,
-            worker: workerRef(msg.deskId),
-            goalId: task?.goal.id,
-            task: task?.title,
-          });
-          // A group's member who finished gets the goal's next task.
-          if (msg.approve && !wasPlan && task?.goal.group?.includes(msg.deskId)) setTimeout(() => groupContinue(task.goal.id, client.name), 2500).unref();
-        }
+        reviewWork(client.name, msg.deskId, !!msg.approve, str(msg.text, 8000) ?? undefined, typeof msg.sketch === "string" ? msg.sketch : undefined);
         break;
       }
       case "goalCreate": {
@@ -918,6 +868,70 @@ function assignTask(who: string, goalId: string, taskId: string, deskId: string,
   return true;
 }
 
+/** Send a worker home: its pairing, its MCP configs and (if it's merged) its branch go with it. */
+function fireWorker(who: string, deskId: string): boolean {
+  const ws = office.workspaceOf(deskId);
+  const leaving = workerRef(deskId);
+  if (!office.fire(deskId)) return false;
+  office.setInternOf(deskId, undefined);
+  audits.forget(deskId);
+  if (leaving) history.add({ kind: "left", who, text: `${leaving.name} went home`, worker: leaving });
+  progress.unlinkDesk(deskId);
+  // Its MCP configs may hold tokens: they go with it.
+  mcpCleanup(CWD, deskId);
+  gateTries.delete(deskId);
+  if (ws && office.workspaces?.remove(ws) === "kept") {
+    broadcast({ t: "loop", goalId: "", event: "mergeFailed", text: `🌿 Kept ${ws.branch} — it has work that isn't on your branch yet` });
+  }
+  return true;
+}
+
+/**
+ * A review's outcome — yours, or autopilot's: approve (merging the worker's
+ * branch, when merges are automatic) or send back with changes. Feedback is
+ * something the whole team learns from.
+ */
+function reviewWork(who: string, deskId: string, approve: boolean, text?: string, sketch?: string): boolean {
+  const wasPlan = office.reportStatus(deskId) === "plan";
+  const ws = office.workspaceOf(deskId);
+  if (approve && !wasPlan && ws && office.workspaces && progress.policy.merge === "auto") {
+    const at = progress.taskAt(deskId);
+    const title = at?.title ?? "work";
+    office.workspaces.commitAll(office.workdir(deskId), `domain: ${title}`);
+    const m = office.workspaces.merge(ws.branch, title);
+    if (m.outcome === "conflict") {
+      // It can't land cleanly: back to the worker to resolve, not onto your branch.
+      const base = office.workspaces.base() ?? "your branch";
+      if (office.review(deskId, false, `Approved — but your branch conflicts with ${base}. Merge ${base} into your branch, resolve the conflicts, make sure the checks pass, and present again.`)) {
+        progress.reviewed(who, deskId, false);
+      }
+      broadcast({ t: "loop", goalId: at?.goal.id ?? "", event: "mergeFailed", text: `🌿 ${m.message} — sent back to resolve` });
+      return false;
+    }
+    if (m.outcome === "merged") broadcast({ t: "loop", goalId: at?.goal.id ?? "", event: "merged", text: `🌿 ${m.message}` });
+    else if (m.outcome === "dirty" || m.outcome === "error") broadcast({ t: "loop", goalId: at?.goal.id ?? "", event: "mergeFailed", text: `🌿 ${m.message}` });
+  }
+  const reviewed = office.review(deskId, approve, text, sketch);
+  if (!reviewed) return false;
+  const task = progress.taskAt(deskId);
+  const said = text?.trim();
+  if (!approve && said && !wasPlan) lessons.note({ from: who === "Autopilot" ? "Autopilot" : "you", text: said, about: task?.title, kind: "feedback" });
+  progress.reviewed(who, deskId, approve, wasPlan);
+  history.add({
+    kind: approve ? "approved" : "changes",
+    who,
+    text: approve
+      ? `${who} approved ${wasPlan ? "the plan of" : "the work of"} ${nameAt(deskId)}${task ? ` on “${task.title}”` : ""}`
+      : `${who} sent ${nameAt(deskId)} back with changes${task ? ` on “${task.title}”` : ""}`,
+    worker: workerRef(deskId),
+    goalId: task?.goal.id,
+    task: task?.title,
+  });
+  // A group's member who finished gets the goal's next task.
+  if (approve && !wasPlan && task?.goal.group?.includes(deskId)) setTimeout(() => groupContinue(task.goal.id, who), 2500).unref();
+  return true;
+}
+
 /**
  * A group works a goal together: if it has no tasks yet, its first member
  * plans it; otherwise every member who's free gets the next task to do.
@@ -1015,6 +1029,62 @@ office.mcpFor = (deskId, agent, identity) => {
     return null;
   }
 };
+
+// --- autopilot: the office runs itself --------------------------------------------------------
+
+/** A worker's request for interns ({"interns": ["…"]} in its .domain/requests/<desk>.json), read and cleared. */
+function internRequests(): { deskId: string; pieces: string[] }[] {
+  const out: { deskId: string; pieces: string[] }[] = [];
+  for (const d of office.snapshot().desks) {
+    if (!d.worker || d.worker.internOf) continue;
+    const file = join(office.workdir(d.id), ".domain", "requests", `${d.id}.json`);
+    if (!existsSync(file)) continue;
+    try {
+      const raw = JSON.parse(readFileSync(file, "utf8")) as { interns?: unknown };
+      const pieces = Array.isArray(raw.interns) ? raw.interns.filter((x): x is string => typeof x === "string" && x.trim().length > 3).map((x) => x.trim().slice(0, 200)) : [];
+      if (pieces.length) out.push({ deskId: d.id, pieces });
+    } catch {
+      /* half-written: next time */
+      continue;
+    }
+    rmSync(file, { force: true });
+  }
+  return out;
+}
+
+const autopilot = new Autopilot({
+  policy: () => progress.policy,
+  goals: () => progress.snapshot().goals,
+  desks: () => office.snapshot().desks,
+  line: () => office.snapshot().presentations,
+  isAuditing: (d) => audits.isAuditing(d),
+  assign: (g, t, d, brief) => void assignTask("Autopilot", g, t, d, brief),
+  plan: (g, d) => startPlan("Autopilot", g, d),
+  approve: (d) => void reviewWork("Autopilot", d, true),
+  addTask: (g, title) => progress.addTask(g, title),
+  hire: (deskId, agent, model, leash, mentor) => {
+    if (!office.hire(deskId, agent, "Autopilot", model, leash, progress.policy.isolate, null)) return false;
+    office.setInternOf(deskId, mentor);
+    history.add({ kind: "hired", who: "Autopilot", text: `${nameAt(mentor)} brought in an intern at ${deskId.replace("desk-", "desk ")}`, worker: workerRef(deskId) });
+    return true;
+  },
+  fire: (d) => void fireWorker("Autopilot", d),
+  requests: internRequests,
+  internDesks: () => [...BAY_DESK_IDS, ...DESKS.map((d) => d.id).filter((id) => !BAY_DESK_IDS.includes(id))],
+  eod: () => void eod.run(),
+  note: (text, deskId) => {
+    history.add({ kind: "audit", who: "Autopilot", text, ...(deskId ? { worker: workerRef(deskId) } : {}) });
+    broadcast({ t: "loop", goalId: "", event: "warn", text: `🤖 ${text}` });
+  },
+});
+setInterval(() => autopilot.tick(), 20_000).unref();
+
+// Workers can ask for interns when the policy allows it.
+briefNotes.push(() =>
+  progress.policy.autopilot.interns
+    ? ` If this task splits into independent pieces, you can bring in up to three interns: write {"interns": ["one piece, described fully", "…"]} to .domain/requests/$DOMAIN_DESK.json — each gets one piece at the intern bay, and you review their work before it reaches your manager.`
+    : "",
+);
 
 // In the desktop app the server runs in a background process of its own:
 // hook up the app's folder picker and relaunch before the modules read them.

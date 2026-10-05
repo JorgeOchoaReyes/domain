@@ -145,3 +145,16 @@
   .lt-logo { display: none; }
   .kind-pick { grid-template-columns: 1fr; }
 }
+
+/* Laptop browser tabs */
+.br-tabs { display: flex; align-items: flex-end; gap: 2px; padding: 6px 8px 0; background: #e9e1d6; overflow-x: auto; }
+.br-tab { display: flex; align-items: center; gap: 6px; max-width: 220px; padding: 5px 6px 5px 10px; border-radius: 10px 10px 0 0; background: #d8cfc2; cursor: pointer; font-size: 12px; font-weight: 800; color: var(--ink); white-space: nowrap; }
+.br-tab span { overflow: hidden; text-overflow: ellipsis; }
+.br-tab.on { background: #fbf7f1; }
+.br-tab:hover:not(.on) { background: #e1d8cc; }
+.br-x { border: 0; background: none; font: 900 14px var(--font); color: var(--muted); cursor: pointer; border-radius: 6px; padding: 0 4px; line-height: 18px; }
+.br-x:hover { background: #ef476f; color: #fff; }
+.br-new { border: 0; background: none; font: 900 16px var(--font); cursor: pointer; padding: 2px 8px 6px; color: var(--ink); border-radius: 8px; }
+.br-new:hover { background: #d8cfc2; }
+.br-view { position: relative; }
+.br-start { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; margin: 8px 0; }

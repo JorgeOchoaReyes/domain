@@ -35,6 +35,8 @@ interface Seat {
   mcp?: string[];
   /** The skills it can use (names, to show). */
   skills?: string[];
+  /** An intern: its mentor's desk. */
+  internOf?: string;
   /**
    * Lines to type once the question on its screen is answered: typed into a
    * permission menu, a message could pick one of its options.
@@ -407,6 +409,14 @@ export class Office {
     else typeLine(seat.session, line);
   }
 
+  /** Mark a desk's worker as an intern of another (cleared when it leaves). */
+  setInternOf(deskId: string, mentor: string | undefined): void {
+    const seat = this.seats.find((s) => s.desk.id === deskId);
+    if (!seat) return;
+    seat.internOf = mentor;
+    this.changed();
+  }
+
   /** Whether someone's working at a desk (not asleep, not empty). */
   isStaffed(deskId: string): boolean {
     const seat = this.seats.find((s) => s.desk.id === deskId);
@@ -702,6 +712,7 @@ export class Office {
               ...s.desk.worker,
               ...(s.mcp?.length ? { mcp: s.mcp } : {}),
               ...(s.skills?.length ? { skills: s.skills } : {}),
+              ...(s.internOf && s.desk.worker ? { internOf: s.internOf } : {}),
               ...(s.desk.worker.status === "working" && s.session?.doing?.() ? { doing: s.session.doing() } : {}),
             }
           : null,

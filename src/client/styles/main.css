@@ -700,3 +700,6 @@ body[data-guest] .host-only { display: none !important; }
 .ls-list { margin: 6px 0 0; padding-left: 22px; display: flex; flex-direction: column; gap: 4px; font-weight: 700; }
 .ls-notes { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; font-size: 13px; max-height: 260px; overflow-y: auto; }
 .ls-none { color: var(--muted); font-weight: 600; margin: 4px 0; }
+.po-auto { border: 2px solid var(--ink); border-radius: 14px; padding: 10px 12px; background: #fff8e6; }
+.po-eod { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.po-eod input { font: inherit; border: 2px solid var(--ink); border-radius: 8px; padding: 2px 6px; }

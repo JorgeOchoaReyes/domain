@@ -30,6 +30,16 @@ export function openPolicy(policy: TeamPolicy, onSave: (p: TeamPolicy) => void):
   const body = document.createElement("div");
   body.className = "policy";
   body.innerHTML = `
+    <section class="po-auto">
+      <h4>🤖 Autopilot</h4>
+      <label class="as-check"><input type="checkbox" class="po-auto-on" ${p.autopilot.on ? "checked" : ""} />
+        <span><b>Run the office for me</b> — goals get planned, free workers pick up the next tasks (deadlines first) with a teammate auditing, and when a goal's tasks are all done its lead pulls it together and presents the whole. You get questions, plans, and the finished result.</span></label>
+      <label class="as-check"><input type="checkbox" class="po-auto-approve" ${p.autopilot.approveAudited ? "checked" : ""} />
+        <span><b>Approve audited work</b> — work whose checks passed and whose auditor approved it doesn't wait for you</span></label>
+      <label class="as-check"><input type="checkbox" class="po-auto-interns" ${p.autopilot.interns ? "checked" : ""} />
+        <span><b>🎓 Workers may bring in interns</b> — for the independent pieces of a task (up to three at a time, at the intern bay); they review their interns' work, and interns go home when there's nothing left</span></label>
+      <label class="as-check po-eod"><span><b>🌙 End-of-day sync at</b></span> <input type="time" class="po-auto-eod" value="${esc(p.autopilot.eodAt)}" /> <span class="as-hint">everyone writes up what they learned; one merges it into the team's lessons</span></label>
+    </section>
     <section>
       <h4>Models</h4>
       <p class="as-note">The models offered when you hire or hand out a task — names your CLI accepts for <code>--model</code>, comma-separated. A new hire starts on the default.</p>
@@ -151,6 +161,12 @@ export function openPolicy(policy: TeamPolicy, onSave: (p: TeamPolicy) => void):
     }
     const done = body.querySelector<HTMLTextAreaElement>(".po-done")!.value.split("\n").map((x) => x.trim()).filter(Boolean);
     if (done.length) p.done = done;
+    p.autopilot = {
+      on: body.querySelector<HTMLInputElement>(".po-auto-on")!.checked,
+      approveAudited: body.querySelector<HTMLInputElement>(".po-auto-approve")!.checked,
+      interns: body.querySelector<HTMLInputElement>(".po-auto-interns")!.checked,
+      eodAt: body.querySelector<HTMLInputElement>(".po-auto-eod")!.value,
+    };
     modal.close();
     onSave(p);
   });

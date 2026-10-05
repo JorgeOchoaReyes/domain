@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Report } from "../shared/protocol.js";
 
@@ -42,7 +42,7 @@ export interface AuditDeps {
   /** What an auditor found wrong (for the team's lessons). */
   onFinding?(builder: string, task: string, issues: string): void;
   /** Simulated workers: act out the auditor's verdicts and the builder's fixes. */
-  simulate?: { verdict(auditor: string, report: Report): void; recall(builder: string): void };
+  simulate?: { verdict(auditor: string, report: Report, file: string): void; recall(builder: string): void };
   /** How long an audit may take before the work comes to you anyway. */
   maxAuditMs?: number;
 }
@@ -65,6 +65,12 @@ interface Pair {
   checkpoints: number;
   /** Times the work went back to the builder: at the limit, it comes to you as it is. */
   sendBacks: number;
+  /**
+   * Where the auditor writes its verdict — its own file, not its report: an
+   * auditor can have work of its own waiting too, and one report file can't
+   * hold both.
+   */
+  verdictFile: string | null;
 }
 
 /** At most this many checkpoints are audited; later ones go straight through. */
@@ -102,6 +108,7 @@ export class Audits {
       checkpoint: false,
       checkpoints: 0,
       sendBacks: 0,
+      verdictFile: null,
     });
     return true;
   }
@@ -156,13 +163,42 @@ export class Audits {
     return true;
   }
 
-  /** An auditor's report: its verdict. True if it was one (then it isn't for you). */
+  /**
+   * An auditor's report used as its verdict (if it wrote there instead of its
+   * verdict file). Only when it has no work of its own waiting — then its
+   * report is its own. True if it was a verdict (then it isn't for you).
+   */
   auditorReport(auditor: string, report: Report): boolean {
     const p = [...this.pairs.values()].find((x) => x.auditor === auditor && x.phase === "auditing");
     if (!p) return false;
+    const ownWorkWaiting = [...this.pairs.values()].some((x) => x.builder === auditor && x.phase === "auditing");
+    if (ownWorkWaiting) return false;
+    this.deps.office.dismiss(auditor, report.status === "ready" ? "[Audit] Thanks — your approval is on its way to your manager. Carry on." : "[Audit] Thanks — the issues are with the builder now. You'll be asked again when it's fixed.");
+    this.verdict(p, report);
+    return true;
+  }
+
+  /** Verdicts written to their files (call every few seconds). */
+  checkVerdicts(): void {
+    for (const p of [...this.pairs.values()]) {
+      if (p.phase !== "auditing" || !p.verdictFile || !existsSync(p.verdictFile)) continue;
+      let raw: Record<string, unknown>;
+      try {
+        raw = JSON.parse(readFileSync(p.verdictFile, "utf8"));
+      } catch {
+        continue; // half-written: next time
+      }
+      rmSync(p.verdictFile, { force: true });
+      const slides = Array.isArray(raw.slides) ? raw.slides.filter((x): x is string => typeof x === "string").slice(0, 12) : [];
+      const v: Report = { status: raw.status === "ready" ? "ready" : "blocked", title: "Audit", summary: typeof raw.summary === "string" ? raw.summary.slice(0, 2000) : "", slides, at: Date.now() };
+      this.deps.office.instruct(p.auditor, v.status === "ready" ? "[Audit] Thanks — your approval is on its way. Carry on with what you were doing." : "[Audit] Thanks — the issues are with the builder now. You'll be asked again when it's fixed.");
+      this.verdict(p, v);
+    }
+  }
+
+  private verdict(p: Pair, report: Report): void {
     const approved = report.status === "ready";
     const issues = [report.summary, ...report.slides].filter(Boolean).join(" · ");
-    this.deps.office.dismiss(auditor, approved ? "[Audit] Thanks — your approval is on its way to your manager. Carry on." : "[Audit] Thanks — the issues are with the builder now. You'll be asked again when it's fixed.");
     if (approved && p.checkpoint) {
       // A checkpoint passed: on to the next step (the finished work gets audited too).
       p.findings.push(`Checkpoint ${p.checkpoints}: approved — ${report.summary}`);
@@ -171,19 +207,19 @@ export class Audits {
       this.deps.note(`${this.deps.nameOf(p.auditor)} approved checkpoint ${p.checkpoints} of “${p.task}”`, p.builder, "audit");
       this.deps.office.dismiss(p.builder, `[Audit] ${this.deps.nameOf(p.auditor)} approved your checkpoint: ${report.summary.replace(/\s+/g, " ").slice(0, 300)} — carry on with the next step.`);
       this.deps.simulate?.recall(p.builder);
-      return true;
+      return;
     }
     if (approved) {
       p.findings.push(`Round ${p.round}: approved — ${report.summary}`);
       this.finish(p, `🔍 Audited by ${this.deps.nameOf(p.auditor)}: approved after ${p.round} round${p.round === 1 ? "" : "s"}`);
-      return true;
+      return;
     }
     p.findings.push(`${p.checkpoint ? `Checkpoint ${p.checkpoints}` : `Round ${p.round}`}: ${issues}`);
     this.deps.onFinding?.(p.builder, p.task, issues);
     p.sendBacks++;
     if (p.sendBacks >= p.max) {
       this.finish(p, `🔍 Audit stopped after ${p.max} round${p.max === 1 ? "" : "s"} — still open: ${issues}`);
-      return true;
+      return;
     }
     // Back to the builder with what the auditor found.
     p.phase = "building";
@@ -195,7 +231,6 @@ export class Audits {
       `[Audit] ${this.deps.nameOf(p.auditor)} reviewed your work (round ${p.round} of ${p.max}) and found: ${issues}. Fix these, then present again (status "ready") — it goes back to them before your manager.`,
     );
     this.deps.simulate?.recall(p.builder);
-    return true;
   }
 
   /** Audits that are taking too long come to you as they are. */
@@ -232,6 +267,8 @@ export class Audits {
     const diff = `${committed}\n${uncommitted}`.trim() || "(no changes in git — read the builder's summary)";
     const name = `audit-${p.builder}-round${p.round}.md`;
     const dir = join(this.deps.office.workdir(p.auditor), ".domain", "audit");
+    p.verdictFile = join(dir, `verdict-${p.builder}-round${p.round}.json`);
+    rmSync(p.verdictFile, { force: true });
     try {
       mkdirSync(dir, { recursive: true });
       writeFileSync(
@@ -243,8 +280,8 @@ export class Audits {
     }
     this.deps.office.instruct(
       p.auditor,
-      `[Audit] ${p.checkpoint ? `${this.deps.nameOf(p.builder)} reached checkpoint ${p.checkpoints} on “${p.task}” — not finished yet: check the direction and what's there so far.` : `${this.deps.nameOf(p.builder)} says “${p.task}” is done (round ${p.round} of ${p.max}).`} Before your manager sees it, audit it: read .domain/audit/${name} (their summary and the full diff). Check it does what the task asks, that nothing is broken or missing, and that it's clean. Don't change their files. Then write a report to $DOMAIN_REPORT_FILE: status "ready" if it's good to go (summary: why), or status "blocked" if not — one concrete problem per slide. Only real problems: if it's good, approve it.`,
+      `[Audit] ${p.checkpoint ? `${this.deps.nameOf(p.builder)} reached checkpoint ${p.checkpoints} on “${p.task}” — not finished yet: check the direction and what's there so far.` : `${this.deps.nameOf(p.builder)} says “${p.task}” is done (round ${p.round} of ${p.max}).`} Before your manager sees it, audit it: read .domain/audit/${name} (their summary and the full diff). Check it does what the task asks, that nothing is broken or missing, and that it's clean. Don't change their files. Then write your verdict as JSON to ${p.verdictFile} (not your own report file): {"status": "ready", "summary": "why it's good to go"} — or {"status": "blocked", "summary": "…", "slides": ["one concrete problem per line"]}. Only real problems: if it's good, approve it.`,
     );
-    this.deps.simulate?.verdict(p.auditor, report);
+    this.deps.simulate?.verdict(p.auditor, report, p.verdictFile);
   }
 }

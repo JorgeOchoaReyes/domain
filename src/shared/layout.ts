@@ -51,7 +51,34 @@ function buildDesks(): DeskDef[] {
   return desks;
 }
 
-export const DESKS: DeskDef[] = buildDesks();
+/**
+ * The intern bay: eight more desks along the north of the work floor (two
+ * pairs of back-to-back rows), for interns your workers bring in — and for a
+ * bigger team. Its walkway runs east just south of it.
+ */
+export const BAY = { x: [-11.5, -2.5], back: -10.3, front: -9.2, lane: -7.4 } as const;
+export const FIRST_BAY_DESK = 17;
+
+function buildBay(): DeskDef[] {
+  const desks: DeskDef[] = [];
+  let n = FIRST_BAY_DESK;
+  for (const cx of BAY.x) {
+    for (const [z, rotY] of [
+      [BAY.back, Math.PI],
+      [BAY.front, 0],
+    ] as const) {
+      for (const dx of [-DESK_SIZE.width / 2, DESK_SIZE.width / 2]) {
+        desks.push({ id: `desk-${n}`, label: `Bay ${n - FIRST_BAY_DESK + 1}`, x: cx + dx, z, rotY });
+        n++;
+      }
+    }
+  }
+  return desks;
+}
+
+export const DESKS: DeskDef[] = [...buildDesks(), ...buildBay()];
+/** The bay's desks (where interns sit). */
+export const BAY_DESK_IDS: readonly string[] = DESKS.filter((d) => Number(d.id.slice(5)) >= FIRST_BAY_DESK).map((d) => d.id);
 export const DESK_BY_ID = new Map(DESKS.map((d) => [d.id, d]));
 
 /** Where a desk's worker (and a player using the desk) stands or sits. */
@@ -154,6 +181,21 @@ const DOOR_IN: Pt = { x: DOOR_X, z: MY_OFFICE.minZ + 0.9 };
 function atDesks(p: Pt): boolean {
   return p.x < 3.2 && Math.abs(p.z) > 1.6 && Math.abs(p.z) < 7;
 }
+function atBay(p: Pt): boolean {
+  return p.x < 3.2 && p.z < BAY.lane - 0.3;
+}
+/** From a bay seat out to its walkway and east to the open floor. */
+function outOfBay(seat: Pt): Pt[] {
+  const pts: Pt[] = [];
+  if (seat.z < BAY.back) {
+    // The back row goes round the end of its pair first.
+    const cx = BAY.x.reduce((a, b) => (Math.abs(b - seat.x) < Math.abs(a - seat.x) ? b : a));
+    const end = cx + DESK_SIZE.width + 0.6;
+    pts.push({ x: end, z: seat.z }, { x: end, z: BAY.lane });
+  } else pts.push({ x: seat.x, z: BAY.lane });
+  pts.push({ x: 2.4, z: BAY.lane }, { x: 2.4, z: 0.6 });
+  return pts;
+}
 export function inMyOffice(p: Pt): boolean {
   return p.x > MY_OFFICE.minX + 0.1 && p.x < MY_OFFICE.maxX && p.z > MY_OFFICE.minZ + 0.1 && p.z < MY_OFFICE.maxZ;
 }
@@ -180,10 +222,14 @@ function outOfPod(seat: Pt): Pt[] {
  */
 export function route(from: Pt, to: Pt): Pt[] {
   const pts: Pt[] = [];
-  if (atDesks(from)) pts.push(...outOfPod(from), HUB);
+  if (atBay(from)) pts.push(...outOfBay(from), HUB);
+  else if (atDesks(from)) pts.push(...outOfPod(from), HUB);
   else if (inMyOffice(from)) pts.push(DOOR_IN, DOOR_OUT);
 
-  if (atDesks(to)) {
+  if (atBay(to)) {
+    if (!atBay(from)) pts.push(HUB);
+    pts.push(...outOfBay(to).reverse());
+  } else if (atDesks(to)) {
     if (!atDesks(from)) pts.push(HUB);
     pts.push(...outOfPod(to).reverse());
   } else if (inMyOffice(to)) {

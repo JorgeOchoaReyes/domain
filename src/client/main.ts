@@ -985,6 +985,11 @@ const phone = new Phone({
   standup: () => openStandupNow(),
   focus: () => openFocus(),
   lessons: () => openLessons((m) => net.send(m)),
+  autopilot: () => progress.policy.autopilot?.on ?? false,
+  setAutopilot: (on) => {
+    net.send({ t: "policySet", policy: { ...progress.policy, autopilot: { ...progress.policy.autopilot, on } } });
+    hud.toast(on ? "🤖 Autopilot on — the office runs itself; you'll hear about questions and finished goals" : "🤖 Autopilot off — you hand out the work");
+  },
   openHistory: () => openHistory((m) => net.send(m)),
   openLaptop: () => openLaptop(),
   travel: (p) => travelTo({ label: p.label, icon: p.icon, x: p.x, z: p.z, facing: p.facing }),

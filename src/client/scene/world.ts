@@ -498,7 +498,8 @@ export class World {
       // The card over its head also shows the task's clock, model and plan.
       const task = this.progress?.goals.flatMap((g) => g.tasks).find((t) => t.deskId === desk.id && t.status !== "done");
       const terms = task ? briefLine(task) : "";
-      view.bot.name = w.identity?.name ?? null;
+      const mentor = w.internOf ? this.desks.find((x) => x.id === w.internOf)?.worker : null;
+      view.bot.name = w.identity?.name ?? (w.internOf ? `Intern of ${mentor?.identity?.name ?? w.internOf.replace("desk-", "desk ")}` : null);
       view.bot.setCard(w.status, w.hiredBy, terms ? `${w.activity} · ${terms}` : w.activity, desk.id === this.presenting, w.doing ?? "");
     }
     for (const id of [...this.workers.keys()]) if (!seen.has(id)) this.removeWorker(id);

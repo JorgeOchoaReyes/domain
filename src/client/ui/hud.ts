@@ -203,7 +203,7 @@ export class Hud {
             const pillText = place ? `#${place} in line` : w.status === "working" && w.doing ? doingLabel(w.doing) : STATUS_LABEL[w.status];
             return `<li data-desk="${d.id}" class="${w.status === "waiting" ? "needs-you-row" : ""}" title="Open terminal">
               <span class="dot" style="background:${AGENT_COLOR[w.agent]}"></span>
-              <span class="name">${esc(workerName(w))} <span class="sub">${esc(d.label)} · ${esc(modelLabel(w.model))} · ${esc(w.activity)}${w.mcp?.length ? ` · 🧰 ${esc(w.mcp.join(", "))}` : ""}</span></span>
+              <span class="name">${esc(workerName(w))} <span class="sub">${esc(d.label)} · ${esc(modelLabel(w.model))} · ${esc(w.activity)}${w.mcp?.length ? ` · 🧰 ${esc(w.mcp.join(", "))}` : ""}${w.internOf ? ` · 🎓 intern of ${esc(w.internOf.replace("desk-", "desk "))}` : ""}</span></span>
               <span class="pill" style="background:${STATUS_BULB[w.status]}">${esc(pillText)}</span>
             </li>`;
           })
