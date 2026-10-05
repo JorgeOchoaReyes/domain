@@ -841,6 +841,29 @@ build/                   the app icon (for the installer)
 docs/screenshots/        the pictures in this README
 ```
 
+## Roadmap
+
+Next up, after v1.0:
+
+- **Agent CLI updates, handled.** Today the office skips an agent's
+  "update available" menu at startup (so a stray keypress can't run its
+  installer mid-task) and leaves updating to you. Next: notice when a CLI has
+  an update, offer it in the Office menu, and run it between tasks — never
+  while a worker's busy — with the output in Logs; pin a known-good version
+  per agent if an update breaks something.
+- **Stuck agents, recovered.** A Codex stuck at "model: loading" is now
+  flagged as needing you; next, offer one-click fixes (restart its session,
+  re-check its sign-in) and surface the CLI's own error.
+- **Local models, end to end.** Pick a context window for Ollama models (or
+  have the office make a copy with a bigger one), a speed check on hire, and
+  autopilot that sizes tasks to the model — small ones for small models.
+- **macOS and Linux**, tested end to end (the builds exist; they haven't been
+  run on real machines yet).
+- **VR**, back on track: the last fixes for drawing and reviews in the headset.
+- **More of the team loop**: a real team huddle at the start of a goal
+  (everyone weighs in on the plan), and a shared screenshot/demo of the
+  finished result in the final review.
+
 ## Credits
 
 The office's look and floor plan are inspired by
