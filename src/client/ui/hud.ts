@@ -28,6 +28,7 @@ const STATUS_LABEL: Record<WorkerStatus, string> = {
   waiting: "needs you",
   presenting: "in line",
   done: "done",
+  asleep: "asleep",
 };
 
 export interface HudHandlers {
@@ -266,6 +267,8 @@ export class Hud {
       ["Drag · Scroll", "Look around · zoom (scroll all the way in for first person)"],
       ["V", "Switch between first and third person"],
       ["B", "Skateboard: hop on or off — twice as fast, and you glide"],
+      ["Q", "Put your coffee down (and its speed boost with it)"],
+      ["C", "Team chat: message a worker or everyone; see what each is doing now and what it has done; type into its terminal"],
       ["T", "Fast travel: work floor, your office, stand-up, kitchen, game room, outside — or straight to a worker who needs you"],
       ["U", "Stand-up: pick today's goal, set the tone, start the session"],
       ["L", "Your laptop: a browser for what's being built, workers' screens, the loop, decks and deploys"],

@@ -42,6 +42,8 @@ export interface IWorkerSession {
    * into their CLI instead, and they answer through reply files.
    */
   summon?(): void;
+  /** The lines on its screen right now (real terminals). */
+  screen?(): string[];
   /** Stopped at the agent's "trust this folder?": answer yes. Real terminals only. */
   trust?(): Promise<boolean>;
   readonly askingTrust?: boolean;
@@ -70,6 +72,8 @@ export interface CreateWorkerOptions {
   deskId: string;
   /** Answer the agent's trust prompt for you (you've trusted this project's worker folders). */
   autoTrust?: () => boolean;
+  /** Pick up its last conversation (a worker woken after the office restarted). */
+  resume?: boolean;
   /** Absolute path of the directory where report files are watched. */
   reportsDir: string;
   /** Absolute path of the directory where reply files are watched. */
@@ -125,8 +129,14 @@ export function localModelWarning(model: string, total = totalmem(), free = free
   return null;
 }
 
-export function launchCommand(agent: AgentKind, model = "", leash: Leash = "ask", extraArgs: string[] = []): string {
+export function launchCommand(agent: AgentKind, model = "", leash: Leash = "ask", extraArgs: string[] = [], resume = false): string {
   const parts = [AGENT_COMMAND[agent]];
+  // Back into its last conversation in this folder.
+  if (resume) {
+    if (agent === "codex") parts.push("resume", "--last");
+    else if (agent === "gemini") parts.push("--resume", "latest");
+    else parts.push("--continue");
+  }
   if (model && isModelName(model)) {
     const [provider, ...rest] = model.split("/");
     const local = agent === "codex" && rest.length > 0 && (LOCAL_PROVIDERS as readonly string[]).includes(provider);
@@ -160,7 +170,7 @@ export function createWorker(agent: AgentKind, opts: CreateWorkerOptions): IWork
     cwd: opts.cwd,
     // Launch the agent CLI if it is on PATH; otherwise hand over a plain shell
     // with a note, which is still a real local terminal.
-    launch: found ? launchCommand(agent, opts.model ?? "", opts.leash ?? "ask", opts.extraArgs ?? []) : null,
+    launch: found ? launchCommand(agent, opts.model ?? "", opts.leash ?? "ask", opts.extraArgs ?? [], opts.resume ?? false) : null,
     env: opts.env,
     missingLabel: found ? null : AGENT_LABELS[agent],
     deskId: opts.deskId,

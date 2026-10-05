@@ -1,4 +1,5 @@
-import { app, BrowserWindow, Menu, dialog, session, shell } from "electron";
+import { app, BrowserWindow, Menu, dialog, session, shell, utilityProcess, type UtilityProcess } from "electron";
+import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
@@ -168,21 +169,10 @@ async function createWindow(): Promise<void> {
   const project = resolveProject();
   process.env.DOMAIN_CWD = project;
   buildMenu(project);
-  // The server switches projects (Projects window in the game) through these.
-  Object.assign(globalThis, {
-    __domainRelaunch: (path: string) => setTimeout(() => relaunchOn(path), 600),
-    __domainPickFolder: () => pickProject(),
-  });
-
   // The usual port, or any free one if something else has it (another app, a dev server).
   if (!process.env.PORT) process.env.PORT = String(await freePort(8787));
 
-  // Importing the server starts it listening; serverReady resolves with the
-  // URL. The specifier is held in a variable so TypeScript does not try to
-  // resolve the separately-built server bundle at typecheck time.
-  const serverEntry = "../server/server/index.js";
-  const { serverReady } = (await import(serverEntry)) as { serverReady: Promise<string> };
-  const serverUrl = await serverReady;
+  const serverUrl = await startServer();
   const target = process.env.DOMAIN_ELECTRON_URL || serverUrl;
 
   const win = new BrowserWindow({
@@ -221,6 +211,59 @@ async function createWindow(): Promise<void> {
   await win.loadURL(target);
 }
 
+// --- the office's server -------------------------------------------------------------------
+
+/**
+ * The server (every worker's terminal, git, the WebSocket) runs in a
+ * background process of its own, so busy terminals or a long git command
+ * never hold up this process — which is the one that delivers your keyboard
+ * and mouse to the game. It asks this process for the few things only the
+ * app can do (the folder picker, restarting on another project) and is told
+ * to close up when you quit. If it can't start that way, it runs in here.
+ */
+let server: UtilityProcess | null = null;
+
+async function startServer(): Promise<string> {
+  const entry = fileURLToPath(new URL("../server/server/index.js", import.meta.url));
+  try {
+    return await new Promise<string>((resolve, reject) => {
+      const child = utilityProcess.fork(entry, [], { env: { ...process.env }, serviceName: "domain office", stdio: "inherit" });
+      const timer = setTimeout(() => reject(new Error("the office's server didn't start in time")), 30_000);
+      child.on("message", (m: { t?: string; url?: string; path?: string; id?: number }) => {
+        if (m.t === "ready" && m.url) {
+          clearTimeout(timer);
+          resolve(m.url);
+        } else if (m.t === "relaunch" && m.path) {
+          const path = m.path;
+          setTimeout(() => relaunchOn(path), 600);
+        } else if (m.t === "pickFolder") {
+          void pickProject().then((path) => child.postMessage({ t: "pickedFolder", id: m.id, path }));
+        }
+      });
+      child.once("exit", (code) => {
+        clearTimeout(timer);
+        if (server === child) server = null;
+        reject(new Error(`the office's server stopped (code ${code})`));
+      });
+      server = child;
+    });
+  } catch (e) {
+    console.error("Running the office's server in the app instead:", (e as Error).message);
+    server?.kill();
+    server = null;
+    // In here: the same hooks, as globals.
+    Object.assign(globalThis, {
+      __domainRelaunch: (path: string) => setTimeout(() => relaunchOn(path), 600),
+      __domainPickFolder: () => pickProject(),
+    });
+    // The specifier is held in a variable so TypeScript does not try to
+    // resolve the separately-built server bundle at typecheck time.
+    const serverEntry = "../server/server/index.js";
+    const { serverReady } = (await import(serverEntry)) as { serverReady: Promise<string> };
+    return serverReady;
+  }
+}
+
 /** `preferred` if nothing's listening on it, else a port the system picks. */
 function freePort(preferred: number): Promise<number> {
   const tryPort = (port: number) =>
@@ -254,6 +297,36 @@ if (!app.requestSingleInstanceLock()) {
 
 app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) void createWindow();
+});
+
+// Quitting ends every worker's terminal cleanly (the team is remembered for
+// next time): the server is told to close up, and the app waits for it.
+let closedUp = false;
+app.on("before-quit", (e) => {
+  if (closedUp) return;
+  const child = server;
+  if (!child) {
+    closedUp = true;
+    try {
+      (globalThis as { __domainShutdown?: () => void }).__domainShutdown?.();
+    } catch {
+      /* quitting anyway */
+    }
+    return;
+  }
+  e.preventDefault();
+  const done = () => {
+    if (closedUp) return;
+    closedUp = true;
+    app.quit();
+  };
+  child.once("exit", done);
+  child.postMessage({ t: "shutdown" });
+  // Don't hang if it doesn't answer.
+  setTimeout(() => {
+    child.kill();
+    done();
+  }, 4000);
 });
 
 app.on("window-all-closed", () => {

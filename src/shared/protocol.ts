@@ -1,5 +1,6 @@
 import type { Idea } from "./ideas.js";
 import type { AgentsState } from "./agents.js";
+import type { ChatPeek, ChatThread, ChatWork } from "./chat.js";
 import type { GoalKind, ProgressState, SessionSummary, ToneId } from "./progress.js";
 import type { Leash, TaskBrief, TeamPolicy } from "./policy.js";
 import type { GithubAccount, GithubIssue, GithubRepo, OpLog, ProjectInfo, PullRequestInfo, RecentProject } from "./project.js";
@@ -47,7 +48,8 @@ export type WorkerStatus =
   | "working" // busy on a task
   | "waiting" // needs a human (blocked on input / a question)
   | "presenting" // has a finished report and is lined up to present
-  | "done"; // finished a task, celebrating
+  | "done" // finished a task, celebrating
+  | "asleep"; // remembered from last time, not running: the gong wakes it
 
 /**
  * A structured "presentation" an agent drops when it reaches a checkpoint.
@@ -296,6 +298,16 @@ export type ClientMessage =
   | { t: "agentInstall"; agent: AgentKind }
   /** Let agents trust this project's worker folders (answers their trust prompts, now and later). */
   | { t: "trustWorkers" }
+  /** Wake the workers remembered from last time (one desk, or everyone): each resumes where it left off. */
+  | { t: "wake"; deskId?: string }
+  // --- team chat ---------------------------------------------------------------------
+  | { t: "chatGet" }
+  /** A message to a worker (its desk id) or everyone ("team"); `raw` types it straight into the terminal. */
+  | { t: "chatSend"; to: string; text: string; raw?: boolean }
+  /** What a worker's screen says right now. */
+  | { t: "chatPeek"; deskId: string }
+  /** A worker's record: its tasks, commits and changed files. */
+  | { t: "chatWork"; deskId: string }
   // --- idea boards -------------------------------------------------------------------
   | { t: "ideasGet" }
   /**
@@ -362,6 +374,10 @@ export type ServerMessage =
   | { t: "ideas"; ideas: Idea[] }
   /** Which agent CLIs are installed (and whether one is being installed). */
   | { t: "agents"; state: AgentsState }
+  /** Every chat thread, with its history. */
+  | { t: "chat"; threads: ChatThread[] }
+  | { t: "chatPeek"; peek: ChatPeek }
+  | { t: "chatWork"; work: ChatWork }
   // --- the agent loop ------------------------------------------------------
   /**
    * Sent on join (and when it changes): the project folder, the preview URL

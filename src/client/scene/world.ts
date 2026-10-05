@@ -550,6 +550,11 @@ export class World {
     return false;
   }
 
+  /** Sit down in a chair, or get up. */
+  setSeated(on: boolean): void {
+    this.me.seated = on;
+  }
+
   /** Hop on or off the skateboard. */
   setBoard(on: boolean): void {
     this.board.visible = on;
@@ -764,6 +769,30 @@ export class World {
     if (this.outlines) this.effect.render(this.scene, this.camera);
     else this.renderer.render(this.scene, this.camera);
     this.trackFrame();
+  }
+
+  /**
+   * Compile every shader up front (behind the loading screen): otherwise the
+   * first time a room or prop comes into view, the GPU stops to compile it and
+   * the game hitches. Hidden areas are shown for the one off-screen frame.
+   */
+  async precompile(): Promise<void> {
+    const hidden: THREE.Object3D[] = [];
+    this.scene.traverse((o) => {
+      if (!o.visible) {
+        hidden.push(o);
+        o.visible = true;
+      }
+    });
+    try {
+      await this.renderer.compileAsync(this.scene, this.camera);
+      // The outline pass makes its own materials the first time it draws each one.
+      if (this.outlines) this.effect.render(this.scene, this.camera);
+    } catch {
+      /* compiling ahead is only an optimization */
+    } finally {
+      for (const o of hidden) o.visible = false;
+    }
   }
 
   /** Run `frame` every frame — in the window or, in VR, at the headset's rate. */

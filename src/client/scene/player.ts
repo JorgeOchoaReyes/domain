@@ -15,6 +15,8 @@ import { DEFAULT_SETTINGS, type Settings } from "../ui/settings.js";
 export type ViewMode = "third" | "first";
 
 const WALK = 5.5;
+/** Eye height sitting in a chair. */
+const SEATED_EYE = 1.12;
 /** How much faster the skateboard is than walking. */
 const BOARD_SPEED = 2.1;
 const JUMP_V = 5.4;
@@ -67,6 +69,10 @@ export class Player {
   xr = false;
   /** On the skateboard (B): about twice as fast, and you glide. */
   board = false;
+  /** Sitting (your chair in office hours): you don't move until you stand up. */
+  private seated = false;
+  /** Called when you stand up from a chair (any move key). */
+  onStand: (() => void) | null = null;
   /** A thumbstick: x right, y forward (-1..1). */
   readonly stick = { x: 0, y: 0 };
   /** In VR, which way your head faces (moves go that way); null: where you look. */
@@ -246,6 +252,11 @@ export class Player {
         r = this.stick.x;
         throttle = Math.min(1, (push - 0.15) / 0.75);
       }
+      // Trying to walk while seated: stand up first (this frame you just get up).
+      if (this.seated && (f !== 0 || r !== 0)) {
+        this.standUp();
+        f = r = 0;
+      }
       if (f !== 0 || r !== 0) {
         const yaw = this.heading ?? this.yaw;
         const fx = -Math.sin(yaw);
@@ -330,9 +341,10 @@ export class Player {
     const p = this.world.player.position;
     const cam = this.world.camera;
     if (this.mode === "first") {
-      cam.position.set(p.x, p.y + EYE + this.bob, p.z);
+      const eye = this.seated ? SEATED_EYE : EYE;
+      cam.position.set(p.x, p.y + eye + this.bob, p.z);
       const cp = Math.cos(this.lookPitch);
-      this.tmp.set(p.x - Math.sin(this.yaw) * cp, p.y + EYE + this.bob + Math.sin(this.lookPitch), p.z - Math.cos(this.yaw) * cp);
+      this.tmp.set(p.x - Math.sin(this.yaw) * cp, p.y + eye + this.bob + Math.sin(this.lookPitch), p.z - Math.cos(this.yaw) * cp);
       cam.lookAt(this.tmp);
       return;
     }
@@ -378,6 +390,24 @@ export class Player {
     this.yaw = facing + Math.PI;
     this.lookPitch = 0;
     this.updateCamera();
+  }
+
+  /** Sit at (x, z) facing `facing`: the view drops to seated height, and any move key stands you up. */
+  sit(x: number, z: number, facing: number): void {
+    this.placeAt(x, z, facing);
+    this.seated = true;
+    this.lookPitch = -0.05;
+    this.updateCamera();
+  }
+
+  get sitting(): boolean {
+    return this.seated;
+  }
+
+  standUp(): void {
+    if (!this.seated) return;
+    this.seated = false;
+    this.onStand?.();
   }
 
   /** Turn on the spot (VR snap turning). */

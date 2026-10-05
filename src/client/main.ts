@@ -18,6 +18,7 @@ import {
   type IdeaBoardId,
   IDEA_BOARDS,
   JUKEBOXES,
+  GONG,
 } from "../shared/layout.js";
 import { Net } from "./net.js";
 import { World } from "./scene/world.js";
@@ -33,6 +34,8 @@ import { openDeck, refreshDeck } from "./ui/deck.js";
 import { loadSettings, openSettings, saveSettings, type Settings } from "./ui/settings.js";
 import { Music } from "./music.js";
 import { openJukebox } from "./ui/jukebox.js";
+import { TeamChat } from "./ui/chat.js";
+import type { ChatThread } from "../shared/chat.js";
 import { openAssignCard } from "./ui/assign.js";
 import { Assistant, type Guide, type Tip, type TourStep } from "./ui/assistant.js";
 import { ingestLan, lanChip, onLanChange, openInvite } from "./ui/invite.js";
@@ -49,6 +52,7 @@ import type { LoopHandlers } from "./ui/loop.js";
 import { Hud } from "./ui/hud.js";
 import { TerminalOverlay } from "./ui/terminal.js";
 import { ReviewPanel } from "./ui/review.js";
+import { ProjectorReview } from "./ui/projector.js";
 import { IdeaBoard } from "./ui/ideas.js";
 import { VR } from "./vr/xr.js";
 import { VrFlows } from "./vr/flows.js";
@@ -93,6 +97,7 @@ const hudRoot = document.getElementById("hud") as HTMLElement;
 
 const world = new World(canvas, myLook, myName || "You");
 const player = new Player(world, canvas, load<ViewMode>("domain.view", "first") === "third" ? "third" : "first");
+player.onStand = () => world.setSeated(false);
 player.onView = (mode) => {
   save("domain.view", mode);
   document.body.classList.toggle("fp", mode === "first");
@@ -135,10 +140,15 @@ function applySettings(s: Settings): void {
 }
 const terminal = new TerminalOverlay();
 const review = new ReviewPanel();
+/** Office hours on the projector (Settings → Office hours). */
+const projector = new ProjectorReview();
+/** Whether office hours are on, either way. */
+const reviewing = () => review.isOpen || projector.isOpen;
 const net = new Net();
 setAgentsSender((m) => net.send(m));
 const hud = new Hud(hudRoot, {
-  onOpenWorker: (deskId) => openTerminal(deskId),
+  // A worker in the list opens its channel: what it's doing now, its record, the chat, and its terminal.
+  onOpenWorker: (deskId) => (guestRole() === "visitor" ? openTerminal(deskId) : openChat(deskId)),
   onRoundup: () => openRoundup(),
   onOfficeHours: () => startOfficeHours(),
   onGoals: () => openGoals(),
@@ -160,7 +170,7 @@ const assistant = new Assistant(hudRoot, {
     return { id: "whatnow", urgency: 1, text: `Next: ${o.text}`, action: { label: o.key ? `Do it (${o.key})` : "Do it", run: () => doObjective(o) } };
   },
   freeMouse: () => player.unlock(),
-  busy: () => modalOpen() || review.isOpen || terminal.isOpen,
+  busy: () => modalOpen() || reviewing() || terminal.isOpen,
   guides: () => pipGuides(),
   cheer: (final) => {
     if (final) {
@@ -202,6 +212,7 @@ hudRoot.querySelector('.dock [data-act="settings"]')?.before(officeBtn);
 const officeTiles: OfficeTile[] = [
   { key: "projects", icon: "github", title: "Projects & GitHub", text: "Which project your workers are on — switch, or clone one from GitHub", run: () => openProjects(projectActions()) },
   { key: "team", icon: "👥", title: "Your team", text: "Characters with names, looks, voices and personas you hire again and again", run: () => openTeam(teamCtx()) },
+  { key: "chat", icon: "💬", title: "Team chat", text: "Message any worker, or everyone — see what each is doing and what it has done", run: () => openChat() },
   { key: "ideas", icon: "💡", title: "Idea board", text: "Sketch an idea and hand it to a worker, or make it a goal — also at the whiteboards", run: () => openIdeas(null) },
   { key: "mcp", icon: "mcp", title: "MCP tools", text: "Tools your workers can use — add once, give to whoever needs them", hostOnly: true, run: () => openMcp({ progress: () => progress, send: (m) => net.send(m), isHost: () => !guestRole() }) },
   { key: "invite", icon: "📡", title: "Invite people", text: "Share your office with people on your Wi-Fi, with a passcode", hostOnly: true, run: () => openInviteNow() },
@@ -335,13 +346,13 @@ net.onMessage = (msg) => {
       }
       break;
     case "welcome":
-      document.getElementById("loading")?.classList.add("done");
       selfId = msg.selfId;
       office = msg.office;
       applyOffice();
       net.send({ t: "projectInfo" });
       net.send({ t: "ideasGet" });
       net.send({ t: "agentsGet" });
+      net.send({ t: "chatGet" });
       break;
     case "office":
       office = msg.office;
@@ -350,6 +361,15 @@ net.onMessage = (msg) => {
       break;
     case "ideas":
       onIdeas(msg.ideas);
+      break;
+    case "chat":
+      onChat(msg.threads);
+      break;
+    case "chatPeek":
+      teamChat.peek(msg.peek);
+      break;
+    case "chatWork":
+      teamChat.work(msg.work);
       break;
     case "output":
       world.output(msg.deskId, msg.data);
@@ -397,6 +417,7 @@ net.onMessage = (msg) => {
     case "said":
       if (msg.from === "agent") world.speak(msg.deskId, msg.text);
       if (review.isOpen && review.deskId === msg.deskId) review.addLine(msg.from, msg.text);
+      if (projector.isOpen && projector.deskId === msg.deskId) projector.addLine(msg.from, msg.text);
       break;
   }
 };
@@ -559,7 +580,7 @@ function applyOffice(): void {
 
 function openTerminal(deskId: string): void {
   const desk = deskById(deskId);
-  if (!desk?.worker || review.isOpen) return;
+  if (!desk?.worker || reviewing()) return;
   const title = `${AGENT_LABELS[desk.worker.agent]} · ${desk.label} · hired by ${desk.worker.hiredBy}`;
   terminalPending = deskId;
   terminal.open(deskId, title, desk.worker.status, {
@@ -694,7 +715,7 @@ function nextReady(): Presentation | null {
 }
 
 function startOfficeHours(): void {
-  if (review.isOpen) return;
+  if (reviewing()) return;
   if (terminal.isOpen) terminal.close();
   if (modalOpen()) return;
   later.clear();
@@ -709,10 +730,9 @@ function startOfficeHours(): void {
     );
     return;
   }
-  // Take your seat at your desk in your office, facing the screen.
-  if (!world.nearReviewDesk(player.position.x, player.position.z)) {
-    player.placeAt(REVIEW_SPOT.x, REVIEW_SPOT.z, 0);
-  }
+  // Take your seat: the chair at your desk, facing the screen.
+  player.sit(REVIEW_SPOT.x, REVIEW_SPOT.z, 0);
+  world.setSeated(true);
   openReview(next);
 }
 
@@ -721,7 +741,20 @@ function openReview(p: Presentation): void {
   world.setPresenting(p.deskId, 0);
   world.showReviewBoard(null);
   const index = office.presentations.findIndex((x) => x.deskId === p.deskId) + 1;
-  review.open(p, { index, total: office.presentations.length }, {
+  const onProjector = settings.reviewStyle === "projector";
+  document.body.classList.toggle("projecting", onProjector);
+  // On the projector you look at the screen with the mouse free for the bar.
+  if (onProjector) player.unlock();
+  const panel = onProjector ? projector : review;
+  panel.open(p, { index, total: office.presentations.length }, {
+    onSwitch: () => {
+      // The other way, for this review and from now on.
+      const next = { ...settings, reviewStyle: onProjector ? ("window" as const) : ("projector" as const) };
+      saveSettings(next);
+      applySettings(next);
+      (onProjector ? projector : review).close(true);
+      openReview(p);
+    },
     onReview: (approve, text, sketch) => {
       net.send({ t: "review", deskId: p.deskId, approve, text, sketch: sketch ?? undefined });
       awaitingAdvance = p.deskId;
@@ -789,6 +822,49 @@ function onIdeas(next: Idea[]): void {
   ideaBoard.update(ideas);
 }
 
+// --- team chat ---------------------------------------------------------------------------------
+
+const teamChat = new TeamChat({
+  send: (m) => net.send(m),
+  desks: () => office.desks,
+  openTerminal: (deskId) => openTerminal(deskId),
+  onVoiceError: warnVoice,
+});
+const chatBtn = document.createElement("button");
+chatBtn.className = "btn dock-btn";
+chatBtn.dataset.act = "chat";
+chatBtn.title = "Team chat (C): message your workers, see what they're doing";
+chatBtn.innerHTML = `💬 <span class="lbl">Chat</span>`;
+chatBtn.addEventListener("click", () => openChat());
+hudRoot.querySelector('.dock [data-act="settings"]')?.before(chatBtn);
+teamChat.onUnread = (n) => {
+  chatBtn.innerHTML = `💬 <span class="lbl">Chat</span>${n ? `<span class="unread">${n}</span>` : ""}`;
+};
+
+function openChat(threadId?: string): void {
+  if (modalOpen() || guestRole() === "visitor") return;
+  teamChat.open(threadId);
+}
+
+/** New threads: an answer you haven't seen pops up as a toast you can click. */
+let lastAnswers = new Map<string, number>();
+function onChat(threads: ChatThread[]): void {
+  const fresh = new Map(threads.map((t) => [t.id, t.messages.filter((m) => m.from === "agent").length]));
+  if (lastAnswers.size && !teamChat.isOpen) {
+    for (const t of threads) {
+      if (t.id === "team") continue;
+      const before = lastAnswers.get(t.id) ?? 0;
+      const answers = t.messages.filter((m) => m.from === "agent");
+      if (answers.length > before) {
+        const m = answers.at(-1)!;
+        hud.toast(`💬 ${m.who}: ${m.text.slice(0, 120)}${m.text.length > 120 ? "…" : ""} — C to reply`);
+      }
+    }
+  }
+  lastAnswers = fresh;
+  teamChat.update(threads);
+}
+
 // --- VR ----------------------------------------------------------------------------------------
 
 const vrFlows = new VrFlows({
@@ -835,6 +911,7 @@ void offerVr();
 function endOfficeHours(): void {
   world.setPresenting(null);
   world.showReviewBoard(null);
+  document.body.classList.remove("projecting");
 }
 
 // --- Pip, the assistant ---------------------------------------------------------------------
@@ -856,6 +933,19 @@ function pipTips(): Tip[] {
           }
         : { id: "no-node", urgency: 2, text: "To hire coding agents, this computer needs Node.js (nodejs.org) — install it, then restart domain and I'll set up the agents." },
     );
+  }
+  // Last time's team, asleep at their desks: the gong gets them going.
+  const asleep = sleepers().length;
+  if (asleep && !guestRole()) {
+    tips.push({
+      id: "asleep",
+      urgency: 2,
+      text: `Your team from last time is asleep at their desks (${asleep}). Ring the gong by the elevator to get everyone back to work — each picks up where it left off.`,
+      action: {
+        label: "🔔 Ring the gong",
+        run: () => travelTo({ label: "", icon: "", x: GONG.x, z: GONG.z + 1.1, facing: Math.PI, then: () => ringTheGong() }),
+      },
+    });
   }
   // An agent asking whether to trust its folder: one click trusts the project, for every worker from now on.
   const asking = office.desks.find((d) => d.worker?.status === "waiting" && /trust this folder/.test(d.worker.activity));
@@ -1251,6 +1341,28 @@ function toggleBoard(): void {
   hud.toast(player.board ? "🛹 Skateboard! You're twice as fast and you glide — B to hop off" : "🚶 Back on your feet");
 }
 
+/** Workers remembered from last time, asleep at their desks. */
+function sleepers(): Desk[] {
+  return office.desks.filter((d) => d.worker?.status === "asleep");
+}
+
+/** Ring the gong: it swings and booms — and wakes anyone asleep from last time. */
+function ringTheGong(): void {
+  world.ringGong();
+  sound.gong();
+  const n = sleepers().length;
+  if (n && !guestRole()) {
+    net.send({ t: "wake" });
+    hud.toast(`🔔 Rise and shine — ${n} worker${n === 1 ? " is" : "s are"} back at it, picking up where they left off`);
+  }
+}
+
+/** Whether you're at the gong (by the elevator). */
+function nearGong(): boolean {
+  const { x, z } = player.position;
+  return Math.hypot(x - GONG.x, z - (GONG.z + 1.1)) < 1.5;
+}
+
 /** The jukebox you're standing at, if any. */
 function nearJukebox(): (typeof JUKEBOXES)[number] | null {
   const { x, z } = player.position;
@@ -1315,10 +1427,14 @@ function interactFun(): boolean {
     openJukeboxNow();
     return true;
   }
+  if (nearGong()) {
+    ringTheGong();
+    return true;
+  }
   if (nearCoffee()) {
     player.boostFor(90_000);
     sound.bell();
-    hud.toast("☕ Fresh coffee — you move 35% faster for 90 seconds");
+    hud.toast("☕ Fresh coffee — you move 35% faster for 90 seconds · Q to put it down");
     return true;
   }
   if (onWorkPad()) {
@@ -1351,6 +1467,7 @@ function promptTarget(): { x: number; y: number; z: number } | null {
   if (world.ball.near(x, z)) return { x: world.ball.position.x, y: 0.95, z: world.ball.position.z };
   const juke = nearJukebox();
   if (juke) return juke.key;
+  if (nearGong()) return { x: GONG.x + 0.9, y: 1.6, z: GONG.z + 0.2 };
   if (nearCoffee()) return { x: KITCHEN.coffee.x, y: 1.95, z: KITCHEN.coffee.z };
   if (onWorkPad()) return { x: WORK_PAD.x, y: 1.4, z: WORK_PAD.z };
   if (atElevator()) return { x: ELEVATOR.x, y: 2.9, z: FLOOR.minZ + ELEVATOR.depth + 0.1 };
@@ -1380,6 +1497,12 @@ function hintFun(): string | null {
   }
   const { x, z } = player.position;
   if (world.ball.near(x, z)) return `<span class="title">⚽ Ball</span> <span class="key">E</span> Kick where you're looking · or just run into it`;
+  if (nearGong()) {
+    const n = sleepers().length;
+    return n
+      ? `<span class="title">🔔 The gong</span> <span class="key">E</span> Ring it to wake your team (${n} asleep)`
+      : `<span class="title">🔔 Ship gong</span> <span class="key">E</span> Ring it · it rings by itself when work ships`;
+  }
   if (nearJukebox()) {
     const now = music.playing ? `now: ${music.current.icon} ${music.current.name}` : "music's off";
     return `<span class="title">🪩 Jukebox</span> <span class="key">E</span> Pick the music · ${now}`;
@@ -1417,7 +1540,10 @@ function interact(): void {
   if (!near || near.dist > INTERACT_RADIUS) return;
   const desk = deskById(near.id);
   if (!desk) return;
-  if (desk.worker) openTerminal(desk.id);
+  if (desk.worker?.status === "asleep") {
+    net.send({ t: "wake", deskId: desk.id });
+    hud.toast(`☀️ ${desk.worker.identity?.name ?? AGENT_LABELS[desk.worker.agent]} is waking up, back where it left off`);
+  } else if (desk.worker) openTerminal(desk.id);
   else hire(desk);
 }
 
@@ -1445,6 +1571,9 @@ function hintWork(): string | null {
   const near = world.nearestDesk(x, z);
   if (near && near.dist <= INTERACT_RADIUS) {
     const desk = deskById(near.id);
+    if (desk?.worker?.status === "asleep") {
+      return `<span class="title">💤 ${desk.worker.identity?.name ?? AGENT_LABELS[desk.worker.agent]}</span> <span class="key">E</span> Wake it · or ring the gong to wake everyone`;
+    }
     if (desk?.worker) {
       return `<span class="title">${AGENT_LABELS[desk.worker.agent]}</span> <span class="cost">${desk.worker.activity}</span> <span class="key">E</span> Open terminal`;
     }
@@ -1457,6 +1586,11 @@ window.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     // Nothing open to close: Esc pauses into the settings.
     const justUnlocked = performance.now() - unlockedAt < 250;
+    if (projector.isOpen && !modalOpen()) {
+      // Esc on the projector: leave it in line and end office hours.
+      projector.close();
+      return;
+    }
     if (!escapeModal() && !terminal.isOpen && !review.isOpen && !shotMeter.active && !justUnlocked) openSettingsNow();
     else if (shotMeter.active) shotMeter.hide();
     return;
@@ -1466,7 +1600,7 @@ window.addEventListener("keydown", (e) => {
     player.unlock();
     return;
   }
-  if (review.key(e)) {
+  if (review.key(e) || projector.key(e)) {
     e.preventDefault();
     return;
   }
@@ -1484,6 +1618,13 @@ window.addEventListener("keydown", (e) => {
   else if (key === "t") openTravel();
   else if (key === "v") player.toggleView();
   else if (key === "b") toggleBoard();
+  else if (key === "c") openChat();
+  else if (key === "q" && player.boosted > 0) {
+    // Put the coffee down: the cup goes, and the speed boost with it.
+    player.boostFor(0);
+    sound.click();
+    hud.toast("☕ Coffee down — back to normal speed");
+  }
   else if (key === "u") openStandupNow();
   else if (key === "m") applySettings({ ...settings, minimap: !settings.minimap });
   else if (key === "l") openLaptop();
@@ -1529,7 +1670,7 @@ function frame(now: number): void {
   if (!player.enabled && player.mouseCaptured) {
     player.unlock();
     relockAfterWindow = true;
-  } else if (player.enabled && relockAfterWindow && !terminal.isOpen && !review.isOpen) {
+  } else if (player.enabled && relockAfterWindow && !terminal.isOpen && !reviewing()) {
     relockAfterWindow = false;
     if (!vr.presenting) player.lock();
   }
@@ -1542,7 +1683,7 @@ function frame(now: number): void {
   here = minimap.update({ x: player.position.x, z: player.position.z, facing: player.facing }, world.workerSpots(), world.peerSpots()).id;
   hud.setHint(hintFor());
   // In VR an open panel is what you're using: no E key floating over it.
-  world.setPrompt(vr.presenting && vr.panel.open ? null : promptTarget());
+  world.setPrompt((vr.presenting && vr.panel.open) || reviewing() ? null : promptTarget());
   sessionPill.update(progress);
 
   if (joined && now - lastPresence > PRESENCE_INTERVAL) {
@@ -1579,8 +1720,9 @@ void (async () => {
   net.connect();
 })();
 world.loop(frame);
-// The office is drawn by now: let the character picker show over it.
-requestAnimationFrame(() => document.getElementById("loading")?.classList.add("done"));
+// Compile every shader behind the loading screen (no hitch the first time a room
+// comes into view), then let the character picker show over the office.
+void world.precompile().finally(() => requestAnimationFrame(() => document.getElementById("loading")?.classList.add("done")));
 void pickCharacter(myName, myLook).then(({ name, look }) => {
   myName = name;
   myLook = look;

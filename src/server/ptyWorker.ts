@@ -60,6 +60,21 @@ const DIM = `${ESC}2m`;
 const RESET = `${ESC}0m`;
 const YELLOW = `${ESC}33m`;
 
+/** A terminal with no window: fed the same output, it knows what's on screen. */
+type HeadlessTerminal = {
+  write(data: string): void;
+  resize(cols: number, rows: number): void;
+  dispose(): void;
+  rows: number;
+  buffer: { active: { viewportY: number; getLine(y: number): { translateToString(trim?: boolean): string } | undefined } };
+};
+let HeadlessCtor: (new (o: { cols: number; rows: number; scrollback: number; allowProposedApi: boolean }) => HeadlessTerminal) | null = null;
+try {
+  HeadlessCtor = (createRequire(import.meta.url)("@xterm/headless") as { Terminal: typeof HeadlessCtor }).Terminal;
+} catch {
+  /* without it, the screen is read from the raw output instead */
+}
+
 export interface PtyWorkerOptions {
   cwd: string;
   /** Command to run inside the shell (an agent CLI), or null for a bare shell. */
@@ -101,6 +116,8 @@ export class PtyWorker implements IWorkerSession {
   private trustAsked = false;
   /** Where in the scrollback to look for a startup prompt from. */
   private scanFrom = 0;
+  /** What's on the agent's screen right now (null when the emulator isn't there). */
+  private term: HeadlessTerminal | null = HeadlessCtor ? new HeadlessCtor({ cols: 80, rows: 24, scrollback: 0, allowProposedApi: true }) : null;
   /** Output since the last pause (bytes), and when that run began: a real burst means it's working. */
   private burst = 0;
   /** Once ready: watching for it to go quiet (free), ask you something (needs you), or start again. */
@@ -193,7 +210,8 @@ export class PtyWorker implements IWorkerSession {
     let from = this.scanFrom;
     for (let i = 0; i < 5; i++) {
       await new Promise((r) => setTimeout(r, 350));
-      const choice = highlighted(plain(this.scrollback.slice(from)));
+      // What's highlighted on screen now; the raw output since the last key as a fallback.
+      const choice = highlighted(this.screen().join("\n")) ?? highlighted(plain(this.scrollback.slice(from)));
       if (choice === null) break;
       if (YES_OPTION.test(choice)) {
         this.pty.write("\r");
@@ -237,11 +255,24 @@ export class PtyWorker implements IWorkerSession {
 
   resize(cols: number, rows: number): void {
     if (this.disposed) return;
+    const c = Math.max(2, Math.floor(cols));
+    const r = Math.max(1, Math.floor(rows));
     try {
-      this.pty.resize(Math.max(2, Math.floor(cols)), Math.max(1, Math.floor(rows)));
+      this.pty.resize(c, r);
+      this.term?.resize(c, r);
     } catch {
       /* ignore resize on a dead pty */
     }
+  }
+
+  /** The lines on the agent's screen now (from the raw output when there's no emulator). */
+  screen(): string[] {
+    const t = this.term;
+    if (!t) return plain(this.scrollback.slice(-6000)).split("\n").slice(-30);
+    const b = t.buffer.active;
+    const out: string[] = [];
+    for (let y = 0; y < t.rows; y++) out.push(b.getLine(b.viewportY + y)?.translateToString(true) ?? "");
+    return out;
   }
 
   /**
@@ -252,7 +283,7 @@ export class PtyWorker implements IWorkerSession {
   private checkReady(): void {
     if (this.ready || this.disposed) return;
     const now = Date.now();
-    if (!this.trustAsked && TRUST_PROMPT.test(plain(this.scrollback.slice(this.scanFrom)))) {
+    if (!this.trustAsked && (TRUST_PROMPT.test(this.screen().join("\n")) || TRUST_PROMPT.test(plain(this.scrollback.slice(this.scanFrom))))) {
       this.trustAsked = true;
       if (this.autoTrust()) void this.trust();
       else this.setStatus("waiting", `${AGENT_LABELS[this.agent]} asks whether to trust this folder — answer in its terminal`);
@@ -286,18 +317,26 @@ export class PtyWorker implements IWorkerSession {
    * means it's back at work.
    */
   private watch(): void {
-    if (this.disposed || this.status === "done") return;
+    if (this.disposed || this.status === "done" || this.trustAsked) return;
     const quiet = Date.now() - this.lastOutputAt;
-    if (this.status !== "working" || quiet < QUIET_MS) return;
-    const screen = plain(this.scrollback.slice(-4000));
-    if (ASKING.test(screen.slice(-1500))) this.setStatus("waiting", `${AGENT_LABELS[this.agent]} is asking you something — answer in its terminal`);
-    else this.setStatus("idle", "");
+    // Read the actual screen: agents redraw only what changes, so the raw
+    // output often doesn't contain the question that's sitting on screen.
+    const asking = ASKING.test(this.screen().join("\n"));
+    if (asking && this.status !== "waiting" && quiet > 1500) {
+      this.setStatus("waiting", `${AGENT_LABELS[this.agent]} is asking you something — answer in its terminal`);
+    } else if (!asking && this.status === "waiting" && quiet > 1500) {
+      // Answered (here or in its terminal): back to it, or free if it's gone quiet.
+      this.setStatus(quiet >= QUIET_MS ? "idle" : "working", "");
+    } else if (this.status === "working" && quiet >= QUIET_MS) {
+      this.setStatus("idle", "");
+    }
   }
 
   dispose(): void {
     this.disposed = true;
     if (this.readyTimer) clearInterval(this.readyTimer);
     if (this.watchTimer) clearInterval(this.watchTimer);
+    this.term?.dispose();
     try {
       this.pty.kill();
     } catch {
@@ -313,7 +352,9 @@ export class PtyWorker implements IWorkerSession {
     // A run of output after a pause: once it's more than a cursor blink, it's working again.
     this.burst = now - this.lastOutputAt > 1500 ? data.length : this.burst + data.length;
     this.lastOutputAt = now;
-    if (this.ready && (this.status === "idle" || (this.status === "waiting" && !this.trustAsked)) && this.burst > BURST) this.setStatus("working", "");
+    this.term?.write(data);
+    // Back at work after a pause (a question on screen stays "needs you": a repaint isn't an answer).
+    if (this.ready && this.status === "idle" && this.burst > BURST) this.setStatus("working", "");
     this.scrollback += data;
     const MAX = 128 * 1024;
     if (this.scrollback.length > MAX) {

@@ -410,13 +410,44 @@ your name.
    worker's CLI, and its answer comes back as speech.
 4. **The review board.** Draw on it; the sketch goes to the worker with your
    feedback.
-5. **Decide.** **Approve** (merges its branch, and the worker stops and waits
+5. **Decide.** You sit in your chair facing the screen; in Settings →
+   *Office hours* choose a **window** (slides, review board and conversation
+   side by side) or the **projector** (the slides on the big screen, read
+   aloud, with a slim bar to ask, approve or send changes). **Approve** (merges its branch, and the worker stops and waits
    for its next task), **Send changes**, or **Later**. Approving a plan — or a
    decision a worker was blocked on — lets it carry on.
 
 Voice uses the browser's free Web Speech API — no keys, no costs. Dictation
 needs Chrome or Edge (in the desktop app it depends on the speech service being
 reachable — if it isn't, open http://127.0.0.1:8787 in Chrome, or type).
+
+## Team chat (C)
+
+Like Slack, with your workers: **#team** reaches everyone at once, and each
+worker has its own channel with its whole history (a character's history
+follows it from hire to hire). Your message reaches the worker as an
+instruction in its terminal; it answers in the channel, and answers pop up as
+toasts wherever you are. Each channel also shows:
+
+- **🧠 Now** — what's on its screen right now, with ⏎ / Esc / 1 / 2 keys for
+  its prompts.
+- **📜 Work** — the task it's on, the commits on its branch and the files it
+  has changed.
+- **⌨️ Terminal** mode in the message box types straight into its CLI
+  (commands, answers), and **🖥 Terminal** opens the terminal itself.
+
+Clicking a worker in the Workers list opens its channel.
+
+## Closing up, and the gong
+
+Close the app and every worker's terminal is shut down cleanly — but the
+office remembers its team: who sat where, on which model, as which
+character, with its own branch and folder. Next time they're **asleep 💤** at
+their desks. **Ring the gong** by the elevator (E) and everyone wakes up back
+in their last conversation (Claude Code `--continue`, Codex `resume --last`,
+Gemini `--resume latest`, OpenCode `--continue`) and is told to carry on; or
+press E at one desk to wake just that worker. The gong also rings by itself
+when work ships.
 
 ## Idea boards
 
@@ -562,6 +593,8 @@ Environment variables:
 | Scroll        | Zoom — all the way in for first person, out again for third |
 | `V`           | Switch first / third person (also in Settings) |
 | `B`           | Skateboard on / off — twice as fast, and you glide |
+| `C`           | Team chat |
+| `Q`           | Put your coffee down |
 | `E`           | Use whatever the floating **E** marks: hire, terminal, office hours, the idea boards, the jukeboxes, coffee, arcades, hoops, the ball, the elevator |
 | `T`           | Fast travel |
 | `U`           | Stand-up |

@@ -103,17 +103,28 @@ export const sound = {
     tone(1175, 0, 0.4, "sine", 0.09);
     tone(1568, 0.12, 0.5, "sine", 0.08);
   },
-  /** A deep shimmering gong: a task shipped. */
+  /**
+   * A gong: the mallet's strike, then a ring of out-of-tune overtones that
+   * shimmer and fade. (Most of it sits well above the bass, so laptop
+   * speakers carry it.)
+   */
   gong(): void {
     const a = audio();
     if (!a) return;
-    for (const [f, g] of [
-      [110, 0.22],
-      [164, 0.1],
-      [247, 0.06],
-      [329, 0.04],
+    thud(2400, 0.12, 0.5);
+    for (const [f, g, d] of [
+      [98, 0.16, 4.2],
+      [196.6, 0.16, 3.8],
+      [294.2, 0.14, 3.4],
+      [417, 0.12, 3],
+      [589, 0.09, 2.6],
+      [834, 0.06, 2],
+      [1181, 0.04, 1.5],
+      [1663, 0.025, 1.1],
     ] as const) {
-      tone(f, 0, 2.6, "sine", g);
+      tone(f, 0, d, "sine", g);
+      // A twin a hair off pitch: the two beat against each other, the gong's shimmer.
+      tone(f * 1.004, 0.01, d * 0.9, "sine", g * 0.6);
     }
   },
   /** A soft bell: a focus session started or ended. */

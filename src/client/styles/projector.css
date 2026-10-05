@@ -1,0 +1,19 @@
+/* ---------- Office hours on the projector ---------- */
+.projector-bar { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); width: min(1100px, calc(100vw - 32px)); z-index: 40; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; background: rgba(27, 29, 46, 0.92); color: #f1efff; border: 3px solid var(--ink); border-radius: 18px; box-shadow: var(--shadow); }
+.pj-top { display: flex; align-items: center; gap: 10px; font-size: 13px; font-weight: 800; }
+.pj-who { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pj-place { color: #a9abd0; }
+.pj-check { border-radius: 999px; padding: 1px 8px; font-size: 11px; color: var(--ink); background: #c9ced8; }
+.pj-check.pass { background: #8ff0c8; }
+.pj-check.fail { background: #ffc2d1; }
+.pj-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.pj-dots { display: flex; gap: 4px; }
+.pj-dots i { width: 8px; height: 8px; border-radius: 50%; background: #4a4d6e; }
+.pj-dots i.on { background: #ffd166; }
+.pj-auto.on { background: #ffd166; }
+.pj-say { flex: 1; min-width: 200px; font: inherit; font-size: 14px; border: 2px solid var(--ink); border-radius: 10px; padding: 6px 10px; background: #fff; color: var(--ink); }
+.pj-log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.pj-log:empty { display: none; }
+.pj-log li b { color: #ffd166; margin-right: 4px; }
+.pj-log li.you b { color: #8ecae6; }
+body.projecting .hint, body.projecting .dock-keys { display: none; }

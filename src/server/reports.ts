@@ -128,10 +128,12 @@ up for a review, write a single JSON file:
 Each slide is one short point (3 to 6 slides works best); they are shown one
 at a time on the big screen while your summary is read aloud.
 
-## 2. Talk back during your review
+## 2. Talk back (office hours and team chat)
 
-While you present, your manager may speak to you. Their words arrive as your
-next instruction, starting with \`[Office hours]\`. Answer out loud by writing:
+Your manager may message you: while you present (starting with
+\`[Office hours]\`, answered out loud) or any time over the team chat
+(starting with \`[Team chat]\` — answer, then carry on with what you were
+doing). Answer by writing:
 
 - Path: \`$DOMAIN_REPLY_FILE\` (also \`.domain/replies/$DOMAIN_DESK.json\`).
 

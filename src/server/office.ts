@@ -1,5 +1,5 @@
-import { join } from "node:path";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join, resolve, dirname } from "node:path";
+import { mkdirSync, rmSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import type {
   AgentKind,
   CheckResult,
@@ -11,7 +11,7 @@ import type {
   Report,
   Worker,
 } from "../shared/protocol.js";
-import { DEFAULT_LOOK, coerceReply, coerceReport } from "../shared/protocol.js";
+import { AGENT_LABELS, DEFAULT_LOOK, coerceReply, coerceReport } from "../shared/protocol.js";
 import { DESKS, SPAWN } from "../shared/layout.js";
 import { createWorker, type IWorkerSession } from "./workerSession.js";
 import type { Leash, TaskBrief } from "../shared/policy.js";
@@ -28,6 +28,13 @@ interface Seat {
   workspace: Workspace | null;
   /** What it was doing before it went quiet, to show again when it picks up. */
   busyWith?: string;
+  /** Remembered from last time and not running yet: the gong (or E) wakes it. */
+  asleep?: Remembered;
+  /**
+   * A worker in its own folder reports and replies there (its .domain/,
+   * which git ignores) — never outside it, where agents must ask permission.
+   */
+  drops?: { dir: string; watchers: Pick<DropWatcher<{ at: number }>, "start" | "stop" | "forget">[] };
 }
 
 /** Presence record for a connected client. */
@@ -42,6 +49,20 @@ export interface OfficeOptions {
   simulate?: boolean;
   /** Whether you've trusted this project's worker folders (agents' trust prompts get answered). */
   trusted?: () => boolean;
+  /** Where the office remembers who's at which desk between runs (null: it doesn't). */
+  memory?: string | null;
+}
+
+/** A worker as remembered between runs: enough to wake it where it was. */
+interface Remembered {
+  deskId: string;
+  agent: AgentKind;
+  hiredBy: string;
+  model: string;
+  leash: Leash;
+  identity: WorkerIdentity | null;
+  workspace: Workspace | null;
+  activity: string;
 }
 
 /**
@@ -81,9 +102,12 @@ export class Office {
   readonly workspaces: Workspaces | null;
 
   private trusted: () => boolean;
+  private memory: string | null;
+  private saveTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(options: OfficeOptions = {}) {
     this.trusted = options.trusted ?? (() => false);
+    this.memory = options.memory ?? null;
     this.cwd = options.cwd ?? process.cwd();
     this.simulate = options.simulate ?? false;
     this.reportsDir = join(this.cwd, ".domain", "reports");
@@ -101,17 +125,15 @@ export class Office {
       });
     }
 
+    this.recall();
+
     // Real workers report and talk back by writing files; watch for them.
     // Simulated workers do both in-process, so no file watching is needed.
     if (!this.simulate) {
       writeBrief(join(this.cwd, ".domain"));
-      this.watcher = new DropWatcher(this.reportsDir, coerceReport, (deskId, report) =>
-        this.setReport(deskId, report),
-      );
+      this.watcher = new DropWatcher(this.reportsDir, coerceReport, (deskId, report) => this.reportDropped(deskId, report));
       this.watcher.start();
-      this.replies = new DropWatcher(this.repliesDir, coerceReply, (deskId, reply) => {
-        if (this.seats.find((s) => s.desk.id === deskId)?.session) this.onSaid?.(deskId, "agent", reply.say);
-      });
+      this.replies = new DropWatcher(this.repliesDir, coerceReply, (deskId, reply) => this.replyDropped(deskId, reply));
       this.replies.start();
     }
   }
@@ -154,19 +176,57 @@ export class Office {
     return true;
   }
 
-  private launch(deskId: string, agent: AgentKind, model: string, leash: Leash, cwd: string, identity: WorkerIdentity | null): IWorkerSession {
+  private reportDropped(deskId: string, report: Report): void {
+    this.setReport(deskId, report);
+  }
+
+  private replyDropped(deskId: string, reply: { say: string }): void {
+    if (this.seats.find((s) => s.desk.id === deskId)?.session) this.onSaid?.(deskId, "agent", reply.say);
+  }
+
+  /**
+   * Where a desk's worker drops its report and replies: inside its own folder
+   * when it has one (with its own copy of BRIEF.md), watched for as long as
+   * it's there; else the project's .domain/.
+   */
+  private dropDirs(deskId: string, cwd: string): { reports: string; replies: string } {
+    const seat = this.seats.find((s) => s.desk.id === deskId);
+    if (this.simulate || !seat || resolve(cwd) === resolve(this.cwd)) return { reports: this.reportsDir, replies: this.repliesDir };
+    const base = join(cwd, ".domain");
+    const dirs = { reports: join(base, "reports"), replies: join(base, "replies") };
+    if (seat.drops?.dir !== base) {
+      this.stopDrops(seat);
+      writeBrief(base);
+      const watchers = [
+        new DropWatcher(dirs.reports, coerceReport, (d, r) => this.reportDropped(d, r)),
+        new DropWatcher(dirs.replies, coerceReply, (d, r) => this.replyDropped(d, r)),
+      ];
+      for (const w of watchers) w.start();
+      seat.drops = { dir: base, watchers };
+    }
+    return dirs;
+  }
+
+  private stopDrops(seat: Seat): void {
+    for (const w of seat.drops?.watchers ?? []) w.stop();
+    seat.drops = undefined;
+  }
+
+  private launch(deskId: string, agent: AgentKind, model: string, leash: Leash, cwd: string, identity: WorkerIdentity | null, resume = false): IWorkerSession {
     const mcp = this.simulate ? null : this.mcpFor?.(deskId, agent, identity);
+    const drops = this.dropDirs(deskId, cwd);
     return createWorker(agent, {
       cwd,
       simulate: this.simulate,
       deskId,
-      reportsDir: this.reportsDir,
-      repliesDir: this.repliesDir,
+      reportsDir: drops.reports,
+      repliesDir: drops.replies,
       model,
       leash,
       extraArgs: mcp?.args,
       env: mcp?.env,
       autoTrust: this.trusted,
+      resume,
     });
   }
 
@@ -246,6 +306,14 @@ export class Office {
 
   fire(deskId: string): boolean {
     const seat = this.seats.find((s) => s.desk.id === deskId);
+    // Someone asleep from last time just goes home (nothing's running).
+    if (seat?.asleep && !seat.session) {
+      seat.asleep = undefined;
+      seat.desk.worker = null;
+      seat.workspace = null;
+      this.changed();
+      return true;
+    }
     if (!seat || !seat.session) return false;
     for (const off of seat.cleanup) off();
     seat.cleanup = [];
@@ -257,6 +325,7 @@ export class Office {
     this.watcher?.forget(deskId);
     this.replies?.forget(deskId);
     this.deleteReportFile(deskId);
+    this.stopDrops(seat);
     this.changed();
     return true;
   }
@@ -411,20 +480,41 @@ export class Office {
     return this.seats.filter((s) => s.session).length;
   }
 
-  /** Something you say to a worker during its review: typed into its CLI. */
-  say(deskId: string, text: string): boolean {
+  /**
+   * Something you say to a worker, typed into its CLI: in its review (it
+   * answers out loud), or over team chat (it answers in the chat, then carries
+   * on). Either way the answer comes back through its reply file. `quiet`
+   * leaves it out of the worker's thread (a message to everyone is in #team).
+   */
+  say(deskId: string, text: string, via: "review" | "chat" | "auto" = "auto", quiet = false): boolean {
     const seat = this.seats.find((s) => s.desk.id === deskId);
-    const said = text.trim().slice(0, 1000);
+    const said = text.trim().slice(0, 4000);
     if (!seat?.session || !said) return false;
-    this.onSaid?.(deskId, "you", said);
+    if (!quiet) this.onSaid?.(deskId, "you", said);
+    const review = via === "review" || (via === "auto" && !!seat.desk.worker?.report);
     if (seat.session.tell) seat.session.tell(said);
-    else {
+    else if (review) {
       typeLine(
         seat.session,
         `[Office hours] Your manager says: "${said.replace(/\s+/g, " ")}" — answer out loud by writing {"say": "...", "at": <now in ms>} to $DOMAIN_REPLY_FILE (see .domain/BRIEF.md).`,
       );
+    } else {
+      typeLine(
+        seat.session,
+        `[Team chat] Your manager says: "${said.replace(/\s+/g, " ")}" — reply in the chat by writing {"say": "...", "at": <now in ms>} to $DOMAIN_REPLY_FILE (see .domain/BRIEF.md), then carry on with what you were doing.`,
+      );
     }
     return true;
+  }
+
+  /** The lines on a worker's screen now, when its backend can tell (null otherwise). */
+  screen(deskId: string): string[] | null {
+    return this.seats.find((s) => s.desk.id === deskId)?.session?.screen?.() ?? null;
+  }
+
+  /** The worker session at a desk (changes with each hire), for keying its chat. */
+  sessionId(deskId: string): string {
+    return this.seats.find((s) => s.desk.id === deskId)?.session?.id ?? "none";
   }
 
   /**
@@ -513,6 +603,7 @@ export class Office {
     for (const seat of this.seats) {
       for (const off of seat.cleanup) off();
       seat.session?.dispose();
+      this.stopDrops(seat);
     }
     this.watcher?.stop();
     this.replies?.stop();
@@ -547,11 +638,15 @@ export class Office {
   }
 
   private deleteReportFile(deskId: string): void {
-    try {
-      rmSync(join(this.reportsDir, `${deskId}.json`), { force: true });
-    } catch {
-      /* best effort */
+    const seat = this.seats.find((s) => s.desk.id === deskId);
+    for (const dir of [this.reportsDir, ...(seat?.drops ? [join(seat.drops.dir, "reports")] : [])]) {
+      try {
+        rmSync(join(dir, `${deskId}.json`), { force: true });
+      } catch {
+        /* best effort */
+      }
     }
+    for (const w of seat?.drops?.watchers ?? []) w.forget(deskId);
   }
 
   private toWorker(session: IWorkerSession, hiredBy: string, model: string, leash: Leash, branch: string | null, identity: WorkerIdentity | null): Worker {
@@ -571,6 +666,99 @@ export class Office {
 
   private changed(): void {
     this.onChange?.();
+    this.remember();
+  }
+
+  // --- remembering the team between runs ------------------------------------------------
+
+  /** Who's at which desk, written down (a moment after things settle). */
+  private remember(): void {
+    if (!this.memory || this.saveTimer) return;
+    this.saveTimer = setTimeout(() => {
+      this.saveTimer = null;
+      this.saveMemory();
+    }, 400);
+    this.saveTimer.unref?.();
+  }
+
+  private saveMemory(): void {
+    if (!this.memory) return;
+    const team: Remembered[] = [];
+    for (const s of this.seats) {
+      const w = s.desk.worker;
+      if (!w) continue;
+      team.push(
+        s.asleep ?? { deskId: s.desk.id, agent: w.agent, hiredBy: w.hiredBy, model: w.model, leash: w.leash, identity: w.identity, workspace: s.workspace, activity: taskLabel(s.busyWith) ?? taskLabel(w.activity) ?? "" },
+      );
+    }
+    try {
+      mkdirSync(dirname(this.memory), { recursive: true });
+      writeFileSync(this.memory, JSON.stringify({ team }, null, 2));
+    } catch {
+      /* best effort */
+    }
+  }
+
+  /** Last run's team, back at their desks — asleep until woken. */
+  private recall(): void {
+    if (!this.memory) return;
+    let team: Remembered[] = [];
+    try {
+      team = (JSON.parse(readFileSync(this.memory, "utf8")) as { team?: Remembered[] }).team ?? [];
+    } catch {
+      return;
+    }
+    for (const r of team) {
+      const seat = this.seats.find((s) => s.desk.id === r.deskId);
+      if (!seat || seat.session || !AGENT_LABELS[r.agent]) continue;
+      // Its own folder is kept between runs; if it's gone, it works in the project.
+      const workspace = r.workspace && existsSync(r.workspace.path) ? r.workspace : null;
+      seat.asleep = { ...r, workspace };
+      seat.workspace = workspace;
+      seat.desk.worker = {
+        id: `asleep-${r.deskId}`,
+        agent: r.agent,
+        hiredBy: r.hiredBy,
+        status: "asleep",
+        activity: "💤 Asleep — ring the gong to start the day",
+        report: null,
+        model: r.model,
+        leash: r.leash,
+        branch: workspace?.branch ?? null,
+        identity: r.identity,
+      };
+    }
+  }
+
+  /** Whether anyone's asleep at their desk. */
+  get sleeping(): number {
+    return this.seats.filter((s) => s.asleep).length;
+  }
+
+  /**
+   * Wake the remembered workers (one desk, or all): each starts again in its
+   * own folder, back in its last conversation, and is told to carry on.
+   */
+  wake(deskId?: string): number {
+    let woken = 0;
+    for (const seat of this.seats) {
+      const r = seat.asleep;
+      if (!r || (deskId && seat.desk.id !== deskId)) continue;
+      seat.asleep = undefined;
+      const session = this.launch(seat.desk.id, r.agent, r.model, r.leash, seat.workspace?.path ?? this.cwd, r.identity, true);
+      seat.session = session;
+      seat.desk.worker = this.toWorker(session, r.hiredBy, r.model, r.leash, seat.workspace?.branch ?? null, r.identity);
+      seat.desk.worker.activity = "☀️ Waking up…";
+      seat.busyWith = r.activity;
+      this.attach(seat, session);
+      if (!session.summon) {
+        const was = r.activity ? ` You were on: "${r.activity.replace(/^\W+/, "")}".` : "";
+        typeLine(session, `[Office] Good morning — the office is open again and your manager rang the gong.${was} Pick up where you left off.`);
+      }
+      woken++;
+    }
+    if (woken) this.changed();
+    return woken;
   }
 }
 
@@ -611,4 +799,9 @@ function typeLine(session: IWorkerSession, text: string): void {
 /** An activity without its leading emoji ("🎯 Fix it" → "Fix it"). */
 function stripIcon(s: string): string {
   return s.replace(/^(?:Free · last: )?[^\p{L}\p{N}]+\s*/u, "");
+}
+
+/** What a worker was on, when its activity names a task ("🎯 Add the README", "🧠 Planning: …") rather than a status. */
+function taskLabel(activity: string | undefined): string | null {
+  return activity && /^(?:🎯|🧠)/u.test(activity) ? activity : null;
 }

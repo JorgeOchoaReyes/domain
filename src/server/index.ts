@@ -1,3 +1,4 @@
+import { connectToApp } from "./parentPort.js";
 import { localModelWarning } from "./workerSession.js";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
@@ -59,7 +60,8 @@ const MIME: Record<string, string> = {
 
 const CWD = process.env.DOMAIN_CWD || process.cwd();
 const SIMULATE = process.env.DOMAIN_SIMULATE === "1";
-const office = new Office({ cwd: CWD, simulate: SIMULATE, trusted: () => isTrusted(CWD) });
+// The office remembers who's at which desk between runs (real workers only).
+const office = new Office({ cwd: CWD, simulate: SIMULATE, trusted: () => isTrusted(CWD), memory: SIMULATE ? null : join(CWD, ".domain", "office.json") });
 
 // ---------------------------------------------------------------------------
 // Static file server (serves the built client in production).
@@ -772,8 +774,18 @@ office.mcpFor = (deskId, agent, identity) => {
   }
 };
 
+// In the desktop app the server runs in a background process of its own:
+// hook up the app's folder picker and relaunch before the modules read them.
+const tellAppReady = connectToApp(() => closeUp());
+
 const routes = new Map<string, Route>();
 routes.set("logs", (_msg, _client, ws) => send(ws, { t: "oplogAll", entries: log.all() }));
+// The gong (or E at a sleeping worker's desk): last time's team gets back to work.
+routes.set("wake", (msg, client) => {
+  const deskId = typeof msg.deskId === "string" ? msg.deskId : undefined;
+  const n = office.wake(deskId);
+  if (n) log.start("agent", `${client.name} woke ${n === 1 && deskId ? `the worker at ${deskId}` : `${n} worker${n === 1 ? "" : "s"}`}: each picks up its last conversation`).done(true);
+});
 // You said this project's worker folders can be trusted: remember it, and answer any agent asking now.
 routes.set("trustWorkers", () => {
   trustProject(CWD);
@@ -798,16 +810,27 @@ export const serverReady: Promise<string> = new Promise((resolve) => {
   httpServer.listen(PORT, HOST, () => {
     const url = `http://${HOST}:${PORT}`;
     console.log(`domain server listening on ${url}`);
+    tellAppReady(url);
     resolve(url);
   });
 });
 
-function shutdown(): void {
+/**
+ * Close up: every worker's terminal (and what it started) is ended — the team
+ * itself is remembered in .domain/office.json, asleep at its desks next time.
+ */
+function closeUp(): void {
   mcpCleanup(CWD);
   deployer.cancel();
   goalFiles.stop();
   progress.dispose();
   office.dispose();
+}
+// The desktop app calls this as it quits.
+(globalThis as { __domainShutdown?: () => void }).__domainShutdown = closeUp;
+
+function shutdown(): void {
+  closeUp();
   for (const ws of clients.keys()) ws.close();
   httpServer.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 1000).unref();

@@ -28,6 +28,8 @@ export interface ReviewHandlers {
   onBoard(canvas: HTMLCanvasElement | null): void;
   /** Dictation isn't available here (e.g. no speech service in this window). */
   onVoiceError(error: string): void;
+  /** Show this review the other way (window ↔ projector). */
+  onSwitch?(): void;
 }
 
 export class ReviewPanel {

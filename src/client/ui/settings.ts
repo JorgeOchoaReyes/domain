@@ -31,6 +31,8 @@ export interface Settings {
   music: boolean;
   musicVolume: number;
   track: TrackId;
+  /** Office hours in a window, or on the projector (you in your chair, the slides on the big screen). */
+  reviewStyle: "window" | "projector";
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -48,6 +50,7 @@ export const DEFAULT_SETTINGS: Settings = {
   music: true,
   musicVolume: 0.35,
   track: "lofi",
+  reviewStyle: "window",
 };
 
 const KEY = "domain.settings";
@@ -65,6 +68,7 @@ export function loadSettings(): Settings {
     s.fov = clamp(s.fov, 50, 100);
     if (!["high", "balanced", "fast"].includes(s.graphics)) s.graphics = "balanced";
     s.musicVolume = clamp(s.musicVolume, 0, 1);
+    if (s.reviewStyle !== "projector") s.reviewStyle = "window";
     if (!TRACKS.some((t) => t.id === s.track)) s.track = DEFAULT_SETTINGS.track;
     return s;
   } catch {
@@ -162,6 +166,13 @@ export function openSettings(current: Settings, onChange: (s: Settings) => void,
       <label class="st-check"><input type="checkbox" class="st-sound" ${extras.muted ? "" : "checked"} /> 🔊 Sound effects</label>
     </section>
     <section>
+      <h3>Office hours</h3>
+      <div class="st-views st-review">
+        <button class="st-view-card ${s.reviewStyle === "window" ? "on" : ""}" data-rs="window"><span class="st-view-icon">🪟</span><b>In a window</b><span>Slides, the review board and the conversation side by side</span></button>
+        <button class="st-view-card ${s.reviewStyle === "projector" ? "on" : ""}" data-rs="projector"><span class="st-view-icon">📽</span><b>On the projector</b><span>You in your chair, the slides on the big screen, a bar to decide</span></button>
+      </div>
+    </section>
+    <section>
       <h3>Music</h3>
       <label class="st-check"><input type="checkbox" class="st-music" ${s.music ? "checked" : ""} /> 🎵 Background music</label>
       <label class="st-row"><span class="st-label">🔉 Music volume</span>
@@ -194,6 +205,13 @@ export function openSettings(current: Settings, onChange: (s: Settings) => void,
     }),
   );
   body.querySelector<HTMLInputElement>(".st-sound")!.addEventListener("change", (e) => extras.setMuted(!(e.target as HTMLInputElement).checked));
+  body.querySelectorAll<HTMLButtonElement>(".st-review .st-view-card").forEach((b) =>
+    b.addEventListener("click", () => {
+      s.reviewStyle = b.dataset.rs === "projector" ? "projector" : "window";
+      body.querySelectorAll(".st-review .st-view-card").forEach((x) => x.classList.toggle("on", x === b));
+      emit();
+    }),
+  );
   body.querySelector<HTMLInputElement>(".st-music")!.addEventListener("change", (e) => {
     s.music = (e.target as HTMLInputElement).checked;
     emit();

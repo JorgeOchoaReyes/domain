@@ -689,8 +689,8 @@ function buildMyOffice(add: (o: THREE.Object3D) => void): { screen: LiveBoard; r
   const lid = mesh(roundedBox(0.5, 0.03, 0.34, 0.03), toon("#3d405b"), -0.5, 0.84, 0.02, false);
   desk.add(lid);
   const nameplate = textPlane("👑 Manager", { bg: "#fffaf3", size: 30 });
+  // Facing whoever's across the desk (the presenter), not you in your chair.
   nameplate.position.set(0.55, 0.92, 0.3);
-  nameplate.rotation.y = Math.PI;
   desk.add(nameplate);
   const m = mug("#ff8a5b");
   m.position.set(0.95, 0.825, 0.1);
@@ -698,6 +698,8 @@ function buildMyOffice(add: (o: THREE.Object3D) => void): { screen: LiveBoard; r
   add(desk);
   const bossChair = chair("#3d405b");
   bossChair.position.set(REVIEW_DESK.x, 0, REVIEW_DESK.z - 0.85);
+  // Its back away from the desk: you sit in it facing the screen.
+  bossChair.rotation.y = Math.PI;
   add(bossChair);
   for (const x of [11.2, 16.0]) {
     const arm = armchair(x < 13 ? "#ef476f" : "#06d6a0");

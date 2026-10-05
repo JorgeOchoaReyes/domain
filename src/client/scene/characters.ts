@@ -28,6 +28,7 @@ export const STATUS_BULB: Record<WorkerStatus, string> = {
   waiting: "#ef476f",
   presenting: "#c77dff",
   done: "#06d6a0",
+  asleep: "#5c6b8a",
 };
 
 const HIPS = 0.52;
@@ -57,6 +58,8 @@ export class Person {
   private blinkAt = 1 + Math.random() * 3;
   /** On a skateboard: stand on the deck, no walking. */
   riding = false;
+  /** In a chair. */
+  seated = false;
   private eyes: THREE.Mesh[] = [];
 
   constructor(name: string, look: Look, opts: { tag?: boolean } = {}) {
@@ -168,6 +171,16 @@ export class Person {
 
   /** Advance the walk cycle; `speed` is how fast it's moving (0 = standing). */
   update(dt: number, speed: number): void {
+    if (this.seated) {
+      const ease = Math.min(1, dt * 10);
+      this.legL.rotation.x += (-1.45 - this.legL.rotation.x) * ease;
+      this.legR.rotation.x += (-1.45 - this.legR.rotation.x) * ease;
+      this.armL.rotation.x += (-0.5 - this.armL.rotation.x) * ease;
+      this.armR.rotation.x += (-0.5 - this.armR.rotation.x) * ease;
+      this.body.position.y = -0.22;
+      this.body.rotation.z = 0;
+      return;
+    }
     if (this.riding) {
       // Side-on stance, knees soft, arms out, a little sway with speed.
       const ease = Math.min(1, dt * 10);
@@ -578,4 +591,5 @@ const CHIP: Record<WorkerStatus, [string, string, string]> = {
   waiting: ["🙋 NEEDS YOU", STATUS_BULB.waiting, "#ffffff"],
   presenting: ["🎤 PRESENTING", STATUS_BULB.presenting, "#ffffff"],
   done: ["✅ DONE", STATUS_BULB.done, INK],
+  asleep: ["💤 ASLEEP", STATUS_BULB.asleep, "#ffffff"],
 };

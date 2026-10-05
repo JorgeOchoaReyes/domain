@@ -12,6 +12,7 @@ const STATUS_LABEL: Record<WorkerStatus, string> = {
   waiting: "needs you",
   presenting: "presenting",
   done: "done",
+  asleep: "asleep",
 };
 
 export interface TerminalHandlers {
