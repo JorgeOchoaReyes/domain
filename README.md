@@ -301,6 +301,10 @@ are building (your preview URL, or any local dev server it finds), **Workers**
 with each one's live terminal, the **Loop** for your goal, **Decks** for
 research goals, and the **Deploy** console.
 
+The browser has tabs: **＋** for a new one (it lists your running dev
+servers), **×** (or a middle-click) to close one; each keeps its own page and
+history, and they're remembered.
+
 Press **L** by a couch, a table, an armchair or the campfire and you sit down
 and set it up there. It stays where you left it: walk back and press **E** to
 pick up where you were.
@@ -362,6 +366,51 @@ auditor's own folder — and the auditor approves it or lists what's wrong. Issu
 go back to the builder, and back and forth until it's approved or the rounds
 run out (or the audit takes over 25 minutes). Then it comes to you, once, with
 the audit's verdict and everything it found along the way.
+
+### 🤖 Autopilot: the office runs itself
+
+Turn it on in **Team policy** (or with one tap on the phone) and the office
+keeps itself going:
+
+- Goals with no tasks get **planned** by a free worker.
+- Free workers pick up the **next tasks** — deadlines first, a group's goal
+  only by its members — each with a teammate **auditing** it.
+- Work whose **checks passed and whose auditor approved it** is approved
+  without you (you can turn that off).
+- When every task in a goal is done, its **lead pulls it together** — makes
+  it work as a whole, fixes the gaps — and presents *that* to you: the one
+  thing you need to see.
+- The **end-of-day sync** runs at its time (17:30 by default).
+
+Questions, plans, and anything an audit couldn't settle still come to you,
+with reminders.
+
+### 🎓 Interns
+
+A worker whose task splits into independent pieces can bring in up to three
+interns. They're hired at the **intern bay** (eight more desks on the north of
+the work floor), each gets a piece, the worker audits their work before it
+goes anywhere, and they go home after ten idle minutes. Their desks say whose
+interns they are, and you can open their chat and terminal like anyone's.
+(On or off in Team policy.)
+
+### 📚 Lessons, and the end-of-day sync
+
+When you send work back with notes, or an audit finds something, it goes
+straight into the team's **lessons** (`.domain/LESSONS.md`, in every worker's
+folder) — and every brief says to read them first, so the whole team learns
+from it at once. At the **end of the day** each worker writes up what it
+learned (its mistakes, what you sent back, what worked), and one of them
+merges it all into a short list — duplicates merged, stale ones dropped. Every
+step has a time limit, and if the merge never comes nothing's lost. See them
+in **Lessons** (Office menu, or the phone).
+
+### 🎓 Skills
+
+Each agent's skills (the `SKILL.md` folders its CLI loads — yours and the
+project's) are shown when you hire it and on each worker. They're all on by
+default; untick any in a character's editor and it can't use them (Claude Code
+has them blocked for its session; the others are told).
 
 ### 👥 Groups
 
@@ -738,6 +787,10 @@ src/
     progress.ts          keeps score; saved to .domain/
     history.ts           the office's history, saved to .domain/history.json
     audits.ts            pair workers: an auditor checks the work before you see it
+    autopilot.ts         the office running itself: hand-outs, approvals, wrap-ups, interns
+    lessons.ts, sync.ts  what the team learns, and the end-of-day sync
+    skills.ts            each agent CLI's skills
+    doing.ts             what an agent is doing, in a word or three, from its screen
   client/
     main.ts              glue: networking, interaction, the game loop
     scene/               world, player, office, rooms, game room, floor 2, the grounds out back, minigames, hand, characters, boards
