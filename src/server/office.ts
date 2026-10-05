@@ -1,3 +1,4 @@
+import { skillBlockArgs } from "./skills.js";
 import { join, resolve, dirname } from "node:path";
 import { mkdirSync, rmSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import type {
@@ -32,6 +33,8 @@ interface Seat {
   beforeAsk?: string;
   /** The MCP servers its session started with (names, to show). */
   mcp?: string[];
+  /** The skills it can use (names, to show). */
+  skills?: string[];
   /**
    * Lines to type once the question on its screen is answered: typed into a
    * permission menu, a message could pick one of its options.
@@ -101,6 +104,8 @@ export class Office {
   mcpFor: ((deskId: string, agent: AgentKind, identity: WorkerIdentity | null) => { args: string[]; env: Record<string, string> } | null) | null = null;
   /** The names of the MCP servers a worker will have (its CLI's own and the office's), to show. */
   mcpNames: ((agent: AgentKind, identity: WorkerIdentity | null) => string[]) | null = null;
+  /** A worker's skills (on, and turned off), to show and to block. */
+  skillsFor: ((agent: AgentKind, identity: WorkerIdentity | null) => { on: string[]; off: string[] }) | null = null;
   /** Called when you or a worker says something during its review. */
   onSaid: ((deskId: string, from: "agent" | "you", text: string) => void) | null = null;
 
@@ -226,8 +231,12 @@ export class Office {
   private launch(deskId: string, agent: AgentKind, model: string, leash: Leash, cwd: string, identity: WorkerIdentity | null, resume = false): IWorkerSession {
     const mcp = this.simulate ? null : this.mcpFor?.(deskId, agent, identity);
     const mcpNames = this.simulate ? [] : (this.mcpNames?.(agent, identity) ?? []);
+    const skills = this.simulate ? { on: [], off: [] } : (this.skillsFor?.(agent, identity) ?? { on: [], off: [] });
     const seat = this.seats.find((s) => s.desk.id === deskId);
-    if (seat) seat.mcp = mcpNames;
+    if (seat) {
+      seat.mcp = mcpNames;
+      seat.skills = skills.on;
+    }
     const drops = this.dropDirs(deskId, cwd);
     return createWorker(agent, {
       cwd,
@@ -237,7 +246,7 @@ export class Office {
       repliesDir: drops.replies,
       model,
       leash,
-      extraArgs: mcp?.args,
+      extraArgs: [...(mcp?.args ?? []), ...skillBlockArgs(agent, skills.off)],
       env: mcp?.env,
       autoTrust: this.trusted,
       resume,
@@ -692,6 +701,7 @@ export class Office {
           ? {
               ...s.desk.worker,
               ...(s.mcp?.length ? { mcp: s.mcp } : {}),
+              ...(s.skills?.length ? { skills: s.skills } : {}),
               ...(s.desk.worker.status === "working" && s.session?.doing?.() ? { doing: s.session.doing() } : {}),
             }
           : null,
@@ -888,7 +898,7 @@ export function taskBriefText(goalTitle: string, taskTitle: string, why = "", br
   return (
     // Said as your manager, through the office: an agent that sees a bare task
     // card can take it for pasted text and stop to ask before starting.
-    `[Task from your manager, via the domain office] Goal: "${goalTitle}"${why ? ` (why: ${why})` : ""}. Your task: "${taskTitle}". Done means: ${done}${time}${plan}${own}${rules}${checkpoints} ` +
+    `[Task from your manager, via the domain office] Goal: "${goalTitle}"${why ? ` (why: ${why})` : ""}. Your task: "${taskTitle}". Done means: ${done}${time}${plan}${own}${rules}${checkpoints} Before you start, read .domain/LESSONS.md — the team's lessons from your manager's feedback and each other's mistakes — and follow it. ` +
     `Start on it now — no need to check with me first. When it's done — or you're blocked on a decision — present it by writing a report to $DOMAIN_REPORT_FILE as described in .domain/BRIEF.md (status "ready" or "blocked"), then wait for the review.`
   );
 }

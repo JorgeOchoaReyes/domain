@@ -1,3 +1,5 @@
+import type { LessonsState } from "./lessons.js";
+import type { SkillSeen } from "./skills.js";
 import type { Idea } from "./ideas.js";
 import type { AgentsState } from "./agents.js";
 import type { ChatPeek, ChatThread, ChatWork } from "./chat.js";
@@ -107,6 +109,8 @@ export interface Worker {
   identity: WorkerIdentity | null;
   /** The MCP servers (tools) it started with: its CLI's own, plus the office's. */
   mcp?: string[];
+  /** The skills it can use (its CLI's, minus any its character turned off). */
+  skills?: string[];
   /** What it's doing right now, in a word or three ("Editing math.js", "Running tests"). */
   doing?: string;
 }
@@ -259,6 +263,11 @@ export type ClientMessage =
   | { t: "goalGroup"; goalId: string; deskIds: string[] }
   /** The office's history (the latest, or a worker's). */
   | { t: "historyGet" }
+  /** Which skills each agent CLI has (answered with "skills"). */
+  | { t: "skillsGet" }
+  /** The team's lessons (answered with "lessons"), and the end-of-day sync. */
+  | { t: "lessonsGet" }
+  | { t: "eodSync" }
   | { t: "goalDelete"; goalId: string }
   | { t: "taskAdd"; goalId: string; title: string }
   /** Put the worker at a desk on a task (it's briefed in its terminal). */
@@ -417,6 +426,8 @@ export type ServerMessage =
   | { t: "agents"; state: AgentsState }
   /** The office's history, newest first; and each new event as it happens. */
   | { t: "history"; events: HistoryEvent[] }
+  | { t: "skills"; seen: SkillSeen[] }
+  | { t: "lessons"; state: LessonsState; syncing: boolean }
   | { t: "historyEvent"; event: HistoryEvent }
   /** Every chat thread, with its history. */
   | { t: "chat"; threads: ChatThread[] }

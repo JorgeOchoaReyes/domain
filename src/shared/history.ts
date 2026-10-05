@@ -7,7 +7,8 @@ import type { AgentKind } from "./protocol.js";
  * and at everything a worker has done.
  */
 
-export type HistoryKind = "hired" | "left" | "assigned" | "reported" | "approved" | "changes" | "audit" | "shipped" | "goal" | "session" | "group" | "deadline";
+export type HistoryKind = "hired" | "left" | "assigned" | "reported" | "approved" | "changes" | "audit" | "shipped" | "goal" | "session" | "group" | "deadline"
+  | "sync";
 
 export interface HistoryEvent {
   at: number;

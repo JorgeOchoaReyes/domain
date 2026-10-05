@@ -1,3 +1,4 @@
+import { onSkillsChange, skillsLine, skillsOf } from "./skills.js";
 import { mcpToolsFor, onMcpChange } from "./mcp.js";
 import * as THREE from "three";
 import { OutlineEffect } from "three/examples/jsm/effects/OutlineEffect.js";
@@ -133,6 +134,8 @@ function avatarHtml(look: CharacterLook | null, agent: AgentKind, size = 64): st
 export interface TeamContext {
   /** Ask for a fresh look at the agents' MCP settings (to show each one's tools). */
   scanMcp?(): void;
+  /** Ask which skills each agent has. */
+  getSkills?(): void;
   progress: ProgressState;
   desks: Desk[];
   /** Save a new or changed character. */
@@ -220,7 +223,7 @@ function openRoster(ctx: TeamContext & Partial<Pick<HireContext, "onHire">>, des
         return `<li data-agent="${k}"><span class="dot" style="background:${AGENT_COLOR[k]}"></span><b>${AGENT_LABELS[k]}</b>
           <select class="tm-model" title="Model">${models.map((m) => `<option value="${esc(m)}" ${m === policy.defaultModel[k] ? "selected" : ""}>${esc(modelLabel(m))}</option>`).join("")}</select>
           <button class="btn small tm-quick-hire">Hire</button>
-          <span class="tm-tools" data-agent="${k}"></span>
+          <span class="tm-tools" data-agent="${k}"></span><span class="tm-skills" data-agent="${k}"></span>
           <button class="btn small primary tm-install" title="Install it with npm">⬇ Install</button></li>`;
       }).join("")}</ul>
     </section>`
@@ -253,16 +256,26 @@ function openRoster(ctx: TeamContext & Partial<Pick<HireContext, "onHire">>, des
       el.textContent = tools.length ? `🧰 ${tools.join(", ")}` : "🧰 no MCP tools";
       el.title = tools.length ? "MCP servers it starts with — its own config plus the office's (Office → MCP tools)" : "Add some in Office → MCP tools";
     });
+  const showSkills = () =>
+    body.querySelectorAll<HTMLElement>(".tm-skills").forEach((el) => {
+      const l = skillsLine(skillsOf(el.dataset.agent!).map((s) => s.name));
+      el.textContent = l.text;
+      el.title = l.title;
+    });
+  const stopSkills = onSkillsChange(showSkills);
   const stopTools = onMcpChange(showTools);
   ctx.scanMcp?.();
+  ctx.getSkills?.();
   const stopAgents = onAgentsChange(showInstalled);
   const stopWatching = () => {
     stopAgents();
     stopTools();
+    stopSkills();
   };
   const modal = openModal({ title: hiring ? `Hire a worker · ${desk!.label}` : "Your team", icon: "👥", className: "team-modal", body, footer, onClose: stopWatching });
   showInstalled();
   showTools();
+  showSkills();
 
   footer.querySelector(".tm-policy")!.addEventListener("click", () => {
     modal.close();
@@ -383,6 +396,7 @@ function openEditor(
       <label>Voice</label>
       <div class="webhook"><select class="tm-voice-in"></select><button class="btn tm-say" title="Hear it">▶</button></div>
 
+      <label>Skills <span class="tm-sub">all on by default — untick what it shouldn't use</span></label><div class="tm-skill-list"></div>
       ${
         ctx.progress.mcp.length
           ? `<label>Tools (MCP)</label><div class="tm-mcp">${ctx.progress.mcp
@@ -466,7 +480,10 @@ function openEditor(
     (v) => {
       c.agent = v as AgentKind;
       c.model = "";
+      // Another agent, other skills: the old picks don't apply.
+      c.skillsOff = [];
       renderModels();
+      renderSkills();
     },
     rebuild,
   );
@@ -496,6 +513,32 @@ function openEditor(
   if (typeof speechSynthesis !== "undefined" && !listVoices().length) setTimeout(fillVoices, 600);
   voiceIn.addEventListener("change", () => (c.voice = voiceIn.value));
   $(".tm-say").addEventListener("click", () => speak(`Hi, I'm ${c.name || "your new teammate"}. Ready when you are!`, c.agent, undefined, c.voice));
+
+  // Its agent's skills: on unless listed in skillsOff (redrawn if the agent changes).
+  const renderSkills = () => {
+    const el = body.querySelector<HTMLElement>(".tm-skill-list");
+    if (!el) return;
+    const list = skillsOf(c.agent);
+    const off = new Set(c.skillsOff ?? []);
+    el.innerHTML = list.length
+      ? list
+          .map((s) => `<label class="tm-check" title="${esc(s.description)}"><input type="checkbox" data-skill="${esc(s.name)}" ${off.has(s.name) ? "" : "checked"} /> 🎓 ${esc(s.name)}${s.source === "project" ? " <i>(project)</i>" : ""}</label>`)
+          .join("")
+      : `<p class="tm-sub">No skills found for ${esc(AGENT_LABELS[c.agent])} — add them to its skills folder.</p>`;
+    el.querySelectorAll<HTMLInputElement>("[data-skill]").forEach((cb) =>
+      cb.addEventListener("change", () => {
+        const n = cb.dataset.skill!;
+        const cur = new Set(c.skillsOff ?? []);
+        if (cb.checked) cur.delete(n);
+        else cur.add(n);
+        c.skillsOff = [...cur];
+      }),
+    );
+  };
+  renderSkills();
+  const stopSkillList = onSkillsChange(renderSkills);
+  ctx.getSkills?.();
+  void stopSkillList;
 
   body.querySelectorAll<HTMLInputElement>("[data-mcp]").forEach((cb) =>
     cb.addEventListener("change", () => {

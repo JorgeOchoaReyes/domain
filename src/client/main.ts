@@ -1,3 +1,5 @@
+import { ingestLessons, openLessons } from "./ui/lessons.js";
+import { ingestSkills } from "./ui/skills.js";
 import { osDictationHint } from "./voice.js";
 import type { AgentKind, ClientMessage, Desk, Look, OfficeState, Presentation } from "../shared/protocol.js";
 import { AGENT_LABELS, DEFAULT_LOOK, coerceLook } from "../shared/protocol.js";
@@ -220,6 +222,7 @@ hudRoot.querySelector('.dock [data-act="settings"]')?.before(officeBtn);
 const officeTiles: OfficeTile[] = [
   { key: "projects", icon: "github", title: "Projects & GitHub", text: "Which project your workers are on — switch, or clone one from GitHub", run: () => openProjects(projectActions()) },
   { key: "team", icon: "👥", title: "Your team", text: "Characters with names, looks, voices and personas you hire again and again", run: () => openTeam(teamCtx()) },
+  { key: "lessons", icon: "📚", title: "Lessons", text: "What your team has learned from your feedback and each other — and the end-of-day sync", run: () => openLessons((m) => net.send(m)) },
   { key: "history", icon: "📜", title: "History", text: "Everything you and your workers have done — by day, or by worker", run: () => openHistory((m) => net.send(m)) },
   { key: "chat", icon: "💬", title: "Team chat", text: "Message any worker, or everyone — see what each is doing and what it has done", run: () => openChat() },
   { key: "ideas", icon: "💡", title: "Idea board", text: "Sketch an idea and hand it to a worker, or make it a goal — also at the whiteboards", run: () => openIdeas(null) },
@@ -343,6 +346,8 @@ net.onMessage = (msg) => {
   ingestProjects(msg);
   ingestAgents(msg);
   ingestHistory(msg);
+  ingestSkills(msg);
+  ingestLessons(msg);
   ingestGithub(msg);
   if (msg.t === "project") showProject();
   if (msg.t === "guest") showGuestBadge();
@@ -640,6 +645,7 @@ function teamCtx(): TeamContext {
     onDelete: (id) => net.send({ t: "characterDelete", id }),
     onEditPolicy: () => openPolicyNow(),
     scanMcp: () => net.send({ t: "mcpScan" }),
+    getSkills: () => net.send({ t: "skillsGet" }),
   };
 }
 
@@ -978,6 +984,7 @@ const phone = new Phone({
   roundup: () => openRoundup(),
   standup: () => openStandupNow(),
   focus: () => openFocus(),
+  lessons: () => openLessons((m) => net.send(m)),
   openHistory: () => openHistory((m) => net.send(m)),
   openLaptop: () => openLaptop(),
   travel: (p) => travelTo({ label: p.label, icon: p.icon, x: p.x, z: p.z, facing: p.facing }),

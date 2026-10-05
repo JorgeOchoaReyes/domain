@@ -40,6 +40,8 @@ export interface Character {
   look: CharacterLook;
   /** Ids of the office's MCP servers this character gets. */
   mcp: string[];
+  /** Skills it may not use (all the others its agent has are on). */
+  skillsOff?: string[];
   createdAt: number;
   /** How many times it's been hired (shown on its card). */
   hires: number;
@@ -93,6 +95,7 @@ export function coerceCharacter(raw: unknown): Character | null {
     voice: clean(o.voice, 80),
     look: coerceLook(o.look, agent),
     mcp: Array.isArray(o.mcp) ? o.mcp.filter((x): x is string => typeof x === "string").slice(0, 20) : [],
+    skillsOff: Array.isArray(o.skillsOff) ? o.skillsOff.filter((x): x is string => typeof x === "string" && x.length <= 64).slice(0, 100) : [],
     createdAt: typeof o.createdAt === "number" ? o.createdAt : Date.now(),
     hires: typeof o.hires === "number" && o.hires >= 0 ? Math.floor(o.hires) : 0,
   };

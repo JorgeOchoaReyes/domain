@@ -1,3 +1,6 @@
+import { Lessons } from "./lessons.js";
+import { EodSync } from "./sync.js";
+import { scanSkills } from "./skills.js";
 import { isLeash } from "../shared/policy.js";
 import { homedir } from "node:os";
 import { HistoryLog } from "./history.js";
@@ -277,6 +280,29 @@ function workerRef(deskId: string): HistoryEvent["worker"] {
 }
 const nameAt = (deskId: string) => workerRef(deskId)?.name ?? deskId;
 
+// --- what the team learns: your feedback, audit findings, and the end-of-day sync ----------
+
+/** Workers who can take part in a sync (or take work): staffed, not asleep or quit. */
+const activeDesks = () => office.snapshot().desks.filter((d) => d.worker && office.isStaffed(d.id) && d.worker.status !== "asleep").map((d) => d.id);
+const lessons = new Lessons(SIMULATE ? null : join(CWD, ".domain", "lessons.json"), () => {
+  const dirs = new Set([join(CWD, ".domain")]);
+  for (const d of office.snapshot().desks) if (d.worker) dirs.add(join(office.workdir(d.id), ".domain"));
+  return [...dirs];
+});
+lessons.onChange = (state) => broadcast({ t: "lessons", state, syncing: eod.isRunning });
+const eod = new EodSync({
+  lessons,
+  simulate: SIMULATE,
+  note: (text) => {
+    history.add({ kind: "sync", who: "office", text: text.replace(/^🌙 /, "") });
+    broadcast({ t: "loop", goalId: "", event: "warn", text });
+    broadcast({ t: "lessons", state: lessons.snapshot, syncing: eod.isRunning });
+  },
+  office: { staffed: activeDesks, workdir: (d) => office.workdir(d), instruct: (d, t) => office.instruct(d, t), nameOf: nameAt },
+});
+// Workers hired since the last write get the lessons in their own folder too.
+setInterval(() => lessons.write(), 60_000).unref();
+
 // --- pair workers: an auditor reviews the work before it comes to you --------------------
 
 /** A report reaches you: into the line, announced, and in the history. */
@@ -299,6 +325,7 @@ const audits = new Audits({
     const presentation = office.release(deskId);
     if (presentation) toYou(presentation);
   },
+  onFinding: (builder, task, issues) => lessons.note({ from: `Audit of ${nameAt(builder)}`, text: issues, about: task, kind: "audit" }),
   note: (text, deskId) => {
     history.add({ kind: "audit", who: "office", text, worker: workerRef(deskId) });
     broadcast({ t: "loop", goalId: progress.taskAt(deskId)?.goal.id ?? "", event: "warn", text: `🔍 ${text}` });
@@ -646,6 +673,9 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
         );
         if (reviewed) {
           const task = progress.taskAt(msg.deskId);
+          // Your feedback is something the whole team learns from.
+          const said = str(msg.text, 8000)?.trim();
+          if (!msg.approve && said && !wasPlan) lessons.note({ from: "you", text: said, about: task?.title, kind: "feedback" });
           progress.reviewed(client.name, msg.deskId, !!msg.approve, wasPlan);
           history.add({
             kind: msg.approve ? "approved" : "changes",
@@ -687,6 +717,19 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
           history.add({ kind: "group", who: client.name, text: `${client.name} gave “${g.title}” to ${deskIds.map(nameAt).join(", ")}`, goalId });
           groupContinue(goalId, client.name);
         }
+        break;
+      }
+      case "lessonsGet": {
+        send(ws, { t: "lessons", state: lessons.snapshot, syncing: eod.isRunning });
+        break;
+      }
+      case "eodSync": {
+        void eod.run();
+        broadcast({ t: "lessons", state: lessons.snapshot, syncing: true });
+        break;
+      }
+      case "skillsGet": {
+        send(ws, { t: "skills", seen: scanSkills(homedir(), CWD, AGENT_KINDS) });
         break;
       }
       case "historyGet": {
@@ -899,7 +942,9 @@ function groupContinue(goalId: string, who: string): void {
 function personaFor(deskId: string): string {
   const id = office.workerAt(deskId)?.identity?.characterId;
   const c = id ? progress.character(id) : null;
-  return c ? personaBrief(c) : "";
+  // Skills it's not to use: Claude Code has them blocked; the others are told.
+  const off = c?.skillsOff?.length && c.agent !== "claude" ? ` Don't use these skills: ${c.skillsOff.join(", ")}.` : "";
+  return (c ? personaBrief(c) : "") + off;
 }
 
 const ctx: ServerCtx = {
@@ -936,6 +981,18 @@ office.mcpNames = (agent, identity) => {
     /* unreadable config: just the office's */
   }
   return [...new Set([...own, ...serversFor(progress.mcp, picks).map((s) => s.name)])].slice(0, 20);
+};
+
+// Its skills: all its CLI has, minus any its character turned off.
+office.skillsFor = (agent, identity) => {
+  const off = identity ? (progress.character(identity.characterId)?.skillsOff ?? []) : [];
+  let all: string[] = [];
+  try {
+    all = scanSkills(homedir(), CWD, [agent]).map((s) => s.name);
+  } catch {
+    /* unreadable: none to show */
+  }
+  return { on: all.filter((n) => !off.includes(n)), off: off.filter((n) => all.includes(n)) };
 };
 
 // Each worker launches with its MCP servers: its character's picks plus the ones for everyone.

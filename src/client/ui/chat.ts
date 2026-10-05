@@ -241,7 +241,7 @@ export class TeamChat {
       ? `<div class="ch-now-status"><span class="ch-pill" style="background:${STATUS_COLOR[p.status] ?? "#c9ced8"}">${esc(STATUS[p.status] ?? p.status)}</span> ${esc(p.activity)}</div>
          <pre>${p.lines.map(esc).join("\n") || "(nothing on its screen yet)"}</pre>`
       : `<div class="ch-now-status">${esc(w?.activity ?? "")}</div><pre>…</pre>`;
-    if (w) el.insertAdjacentHTML("afterbegin", `<div class="ch-tools">${w.doing && w.status === "working" ? `<b>${esc(doingLabel(w.doing))}</b> · ` : ""}🧰 ${w.mcp?.length ? `MCP tools: ${esc(w.mcp.join(", "))}` : "No MCP tools — add some in Office → MCP tools"}</div>`);
+    if (w) el.insertAdjacentHTML("afterbegin", `<div class="ch-tools">${w.doing && w.status === "working" ? `<b>${esc(doingLabel(w.doing))}</b> · ` : ""}🧰 ${w.mcp?.length ? `MCP tools: ${esc(w.mcp.join(", "))}` : "No MCP tools — add some in Office → MCP tools"}${w.skills?.length ? ` · <span title="${esc(w.skills.join(", "))}">🎓 ${w.skills.length} skills</span>` : ""}</div>`);
   }
 
   private workHtml(): string {

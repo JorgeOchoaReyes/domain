@@ -36,6 +36,7 @@ export interface PhoneActions {
   roundup(): void;
   standup(): void;
   focus(): void;
+  lessons(): void;
   openHistory(): void;
   openLaptop(): void;
   travel(place: (typeof PLACES)[number]): void;
@@ -195,6 +196,7 @@ export class Phone {
             <button data-do="focus"><span>⏱</span>Focus</button>
             <button data-do="roundup"><span>📣</span>Round up</button>
             <button data-do="hours"><span>🎤</span>Reviews${b.reviews ? ` <i>${b.reviews}</i>` : ""}</button>
+            <button data-do="lessons"><span>🌙</span>Lessons</button>
           </div>
           ${next ? `<button class="ph-next u${next.urgency}" data-app="alerts">${next.icon} ${esc(next.text)}</button>` : `<div class="ph-next calm">✨ Nothing needs you right now</div>`}
           <div class="ph-grid">
@@ -267,7 +269,7 @@ export class Phone {
                   const [st, c] = STATUS[w.status] ?? [w.status, "#adb5bd"];
                   const task = progress.goals.flatMap((g) => g.tasks).find((t) => t.deskId === d.id && t.status !== "done");
                   return `<div class="ph-card"><b><i class="dot" style="background:${c}"></i>${esc(this.name(d.id))} <small>${esc(AGENT_LABELS[w.agent])} · ${esc(d.label)}</small></b>
-                    <span>${esc(w.status === "working" && w.doing ? doingLabel(w.doing) : st)}${task ? ` — “${esc(task.title)}”` : ""}</span><span class="ph-sub">${esc(w.activity.slice(0, 80))}${w.mcp?.length ? ` · 🧰 ${esc(w.mcp.join(", "))}` : ""}</span>
+                    <span>${esc(w.status === "working" && w.doing ? doingLabel(w.doing) : st)}${task ? ` — “${esc(task.title)}”` : ""}</span><span class="ph-sub">${esc(w.activity.slice(0, 80))}${w.mcp?.length ? ` · 🧰 ${esc(w.mcp.join(", "))}` : ""}${w.skills?.length ? ` · 🎓 ${w.skills.length} skills` : ""}</span>
                     <div class="ph-acts"><button data-chat="${d.id}">💬</button><button data-term="${d.id}">🖥 Terminal</button><button data-goto="${d.id}">🚶 Go</button></div></div>`;
                 })
                 .join("")
@@ -303,6 +305,7 @@ export class Phone {
       const d = el.dataset.do;
       if (d === "standup") away(() => this.a.standup());
       else if (d === "focus") away(() => this.a.focus());
+      else if (d === "lessons") away(() => this.a.lessons());
       else if (d === "laptop") away(() => this.a.openLaptop());
       else if (d === "chat") away(() => this.a.openChat());
       else if (d === "hours") away(() => this.a.officeHours());

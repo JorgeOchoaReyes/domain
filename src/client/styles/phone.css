@@ -70,7 +70,7 @@ button.ph-card { cursor: pointer; }
 .ph-hist .hi-row { font-size: 11px; padding: 4px 6px; }
 .ph-hist .hi-day { margin: 6px 0 2px; }
 @media (max-width: 520px) { .phone { right: 8px; left: 8px; width: auto; } }
-.ph-quick { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.ph-quick { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; }
 .ph-quick button { border: 2px solid var(--ink); border-radius: 12px; background: #fff; font: 800 11px var(--font); padding: 6px 2px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 2px; color: var(--ink); }
 .ph-quick button span { font-size: 18px; }
 .ph-quick button i { font-style: normal; background: #ef476f; color: #fff; border-radius: 8px; padding: 0 5px; }

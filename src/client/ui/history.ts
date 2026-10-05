@@ -46,6 +46,7 @@ export const KIND_ICON: Record<HistoryKind, string> = {
   session: "🔥",
   group: "👥",
   deadline: "📅",
+  sync: "🌙",
 };
 
 function dayTitle(t: number): string {

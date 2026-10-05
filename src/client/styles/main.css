@@ -690,3 +690,13 @@ body[data-guest] .host-only { display: none !important; }
 .tm-tools { flex-basis: 100%; font-size: 11px; font-weight: 700; color: var(--muted); padding-left: 18px; }
 .ch-tools { font-size: 12px; font-weight: 700; color: var(--muted); margin-bottom: 4px; }
 .tm-agents li { flex-wrap: wrap; }
+.tm-skills { font-size: 11px; font-weight: 700; color: var(--muted); padding-left: 18px; flex-basis: 100%; cursor: help; }
+.tm-skill-list { display: flex; flex-wrap: wrap; gap: 4px 10px; max-height: 140px; overflow-y: auto; }
+
+/* Lessons */
+.modal.lessons-modal { width: min(760px, 100%); }
+.lessons { display: flex; flex-direction: column; gap: 12px; }
+.ls-intro { margin: 0; color: var(--muted); font-weight: 600; font-size: 13px; }
+.ls-list { margin: 6px 0 0; padding-left: 22px; display: flex; flex-direction: column; gap: 4px; font-weight: 700; }
+.ls-notes { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; font-size: 13px; max-height: 260px; overflow-y: auto; }
+.ls-none { color: var(--muted); font-weight: 600; margin: 4px 0; }

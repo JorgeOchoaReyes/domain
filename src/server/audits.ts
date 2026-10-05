@@ -39,6 +39,8 @@ export interface AuditDeps {
   release(deskId: string): void;
   /** Something worth a line in the history and a toast. */
   note(text: string, deskId: string, kind: "audit"): void;
+  /** What an auditor found wrong (for the team's lessons). */
+  onFinding?(builder: string, task: string, issues: string): void;
   /** Simulated workers: act out the auditor's verdicts and the builder's fixes. */
   simulate?: { verdict(auditor: string, report: Report): void; recall(builder: string): void };
   /** How long an audit may take before the work comes to you anyway. */
@@ -177,6 +179,7 @@ export class Audits {
       return true;
     }
     p.findings.push(`${p.checkpoint ? `Checkpoint ${p.checkpoints}` : `Round ${p.round}`}: ${issues}`);
+    this.deps.onFinding?.(p.builder, p.task, issues);
     p.sendBacks++;
     if (p.sendBacks >= p.max) {
       this.finish(p, `🔍 Audit stopped after ${p.max} round${p.max === 1 ? "" : "s"} — still open: ${issues}`);
