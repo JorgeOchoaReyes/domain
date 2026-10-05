@@ -118,6 +118,19 @@ or `DOMAIN_CWD=/path/to/project`.
 
 ## A look around
 
+### New in v1.0
+
+| | |
+|---|---|
+| ![Your phone: stand-up, focus, round up, reviews and lessons up top; alerts, chat, goals, workers, history, music and travel below](docs/screenshots/phone.jpg) **Your phone** (P) — everything, while you walk; autopilot on or off in one tap | ![Team chat with Task mode](docs/screenshots/team-chat.jpg) **Team chat** — message anyone, give a tracked **Task**, ask for an update; see what each is doing now |
+| ![Handing out a task with an auditor, along the way](docs/screenshots/assign-audit.jpg) **Pair audits** — who audits it, when (or along the way), how many times it can go back; and a note, typed or said | ![The laptop's Team app](docs/screenshots/laptop-team.jpg) **The laptop's Team app** — message anyone, give a task, ask for an update |
+| ![Letting a worker go, step two](docs/screenshots/send-home.jpg) **Send home, in two steps** — why (the team learns from it), then yes; bring them back any time | ![History](docs/screenshots/history.jpg) **History** — every hire, task, review, audit and ship, by day or by worker |
+| ![A worker's terminal](docs/screenshots/terminal.jpg) **Terminals** — select to copy, drag to resize, or enlarge | ![The intern bay](docs/screenshots/intern-bay.jpg) **The intern bay** — eight more desks, for interns your workers bring in |
+| ![Floor 2: the lounge](docs/screenshots/floor2-lounge.jpg) **Floor 2** — a lounge with a piano, darts and snacks, up the elevator | ![Floor 2: the library](docs/screenshots/floor2-library.jpg) **The library** — armchairs to work in, a shelf of tips |
+| ![The pond and the fishing dock](docs/screenshots/pond.jpg) **The pond** — cast a line, press E when it bites | ![The running track](docs/screenshots/track.jpg) **The track** — run a lap through the arch; it's timed |
+
+### Since the start
+
 | | |
 | :-: | :-: |
 | ![The stand-up that opens every session](docs/screenshots/standup.jpg) **Stand-up** — goal, tone, intention, length | ![Handing out a task](docs/screenshots/assign-card.jpg) **Assignment card** — who, model, time budget, plan first, done means |

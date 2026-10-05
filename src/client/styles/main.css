@@ -723,3 +723,4 @@ button.link { border: 0; background: none; color: var(--accent); font: inherit; 
 .modal.mylaptop { resize: both; overflow: hidden; min-width: 640px; min-height: 420px; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); }
 .term-copied { position: fixed; left: 50%; bottom: 90px; transform: translateX(-50%) translateY(10px); z-index: 200; background: var(--ink); color: #fff; font: 800 13px var(--font); padding: 6px 14px; border-radius: 999px; opacity: 0; pointer-events: none; transition: opacity .15s, transform .15s; }
 .term-copied.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.po-eod input[type="time"] { width: auto; min-width: 120px; height: auto; appearance: auto; }
