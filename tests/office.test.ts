@@ -64,7 +64,7 @@ test("a finished worker lines up to present, and review clears it", async () => 
   const snap = office.snapshot();
   assert.equal(presented, deskId, "a report event should have fired");
   assert.equal(snap.presentations.length, 1, "worker should be in the line");
-  assert.equal(snap.presentations[0].order, 0, "and at the podium");
+  assert.equal(snap.presentations[0].order, 0, "and first in line");
   const desk = snap.desks.find((d) => d.id === deskId)!;
   assert.equal(desk.worker?.status, "presenting");
   assert.ok(desk.worker?.report, "the desk carries the report");
@@ -90,4 +90,65 @@ test("peers can join, move and leave", () => {
     undefined,
   );
   office.dispose();
+});
+
+test("a round-up lines workers up to prepare reports, then they present", async () => {
+  const office = new Office(sim);
+  const [a, b, c] = office.snapshot().desks.map((d) => d.id);
+  office.hire(a, "claude", "Jorge");
+  office.hire(b, "codex", "Jorge");
+  office.hire(c, "gemini", "Jorge");
+  await new Promise((r) => setTimeout(r, 900));
+
+  // Round up just two of them.
+  assert.equal(office.roundup([a, b]), 2);
+  let snap = office.snapshot();
+  assert.deepEqual(snap.presentations.map((p) => p.deskId), [a, b], "both line up in order");
+  assert.ok(snap.presentations.every((p) => p.report === null), "still preparing their reports");
+  assert.equal(snap.desks.find((d) => d.id === c)!.worker?.status, "idle", "the third keeps working");
+  // Rounding up again doesn't line anyone up twice.
+  assert.equal(office.roundup([]), 1, "only the one not already in line");
+
+  await new Promise((r) => setTimeout(r, 2600));
+  snap = office.snapshot();
+  assert.ok(snap.presentations.every((p) => p.report), "everyone has a report to present");
+  assert.match(snap.presentations[0].report!.title, /Progress update/);
+  office.dispose();
+});
+
+test("talking to a worker in its review gets an answer back", async () => {
+  const office = new Office(sim);
+  const deskId = office.snapshot().desks[0].id;
+  const said: [string, string][] = [];
+  office.onSaid = (_desk, from, text) => said.push([from, text]);
+  office.hire(deskId, "claude", "Jorge");
+  await new Promise((r) => setTimeout(r, 900));
+  assert.equal(office.say(deskId, "Why did you do it that way?"), true);
+  assert.equal(office.say(deskId, "   "), false, "nothing to say");
+  await new Promise((r) => setTimeout(r, 1600));
+  assert.deepEqual(said[0], ["you", "Why did you do it that way?"]);
+  assert.equal(said[1]?.[0], "agent", "the worker answers");
+  office.dispose();
+});
+
+test("a review with a whiteboard sketch saves it for the worker", async () => {
+  const { mkdtempSync, readdirSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "domain-test-"));
+  const office = new Office({ simulate: true, cwd: dir });
+  const deskId = office.snapshot().desks[0].id;
+  office.hire(deskId, "claude", "Jorge");
+  await new Promise((r) => setTimeout(r, 900));
+  office.roundup([deskId]);
+  await new Promise((r) => setTimeout(r, 2600));
+  // A 1x1 transparent PNG.
+  const png =
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+  assert.equal(office.review(deskId, false, "Rename the button", png), true);
+  const saved = readdirSync(join(dir, ".domain", "reviews"));
+  assert.equal(saved.length, 1, "the sketch is saved");
+  assert.equal(office.snapshot().presentations.length, 0);
+  office.dispose();
+  rmSync(dir, { recursive: true, force: true });
 });

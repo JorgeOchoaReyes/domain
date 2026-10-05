@@ -36,16 +36,53 @@ function voiceFor(agent: AgentKind): SpeechSynthesisVoice | null {
   return pool[idx % pool.length] ?? pool[0];
 }
 
+/** The voices this browser can speak with (English first), for picking a character's voice. */
+export function listVoices(): { name: string; lang: string }[] {
+  if (ttsSupported() && !voiceList.length) loadVoices();
+  const en = (v: SpeechSynthesisVoice) => (v.lang.toLowerCase().startsWith("en") ? 0 : 1);
+  return [...voiceList].sort((a, b) => en(a) - en(b) || a.name.localeCompare(b.name)).map((v) => ({ name: v.name, lang: v.lang }));
+}
+
 export function ttsSupported(): boolean {
   return typeof speechSynthesis !== "undefined";
 }
 
-/** Speak text in an agent's voice, cancelling anything already speaking. */
-export function speak(text: string, agent: AgentKind): void {
-  if (!ttsSupported() || !text.trim()) return;
+/**
+ * Speak text in an agent's voice — or a character's own, by voice name —
+ * cancelling anything already speaking. `onEnd` runs when it finishes (not
+ * when it is cancelled).
+ */
+export function speak(text: string, agent: AgentKind, onEnd?: () => void, voiceName = ""): void {
+  if (!ttsSupported() || !text.trim()) {
+    if (onEnd) setTimeout(onEnd, 1500);
+    return;
+  }
+  current = null;
   speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
-  const v = voiceFor(agent);
+  if (onEnd) {
+    // Some engines never fire onend (or have no voices at all), so a timer
+    // sized to the text backs it up. Whichever comes first wins.
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(backup);
+      onEnd();
+    };
+    const backup = setTimeout(() => {
+      if (current === u) finish();
+    }, 2500 + text.split(/\s+/).length * 420);
+    u.onend = () => {
+      if (current === u) finish();
+    };
+    u.onerror = () => {
+      settled = true;
+      clearTimeout(backup);
+    };
+  }
+  current = u;
+  const v = (voiceName && voiceList.find((x) => x.name === voiceName)) || voiceFor(agent);
   if (v) u.voice = v;
   u.pitch = AGENT_PITCH[agent] ?? 1;
   u.rate = 1.02;
@@ -53,8 +90,12 @@ export function speak(text: string, agent: AgentKind): void {
 }
 
 export function stopSpeaking(): void {
+  current = null;
   if (ttsSupported()) speechSynthesis.cancel();
 }
+
+/** The utterance speaking now; a cancelled one stops counting. */
+let current: SpeechSynthesisUtterance | null = null;
 
 // --- speech to text (dictation) ---------------------------------------------
 
@@ -82,7 +123,7 @@ interface SpeechRecognitionLike {
   abort(): void;
   onresult: ((e: SpeechRecognitionEventLike) => void) | null;
   onend: (() => void) | null;
-  onerror: ((e: unknown) => void) | null;
+  onerror: ((e: { error?: string }) => void) | null;
 }
 type SpeechRecognitionCtor = new () => SpeechRecognitionLike;
 
@@ -110,6 +151,8 @@ export class Dictation {
   constructor(
     private onText: (text: string) => void,
     private onStop: () => void,
+    /** Why it failed, e.g. "network" (no speech service) or "not-allowed" (no mic). */
+    private onError: (error: string) => void = () => {},
   ) {}
 
   get isActive(): boolean {
@@ -134,7 +177,11 @@ export class Dictation {
       }
       this.onText((this.finalText + interim).trim());
     };
-    rec.onerror = () => this.stop();
+    rec.onerror = (e) => {
+      const err = e?.error ?? "error";
+      if (err !== "no-speech" && err !== "aborted") this.onError(err);
+      this.stop();
+    };
     rec.onend = () => {
       if (this.active) {
         this.active = false;
@@ -162,3 +209,54 @@ export class Dictation {
     this.onStop();
   }
 }
+
+/** The desktop app: its built-in browser has no speech service, but the OS has dictation. */
+const DESKTOP = typeof navigator !== "undefined" && /Electron/.test(navigator.userAgent);
+const MAC = typeof navigator !== "undefined" && /Mac/.test(navigator.platform || navigator.userAgent);
+
+/** How to start the OS's own dictation, in the desktop app. */
+export function osDictationHint(): string {
+  return MAC ? "press Fn twice (or 🌐 D) and speak" : "press Win + H and speak";
+}
+
+/** A 🎤 button's HTML (empty when there's no way to dictate here). */
+export function micButton(cls = ""): string {
+  if (!DESKTOP && !sttSupported()) return "";
+  return `<button type="button" class="btn mic ${cls}" title="${DESKTOP ? `Dictate: ${osDictationHint()}` : "Dictate — click again to stop"}">🎤</button>`;
+}
+
+/**
+ * Wire a 🎤 button to a text field: click to dictate into it (after what's
+ * there), click again to stop. It stops by itself when the field goes away.
+ */
+export function wireMic(button: HTMLButtonElement | null, field: HTMLInputElement | HTMLTextAreaElement, onError?: (error: string) => void): void {
+  if (!button) return;
+  if (DESKTOP) {
+    // The OS dictates into whatever has focus: put the cursor in the box and say how.
+    button.addEventListener("click", () => {
+      field.focus();
+      field.placeholder = `🎤 ${osDictationHint()[0].toUpperCase()}${osDictationHint().slice(1)} — it types here`;
+      button.classList.add("live");
+      setTimeout(() => button.classList.remove("live"), 4000);
+    });
+    return;
+  }
+  const d = new Dictation(
+    (text) => {
+      if (!field.isConnected) return d.stop();
+      field.value = text;
+      field.dispatchEvent(new Event("input"));
+    },
+    () => button.classList.remove("live"),
+    (err) => {
+      field.placeholder = err === "not-allowed" ? "🎤 The microphone is blocked — allow it to dictate" : "🎤 Couldn't hear you — try again, or type it";
+      onError?.(err);
+    },
+  );
+  button.addEventListener("click", () => {
+    if (d.isActive) return d.stop();
+    button.classList.add("live");
+    d.start(field.value);
+  });
+}
+

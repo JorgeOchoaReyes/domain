@@ -1,6 +1,6 @@
 {
   "name": "domain",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "A 3D workspace where you walk up to desks and put coding agents to work, each with its own live terminal.",
   "type": "module",
   "bin": {
@@ -21,7 +21,9 @@
     "start": "node bin/domain.js",
     "electron": "npm run build && npm run build:electron && electron dist/electron/main.js",
     "electron:dev": "npm run build:server && npm run build:electron && concurrently -k -n server,vite,electron \"tsx watch src/server/index.ts\" \"vite\" \"cross-env DOMAIN_ELECTRON_URL=http://localhost:5173 electron dist/electron/main.js\"",
-    "test": "node --import tsx --test tests/*.test.ts"
+    "test": "node --import tsx --test tests/*.test.ts",
+    "dist": "npm run build && npm run build:electron && electron-builder",
+    "dist:dir": "npm run build && npm run build:electron && electron-builder --dir"
   },
   "engines": {
     "node": ">=20"
@@ -36,13 +38,67 @@
     "@types/three": "^0.169.0",
     "@types/ws": "^8.5.13",
     "@xterm/addon-fit": "^0.10.0",
+    "@xterm/headless": "^5.5.0",
     "@xterm/xterm": "^5.5.0",
     "concurrently": "^9.1.0",
     "cross-env": "^7.0.3",
     "electron": "^33.2.0",
+    "electron-builder": "^26.15.3",
+    "iwer": "^2.5.0",
+    "pptxgenjs": "^3.12.0",
     "three": "^0.169.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vite": "^5.4.11"
+  },
+  "productName": "domain",
+  "build": {
+    "appId": "dev.domain.office",
+    "productName": "domain",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "!dist/**/*.map",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/@lydell/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "domain",
+      "artifactName": "domain-setup-${version}.${ext}"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.developer-tools",
+      "icon": "build/icon.png"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Development",
+      "icon": "build/icon.png"
+    }
   }
 }

@@ -1,23 +1,19 @@
+import { copyAll, copyOnSelect } from "./termcopy.js";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import type { WorkerStatus } from "../../shared/protocol.js";
+import { STATUS_BULB } from "../scene/characters.js";
+import { openModal, type Modal } from "./modal.js";
 
 const STATUS_LABEL: Record<WorkerStatus, string> = {
-  booting: "booting",
-  idle: "idle",
+  booting: "starting",
+  idle: "ready",
   working: "working",
-  waiting: "waiting on you",
+  waiting: "needs you",
   presenting: "presenting",
   done: "done",
-};
-const STATUS_COLOR: Record<WorkerStatus, string> = {
-  booting: "#6ea8fe",
-  idle: "#4ade80",
-  working: "#38bdf8",
-  waiting: "#f87171",
-  presenting: "#c58bff",
-  done: "#fbbf24",
+  asleep: "asleep",
 };
 
 export interface TerminalHandlers {
@@ -28,72 +24,57 @@ export interface TerminalHandlers {
 }
 
 /**
- * A floating xterm panel for a single worker. One instance is reused across
- * desks: open() (re)attaches it to a desk, write() streams output in, and
- * close() hides it. The xterm instance itself is created lazily and kept.
+ * A worker's terminal in a window. One xterm is created lazily and kept; each
+ * open() moves it into a fresh window and attaches it to a desk.
  */
 export class TerminalOverlay {
-  private root: HTMLElement;
-  private titleEl: HTMLElement;
-  private statusDot: HTMLElement;
-  private statusText: HTMLElement;
-  private bodyEl: HTMLElement;
-
+  private host = document.createElement("div");
   private term: Terminal | null = null;
   private fit: FitAddon | null = null;
   private handlers: TerminalHandlers | null = null;
+  private modal: Modal | null = null;
+  private pill: HTMLElement | null = null;
   private resizeObserver: ResizeObserver | null = null;
   deskId: string | null = null;
 
-  constructor(parent: HTMLElement) {
-    this.root = document.createElement("div");
-    this.root.className = "terminal-wrap card interactive";
-    this.root.style.display = "none";
-    this.root.innerHTML = `
-      <div class="terminal-head">
-        <strong class="term-title"></strong>
-        <span class="status-pill"><span class="status-dot" style="width:8px;height:8px;border-radius:50%;background:#4ade80;display:inline-block"></span><span class="status-text"></span></span>
-        <button class="term-fire danger" title="Send this worker home">Send home</button>
-        <button class="term-close" title="Close (Esc)">Close</button>
-      </div>
-      <div class="terminal-body"></div>`;
-    parent.appendChild(this.root);
-
-    this.titleEl = this.root.querySelector(".term-title")!;
-    this.statusDot = this.root.querySelector(".status-dot")!;
-    this.statusText = this.root.querySelector(".status-text")!;
-    this.bodyEl = this.root.querySelector(".terminal-body")!;
-
-    this.root.querySelector(".term-close")!.addEventListener("click", () => this.handlers?.onClose());
-    this.root.querySelector(".term-fire")!.addEventListener("click", () => this.handlers?.onFire());
+  constructor() {
+    this.host.className = "term-host";
   }
 
   get isOpen(): boolean {
-    return this.root.style.display !== "none";
+    return this.modal !== null;
   }
 
   private ensureTerm(): void {
     if (this.term) return;
     const term = new Terminal({
-      convertEol: false,
       cursorBlink: true,
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-      fontSize: 13,
+      fontSize: 14,
       theme: {
-        background: "#06080c",
-        foreground: "#e6e9ef",
-        cursor: "#6ea8fe",
+        background: "#1e1f2e",
+        foreground: "#cdd6f4",
+        cursor: "#ff8a5b",
+        selectionBackground: "#585b70",
       },
     });
+    copyOnSelect(term);
     const fit = new FitAddon();
     term.loadAddon(fit);
-    term.open(this.bodyEl);
+    term.open(this.host);
     term.onData((data) => this.handlers?.onInput(data));
+    // Esc goes to the worker with Ctrl+[; plain Esc closes the window.
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type === "keydown" && e.key === "Escape") {
+        this.handlers?.onClose();
+        return false;
+      }
+      return true;
+    });
     this.term = term;
     this.fit = fit;
-
     this.resizeObserver = new ResizeObserver(() => this.refit());
-    this.resizeObserver.observe(this.bodyEl);
+    this.resizeObserver.observe(this.host);
   }
 
   private refit(): void {
@@ -110,10 +91,37 @@ export class TerminalOverlay {
     this.ensureTerm();
     this.deskId = deskId;
     this.handlers = handlers;
-    this.titleEl.textContent = title;
+    this.modal = openModal({
+      title,
+      icon: "💻",
+      className: "term",
+      body: this.host,
+      footer: `<span class="pill status"></span><span class="grow">Esc closes · Ctrl+[ sends Esc to the agent</span><button class="btn small term-copy" title="Copy what's selected — or all of it">📋 Copy</button><button class="btn small term-big" title="Bigger / smaller">⤢ Enlarge</button><button class="btn danger fire">👋 Send home</button>`,
+      onClose: () => {
+        this.modal = null;
+        this.deskId = null;
+        const h = this.handlers;
+        this.handlers = null;
+        h?.onClose();
+      },
+    });
+    this.pill = this.modal.footer!.querySelector(".status");
+    this.modal.footer!.querySelector(".fire")!.addEventListener("click", () => this.handlers?.onFire());
+    // Bigger: nearly the whole window (and back).
+    const big = this.modal.footer!.querySelector<HTMLButtonElement>(".term-big")!;
+    big.addEventListener("click", () => {
+      const el = this.host.closest(".modal");
+      const on = !el?.classList.contains("big");
+      el?.classList.toggle("big", on);
+      big.textContent = on ? "⤡ Smaller" : "⤢ Enlarge";
+      requestAnimationFrame(() => this.refit());
+    });
+    // Copy: the selection if there is one, else everything in the terminal.
+    const copy = this.modal.footer!.querySelector<HTMLButtonElement>(".term-copy")!;
+    copy.addEventListener("click", () => {
+      if (this.term) copyAll(this.term);
+    });
     this.setStatus(status);
-    this.root.style.display = "flex";
-    this.term!.clear();
     this.term!.reset();
     requestAnimationFrame(() => {
       this.refit();
@@ -126,13 +134,12 @@ export class TerminalOverlay {
   }
 
   setStatus(status: WorkerStatus): void {
-    this.statusText.textContent = STATUS_LABEL[status];
-    this.statusDot.style.background = STATUS_COLOR[status];
+    if (!this.pill) return;
+    this.pill.textContent = STATUS_LABEL[status];
+    this.pill.style.background = STATUS_BULB[status];
   }
 
   close(): void {
-    this.root.style.display = "none";
-    this.deskId = null;
-    this.handlers = null;
+    this.modal?.close();
   }
 }
