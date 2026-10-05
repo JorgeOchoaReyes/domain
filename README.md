@@ -851,9 +851,12 @@ Next up, after v1.0:
   an update, offer it in the Office menu, and run it between tasks — never
   while a worker's busy — with the output in Logs; pin a known-good version
   per agent if an update breaks something.
-- **Stuck agents, recovered.** A Codex stuck at "model: loading" is now
-  flagged as needing you; next, offer one-click fixes (restart its session,
-  re-check its sign-in) and surface the CLI's own error.
+  This matters: an out-of-date CLI can stop working outright — Codex 0.157,
+  for one, hung at "model: loading" until it was updated. For now a worker
+  stuck like that is flagged as needing you, with a hint to update it.
+- **Stuck agents, recovered.** Next, one-click fixes from the desk (update the
+  CLI, restart its session, re-check its sign-in) and the CLI's own error
+  shown.
 - **Local models, end to end.** Pick a context window for Ollama models (or
   have the office make a copy with a bigger one), a speed check on hire, and
   autopilot that sizes tasks to the model — small ones for small models.

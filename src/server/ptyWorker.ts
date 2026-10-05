@@ -319,7 +319,7 @@ export class PtyWorker implements IWorkerSession {
     // Still loading (Codex shows "model: loading" until it's connected): anything typed now is lost.
     if (STILL_LOADING.test(this.screen().join("\n"))) {
       if (now - this.launchedAt > 90_000 && this.status !== "waiting") {
-        this.setStatus("waiting", `${AGENT_LABELS[this.agent]} is stuck starting up (its model won't load) — check its terminal: signed in? online?`);
+        this.setStatus("waiting", `${AGENT_LABELS[this.agent]} is stuck starting up (its model won't load) — it most likely needs an update: run its update (e.g. \`codex\` in a terminal and choose "Update now"), then hire it again. Otherwise check it's signed in and online.`);
       }
       return;
     }
