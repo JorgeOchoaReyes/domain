@@ -211,10 +211,11 @@ async function createWindow(): Promise<void> {
     return { action: "allow" };
   });
 
-  // The microphone is for talking to workers in a review (dictation); the
-  // office is a local page, so allow it and nothing else.
+  // The office is a local page and asks for two things: the microphone (to
+  // talk to workers in a review) and the mouse (clicking the game captures it
+  // to steer the view). Nothing else.
   session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
-    callback(permission === "media");
+    callback(permission === "media" || permission === "pointerLock");
   });
 
   await win.loadURL(target);
