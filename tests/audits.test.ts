@@ -73,3 +73,15 @@ test("an audit that takes too long comes to you as it is", () => {
   assert.deepEqual(released, ["desk-1"]);
   assert.ok(log.some((l) => l.startsWith("tell desk-2") && /Time's up/.test(l)));
 });
+
+test("presenting again mid-audit keeps it with the auditor, and the rounds still count", () => {
+  const { audits, released, reports } = setup(3);
+  audits.builderReady("desk-1", done());
+  assert.equal(audits.builderReady("desk-1", done("again")), true, "held, not to you");
+  assert.deepEqual(released, []);
+  audits.auditorReport("desk-2", verdict(false, ["One thing"]));
+  audits.builderReady("desk-1", done("fixed"));
+  audits.auditorReport("desk-2", verdict(true));
+  assert.deepEqual(released, ["desk-1"]);
+  assert.ok(reports["desk-1"].slides.some((s) => /approved after 2 rounds/.test(s)));
+});

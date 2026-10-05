@@ -282,7 +282,11 @@ function toYou(presentation: Presentation): void {
   const { deskId, report } = presentation;
   progress.reported(deskId);
   broadcast({ t: "report", presentation });
-  if (report) history.add({ kind: "reported", who: nameAt(deskId), text: `${nameAt(deskId)} is ready to present: “${report.title}”`, worker: workerRef(deskId), task: progress.taskAt(deskId)?.title });
+  if (!report) return;
+  const text = `${nameAt(deskId)} is ready to present: “${report.title}”`;
+  // The same report announced twice (released after an audit, say) is one line.
+  if (history.latest(5).some((e) => e.kind === "reported" && e.text === text && Date.now() - e.at < 60_000)) return;
+  history.add({ kind: "reported", who: nameAt(deskId), text, worker: workerRef(deskId), task: progress.taskAt(deskId)?.title });
 }
 
 const audits = new Audits({
@@ -302,8 +306,11 @@ const audits = new Audits({
         // A scripted auditor finds two things the first time and approves the second.
         verdict: (auditor, report) =>
           setTimeout(() => {
-            const first = !/Audited|round 2/.test(report.slides.join(" ")) && !simAudited.has(auditor + report.title);
-            simAudited.add(auditor + report.title);
+            // Every other look finds something: issues first, then an approval.
+            const n = simAudited.get(auditor) ?? 0;
+            simAudited.set(auditor, n + 1);
+            const first = n % 2 === 0;
+            void report;
             office.setReport(
               auditor,
               first
@@ -315,7 +322,7 @@ const audits = new Audits({
       }
     : undefined,
 });
-const simAudited = new Set<string>();
+const simAudited = new Map<string, number>();
 setInterval(() => audits.tick(), 30_000).unref();
 
 office.onReport = (presentation) => {
@@ -336,7 +343,8 @@ office.onReport = (presentation) => {
   office.setCheck(deskId, { status: "running", command: check ?? "npm test (simulated)", exitCode: null, ms: 0, tail: "" });
   const verdict = (r: CheckResult) => {
     const worker = office.workerAt(deskId);
-    if (!worker?.report) return;
+    // Only for the report it was run on: a newer one has its own check.
+    if (!worker?.report || worker.report.at !== report.at) return;
     office.setCheck(deskId, r);
     const tries = gateTries.get(deskId) ?? 0;
     if (r.status === "fail" && progress.policy.gate === "fix" && tries < GATE_RETRIES) {

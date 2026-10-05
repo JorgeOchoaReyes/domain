@@ -404,12 +404,18 @@ export class Office {
     const seat = this.seats.find((s) => s.desk.id === deskId);
     if (!seat?.session || !seat.desk.worker) return;
     seat.desk.worker.report = null;
-    seat.desk.worker.status = "working";
-    seat.desk.worker.activity = "Back to it";
     this.dequeue(deskId);
     this.watcher?.forget(deskId);
     this.deleteReportFile(deskId);
-    typeLine(seat.session, message);
+    // A scripted worker would take any line as a new task: it's just free again.
+    if (seat.session.summon) {
+      seat.desk.worker.status = "idle";
+      seat.desk.worker.activity = "Free";
+    } else {
+      seat.desk.worker.status = "working";
+      seat.desk.worker.activity = "Back to it";
+      typeLine(seat.session, message);
+    }
     this.changed();
   }
 

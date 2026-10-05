@@ -281,7 +281,7 @@ export function wallRects(): Rect[] {
   return rects;
 }
 
-export type RoomId = "office" | "floor" | "hall" | "kitchen" | "standup" | "lobby" | "game" | "outside";
+export type RoomId = "office" | "floor" | "hall" | "kitchen" | "standup" | "lobby" | "game" | "outside" | "library" | "lounge2" | "gym";
 
 export interface RoomDef extends Rect {
   id: RoomId;
@@ -300,6 +300,9 @@ export const ROOMS: readonly RoomDef[] = [
   { id: "standup", name: "Stand-up room", icon: "☀️", color: "#ffe29a", minX: PARTITIONS_X[0], maxX: PARTITIONS_X[1], minZ: WING_ROOMS_Z, maxZ: BUILDING.maxZ },
   { id: "lobby", name: "Lobby", icon: "🛎", color: "#cde7ff", minX: PARTITIONS_X[1], maxX: PARTITIONS_X[2], minZ: WING_ROOMS_Z, maxZ: BUILDING.maxZ },
   { id: "game", name: "Game room", icon: "🕹", color: "#c3b5ff", minX: PARTITIONS_X[2], maxX: BUILDING.maxX, minZ: WING_ROOMS_Z, maxZ: BUILDING.maxZ },
+  { id: "library", name: "Floor 2 · Library", icon: "📚", color: "#d9c5a0", minX: 62, maxX: 74, minZ: -14, maxZ: 14 },
+  { id: "lounge2", name: "Floor 2 · Lounge", icon: "🎹", color: "#f7c6d9", minX: 74, maxX: 86, minZ: -14, maxZ: 14 },
+  { id: "gym", name: "Floor 2 · Gym", icon: "🏋️", color: "#bfe6ff", minX: 86, maxX: 98, minZ: -14, maxZ: 14 },
 ];
 export const OUTSIDE: RoomDef = { id: "outside", name: "Outside", icon: "🌳", color: "#a7d98b", ...WORLD_BOUNDS };
 
@@ -308,6 +311,7 @@ export function roomAt(x: number, z: number): RoomDef {
   return OUTSIDE;
 }
 export function isIndoors(x: number, z: number): boolean {
+  if (x >= 62 && x <= 98 && z >= -14 && z <= 14) return true;
   return x >= BUILDING.minX && x <= BUILDING.maxX && z >= BUILDING.minZ && z <= BUILDING.maxZ;
 }
 
@@ -438,3 +442,114 @@ export const JUKEBOXES = [
   { id: "gameroom", spot: { x: PARTITIONS_X[2] + 1.7, z: 27.0 }, key: { x: PARTITIONS_X[2] + 0.75, y: 2.35, z: 27.0 } },
   { id: "lounge", spot: { x: FLOOR.maxX - 1.65, z: -7.2 }, key: { x: FLOOR.maxX - 0.6, y: 2.35, z: -7.2 } },
 ] as const;
+
+// ---------------------------------------------------------------------------
+// Floor 2: up the elevator. It's built off to the east of the campus, walled
+// in, with the city outside its windows — a library, a lounge and a gym.
+// ---------------------------------------------------------------------------
+
+export const UPSTAIRS = { minX: 62, maxX: 98, minZ: -14, maxZ: 14 } as const;
+export const UP_HEIGHT = 4.4;
+/** The elevator doors in floor 2's north wall, and where it lets you out. */
+export const UP_ELEVATOR = { x: 80, width: 2.6 } as const;
+export const UP_ARRIVE = { x: 80, z: UPSTAIRS.minZ + 2.6, facing: 0 } as const;
+/** Low bookcases split the floor into its three areas (with a gap to walk through). */
+export const UP_SPLITS_X = [74, 86] as const;
+export const UP_SPLIT_GAP = { z0: -4, z1: 4 } as const;
+export const UP = {
+  armchairs: [
+    { x: 66.2, z: -6.5, rotY: Math.PI / 2 },
+    { x: 66.2, z: 6.5, rotY: Math.PI / 2 },
+  ],
+  readingTables: [
+    { x: 67.9, z: -6.5 },
+    { x: 67.9, z: 6.5 },
+  ],
+  /** The bookshelf you browse (E): a tip off the shelf. */
+  shelfSpot: { x: 63.6, z: 0, facing: -Math.PI / 2 },
+  sofa: { x: 80, z: 7.6, rotY: Math.PI },
+  coffeeTable: { x: 80, z: 5.7 },
+  piano: { x: 76.4, z: 12.6 },
+  pianoSpot: { x: 76.4, z: 11.2, facing: 0 },
+  vending: { x: 84.4, z: UPSTAIRS.minZ + 0.55 },
+  vendingSpot: { x: 84.4, z: UPSTAIRS.minZ + 1.7, facing: Math.PI },
+  darts: { x: 75.6, y: 1.75, z: UPSTAIRS.minZ + 0.18 },
+  dartsSpot: { x: 75.6, z: UPSTAIRS.minZ + 3.4, facing: Math.PI },
+  treadmills: [
+    { x: 89.5, z: -10.6 },
+    { x: 93.5, z: -10.6 },
+  ],
+  mats: [
+    { x: 90, z: 6.5 },
+    { x: 93.5, z: 6.5 },
+  ],
+  telescope: { x: 95.6, z: 12.2 },
+  telescopeSpot: { x: 95.6, z: 11.1, facing: 0 },
+} as const;
+
+// ---------------------------------------------------------------------------
+// Out back (north of the building): a running track, a campfire, a garden,
+// and east of the building a pond with a fishing dock.
+// ---------------------------------------------------------------------------
+
+export const TRACK = { x: 12, z: -25.5, rx: 9, rz: 5.4, width: 1.6 } as const;
+/** The lap's checkpoints, in order round the oval (start/finish is the first). */
+export const TRACK_CHECKPOINTS: readonly { x: number; z: number }[] = [
+  { x: TRACK.x, z: TRACK.z + TRACK.rz },
+  { x: TRACK.x + TRACK.rx, z: TRACK.z },
+  { x: TRACK.x, z: TRACK.z - TRACK.rz },
+  { x: TRACK.x - TRACK.rx, z: TRACK.z },
+];
+export const CAMPFIRE = { x: -12, z: -25, logR: 2.3 } as const;
+export const GARDEN = { minX: -34, maxX: -25, minZ: -21, maxZ: -15, spot: { x: -29.5, z: -13.9, facing: Math.PI } } as const;
+export const POND = { x: 31.5, z: -2, rx: 6, rz: 4.4 } as const;
+export const DOCK = { x0: 24.2, x1: 27.6, z: -2, width: 1.3 } as const;
+export const DOCK_SPOT = { x: 27.2, z: -2, facing: Math.PI / 2 } as const;
+
+/** Fast-travel destinations beyond the main floor (the travel menu lists them after PLACES). */
+export const MORE_PLACES: readonly { id: string; label: string; icon: string; x: number; z: number; facing: number }[] = [
+  { id: "upstairs", label: "Floor 2 — library, lounge, gym", icon: "🛗", ...UP_ARRIVE },
+  { id: "track", label: "Running track", icon: "🏃", x: TRACK.x, z: TRACK.z + TRACK.rz + 1.6, facing: Math.PI },
+  { id: "campfire", label: "Campfire", icon: "🔥", x: CAMPFIRE.x, z: CAMPFIRE.z + 3.6, facing: Math.PI },
+  { id: "garden", label: "Garden", icon: "🌻", ...GARDEN.spot },
+  { id: "pond", label: "Fishing pond", icon: "🎣", x: DOCK.x0 - 1.2, z: DOCK.z, facing: Math.PI / 2 },
+];
+
+export function inUpstairs(x: number, z?: number): boolean {
+  return x >= UPSTAIRS.minX - 2 && (z === undefined || (z >= UPSTAIRS.minZ - 2 && z <= UPSTAIRS.maxZ + 2));
+}
+
+/**
+ * Places to sit down and work on your laptop: where you sit (and which way
+ * you face) and where the laptop goes — a table in front of you, or your lap.
+ */
+export interface WorkSpot {
+  id: string;
+  label: string;
+  sit: { x: number; z: number; facing: number };
+  laptop: { x: number; y: number; z: number; rotY: number };
+}
+export const WORK_SPOTS: readonly WorkSpot[] = [
+  { id: "lounge", label: "the lounge couch", sit: { x: 10.8, z: -1, facing: Math.PI / 2 }, laptop: { x: 12.45, y: 0.49, z: -1, rotY: -Math.PI / 2 } },
+  ...KITCHEN.tables.map((t, i) => ({
+    id: `kitchen-${i}`,
+    label: "a kitchen table",
+    sit: { x: t.x, z: t.z + 1.0, facing: Math.PI },
+    laptop: { x: t.x, y: 0.78, z: t.z + 0.38, rotY: 0 },
+  })),
+  ...PICNIC.map((p, i) => ({
+    id: `picnic-${i}`,
+    label: "a picnic table",
+    sit: { x: p.x, z: p.z + 0.7, facing: Math.PI },
+    laptop: { x: p.x, y: 0.8, z: p.z + 0.18, rotY: 0 },
+  })),
+  { id: "lobby", label: "the lobby couch", sit: { x: LOBBY.couch.x - 0.05, z: LOBBY.couch.z, facing: -Math.PI / 2 }, laptop: { x: LOBBY.couch.x - 0.5, y: 0.66, z: LOBBY.couch.z, rotY: Math.PI / 2 } },
+  ...UP.armchairs.map((c, i) => ({
+    id: `library-${i}`,
+    label: "a library armchair",
+    sit: { x: c.x, z: c.z, facing: Math.PI / 2 },
+    laptop: { x: UP.readingTables[i].x, y: 0.62, z: UP.readingTables[i].z, rotY: -Math.PI / 2 },
+  })),
+  { id: "sofa2", label: "the floor 2 sofa", sit: { x: UP.sofa.x, z: UP.sofa.z - 0.15, facing: Math.PI }, laptop: { x: UP.coffeeTable.x, y: 0.46, z: UP.coffeeTable.z, rotY: 0 } },
+  { id: "campfire", label: "a log by the campfire", sit: { x: CAMPFIRE.x, z: CAMPFIRE.z + CAMPFIRE.logR, facing: Math.PI }, laptop: { x: CAMPFIRE.x, y: 0.55, z: CAMPFIRE.z + CAMPFIRE.logR - 0.42, rotY: 0 } },
+];

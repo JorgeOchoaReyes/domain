@@ -165,3 +165,22 @@ export class Laptop {
     this.texture.needsUpdate = true;
   }
 }
+
+/** Your own laptop, open, as a prop: wherever you last sat down to work. Its screen faces +z. */
+export function myLaptopProp(): THREE.Group {
+  const g = new THREE.Group();
+  g.add(mesh(roundedBox(0.42, 0.025, 0.3, 0.012), toon("#c9ccd6"), 0, 0.0125, 0));
+  g.add(mesh(roundedBox(0.36, 0.006, 0.12, 0.003), toon("#3a3d5c"), 0, 0.027, 0.03, false));
+  const lid = new THREE.Group();
+  lid.position.set(0, 0.025, -0.15);
+  lid.rotation.x = -0.32;
+  lid.add(mesh(roundedBox(0.42, 0.28, 0.018, 0.012), toon("#c9ccd6"), 0, 0.14, 0));
+  // The screen glows: your browser, a terminal, the loop.
+  const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.38, 0.24), new THREE.MeshBasicMaterial({ color: "#7ad3ff" }));
+  screen.position.set(0, 0.14, 0.0095);
+  lid.add(screen);
+  // A sticker on the back.
+  lid.add(mesh(new THREE.CircleGeometry(0.04, 16), toon("#ff8a5b"), 0, 0.15, -0.0095, false).rotateY(Math.PI));
+  g.add(lid);
+  return g;
+}

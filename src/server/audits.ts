@@ -87,7 +87,12 @@ export class Audits {
    */
   builderReady(builder: string, report: Report): boolean {
     const p = this.pairs.get(builder);
-    if (!p || p.phase !== "building" || report.status !== "ready") return false;
+    if (!p || report.status !== "ready") return false;
+    // Presented again mid-audit: it stays with the auditor (the verdict covers it).
+    if (p.phase === "auditing") {
+      this.deps.office.hold(builder, `🔍 Being audited by ${this.deps.nameOf(p.auditor)} (round ${p.round} of ${p.max})`);
+      return true;
+    }
     if (!this.deps.office.isStaffed(p.auditor)) {
       this.pairs.delete(builder);
       return false;

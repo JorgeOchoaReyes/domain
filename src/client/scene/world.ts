@@ -1,3 +1,6 @@
+import { buildUpstairs, type Upstairs } from "./upstairs.js";
+import { buildParkland, type Parkland } from "./parkland.js";
+import { UPSTAIRS, UP_HEIGHT, inUpstairs } from "../../shared/layout.js";
 import * as THREE from "three";
 import { OutlineEffect } from "three/examples/jsm/effects/OutlineEffect.js";
 import type { Desk, Look, Peer, Presentation } from "../../shared/protocol.js";
@@ -110,8 +113,16 @@ export class World {
   /** In VR (set by setXR). */
   private xr = false;
   private showHand = true;
-  /** How far you can walk (and the third-person camera can go). */
-  readonly bounds = { minX: WORLD_BOUNDS.minX + 0.4, maxX: WORLD_BOUNDS.maxX - 0.4, minZ: WORLD_BOUNDS.minZ + 0.4, maxZ: WORLD_BOUNDS.maxZ - 0.4 };
+  /** How far you can walk (and the third-person camera can go): the campus, or floor 2. */
+  private groundBounds = { minX: WORLD_BOUNDS.minX + 0.4, maxX: WORLD_BOUNDS.maxX - 0.4, minZ: WORLD_BOUNDS.minZ + 0.4, maxZ: WORLD_BOUNDS.maxZ - 0.4 };
+  private upBounds = { minX: UPSTAIRS.minX + 0.4, maxX: UPSTAIRS.maxX - 0.4, minZ: UPSTAIRS.minZ + 0.4, maxZ: UPSTAIRS.maxZ - 0.4 };
+  get bounds(): { minX: number; maxX: number; minZ: number; maxZ: number } {
+    return inUpstairs(this.player.position.x) ? this.upBounds : this.groundBounds;
+  }
+  /** Floor 2, up the elevator. */
+  readonly upstairs: Upstairs;
+  /** Out back: the track, the campfire, the garden, the pond. */
+  readonly park: Parkland;
   private laptops = new Map<string, Laptop>();
   private workers = new Map<string, WorkerView>();
   private peers = new Map<string, PeerView>();
@@ -164,9 +175,14 @@ export class World {
     this.scene.add(this.gameRoom.group);
     this.hoops = new Hoops(this.scene);
     this.ball = new SoccerBall(this.scene);
-    this.colliders = [...this.office.colliders, ...this.rooms.colliders, ...this.gameRoom.colliders];
+    this.upstairs = buildUpstairs();
+    this.scene.add(this.upstairs.group);
+    this.upstairs.group.visible = false;
+    this.park = buildParkland();
+    this.scene.add(this.park.group);
+    this.colliders = [...this.office.colliders, ...this.rooms.colliders, ...this.gameRoom.colliders, ...this.upstairs.colliders, ...this.park.colliders];
     this.collectOccludable([this.office.group, this.rooms.group, this.gameRoom.group]);
-    this.occluders = cameraOccluders();
+    this.occluders = [...cameraOccluders(), ...this.upstairs.occluders];
     this.occluders.push({
       minX: ELEVATOR.x - ELEVATOR.width / 2,
       maxX: ELEVATOR.x + ELEVATOR.width / 2,
@@ -572,6 +588,7 @@ export class World {
 
   /** How high the camera may go at (x, z): under the ceiling indoors. */
   ceilingAt(x: number, z: number): number {
+    if (inUpstairs(x)) return UP_HEIGHT - 0.4;
     return isIndoors(x, z) ? WALL_HEIGHT - 0.4 : 16;
   }
 
@@ -595,8 +612,9 @@ export class World {
 
   resolveCollision(x: number, z: number): [number, number] {
     const r = PLAYER_RADIUS;
-    let nx = THREE.MathUtils.clamp(x, this.bounds.minX, this.bounds.maxX);
-    let nz = THREE.MathUtils.clamp(z, this.bounds.minZ, this.bounds.maxZ);
+    const b = inUpstairs(x) ? this.upBounds : this.groundBounds;
+    let nx = THREE.MathUtils.clamp(x, b.minX, b.maxX);
+    let nz = THREE.MathUtils.clamp(z, b.minZ, b.maxZ);
     for (let pass = 0; pass < 2; pass++) {
       for (const c of this.colliders) {
         const minX = c.minX - r;
@@ -631,6 +649,8 @@ export class World {
     this.rooms.update(dt, now, { x: pp.x, z: pp.z });
     this.cullAreas();
     this.gameRoom.update(dt, now);
+    this.upstairs.update(dt);
+    this.park.update(dt, now);
     this.events.hoop = this.hoops.update(dt);
     this.updateSky();
     this.updateLight(dt);
@@ -882,12 +902,17 @@ export class World {
     const outside = rp === "outside" && rc === "outside";
     const seeGrounds = [rp, rc].some((r) => r === "outside" || r === "lobby" || r === "hall");
     const a = this.rooms.areas;
-    this.office.group.visible = !outside;
-    this.gameRoom.group.visible = !outside;
+    // Upstairs, floor 2 is all there is (the city's painted outside its windows).
+    const up = inUpstairs(p.x);
+    this.upstairs.group.visible = up;
+    this.rooms.group.visible = !up;
+    this.park.group.visible = !up && seeGrounds;
+    this.office.group.visible = !outside && !up;
+    this.gameRoom.group.visible = !outside && !up;
     a.kitchen.visible = !outside;
     a.standup.visible = !outside;
     a.grounds.visible = seeGrounds;
-    for (const w of this.workers.values()) w.bot.root.visible = !outside;
+    for (const w of this.workers.values()) w.bot.root.visible = !outside && !up;
   }
 
   /** Small static things (lamps, signs, plants, furniture) that may be hidden when in the way. */

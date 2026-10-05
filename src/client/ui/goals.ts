@@ -109,6 +109,8 @@ export class GoalsWindow {
       <section class="goal-detail"></section>`;
     this.listEl = body.querySelector(".goal-list")!;
     this.detailEl = body.querySelector(".goal-detail")!;
+    // A fresh window: draw the goal into it even if nothing's changed since last time.
+    this.detailKey = "";
     this.modal = openModal({
       title: "Goals",
       icon: "🎯",

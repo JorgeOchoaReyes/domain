@@ -135,6 +135,20 @@ export const sound = {
   click(): void {
     tone(660, 0, 0.05, "square", 0.03);
   },
+  /** A piano note (Hz): a plucked triangle with a soft octave over it. */
+  note(freq: number, at = 0): void {
+    tone(freq, at, 1.4, "triangle", 0.12);
+    tone(freq * 2, at, 0.5, "sine", 0.025);
+  },
+  /** A dart thunking into the board. */
+  thunk(): void {
+    tone(140, 0, 0.12, "square", 0.05);
+    tone(90, 0.01, 0.18, "sine", 0.08);
+  },
+  /** A splash: something on the line. */
+  splash(): void {
+    for (let i = 0; i < 6; i++) tone(500 + Math.random() * 900, i * 0.025, 0.12, "sine", 0.03);
+  },
   /** Something needs you: a bright two-note ding, easy to hear over music. */
   chime(): void {
     tone(1319, 0, 0.35, "sine", 0.1);

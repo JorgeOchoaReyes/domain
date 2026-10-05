@@ -1,4 +1,4 @@
-import { PLACES, type RoomId } from "../../shared/layout.js";
+import { MORE_PLACES, PLACES, inUpstairs, type RoomId } from "../../shared/layout.js";
 import { esc, openModal } from "./modal.js";
 
 /**
@@ -22,7 +22,11 @@ export interface Destination {
 }
 
 export function placeDestinations(here: RoomId | "desks"): Destination[] {
-  return PLACES.map((p) => ({ label: p.label, icon: p.icon, x: p.x, z: p.z, facing: p.facing, sub: p.id === here ? "You're here" : undefined }));
+  const up = here === "library" || here === "lounge2" || here === "gym";
+  return [
+    ...PLACES.map((p) => ({ label: p.label, icon: p.icon, x: p.x, z: p.z, facing: p.facing, sub: p.id === here ? "You're here" : undefined })),
+    ...MORE_PLACES.map((p) => ({ label: p.label, icon: p.icon, x: p.x, z: p.z, facing: p.facing, sub: up && inUpstairs(p.x) ? "You're here" : undefined })),
+  ];
 }
 
 export function openTeleport(dests: Destination[], onGo: (d: Destination) => void): void {

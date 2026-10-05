@@ -20,6 +20,9 @@ import {
   JUKEBOXES,
   GONG,
 } from "../shared/layout.js";
+import { UPSTAIRS, UP_ELEVATOR, WORK_SPOTS, inUpstairs, type WorkSpot } from "../shared/layout.js";
+import { Activities } from "./ui/activities.js";
+import { myLaptopProp } from "./scene/laptop.js";
 import { Net } from "./net.js";
 import { World } from "./scene/world.js";
 import { Player, type ViewMode } from "./scene/player.js";
@@ -37,6 +40,8 @@ import { openJukebox } from "./ui/jukebox.js";
 import { TeamChat } from "./ui/chat.js";
 import { ingestHistory, openHistory } from "./ui/history.js";
 import { Reminders } from "./ui/reminders.js";
+import { Phone } from "./ui/phone.js";
+import { TEAM_THREAD } from "../shared/chat.js";
 import type { ChatThread } from "../shared/chat.js";
 import { openAssignCard } from "./ui/assign.js";
 import { Assistant, type Guide, type Tip, type TourStep } from "./ui/assistant.js";
@@ -945,6 +950,38 @@ setInterval(() => {
   if (joined) reminders.update();
 }, 3000);
 
+/** Your phone (P): everything the laptop has, in your pocket, while you walk. */
+const phone = new Phone({
+  office: () => office,
+  progress: () => progress,
+  reminders: () => reminders.list(),
+  music: () => ({ on: settings.music, track: settings.track, volume: settings.musicVolume }),
+  setMusic: (m) => {
+    const next = { ...settings, music: m.on, track: m.track, musicVolume: m.volume };
+    saveSettings(next);
+    applySettings(next);
+    music.set({ on: next.music, track: next.track, volume: next.musicVolume });
+  },
+  sendTeam: (text) => {
+    net.send({ t: "chatSend", to: TEAM_THREAD, text });
+    hud.toast("💬 Sent to #team");
+  },
+  openChat: (threadId) => openChat(threadId),
+  openTerminal: (deskId) => openTerminal(deskId),
+  goToDesk: (deskId) => goToDesk(deskId),
+  openGoals: (goalId) => openGoals(goalId),
+  officeHours: () => startOfficeHours(),
+  roundup: () => openRoundup(),
+  standup: () => openStandupNow(),
+  openHistory: () => openHistory((m) => net.send(m)),
+  openLaptop: () => openLaptop(),
+  travel: (p) => travelTo({ label: p.label, icon: p.icon, x: p.x, z: p.z, facing: p.facing }),
+  shown: (open) => {
+    // The mouse is for the phone while it's out; you can still walk.
+    if (open && player.mouseCaptured) player.unlock();
+  },
+});
+
 function pipTips(): Tip[] {
   const tips: Tip[] = [];
   // Deadlines, time budgets and idle hands (waiting workers and the line are below).
@@ -1426,10 +1463,93 @@ function atElevator(): boolean {
   const { x, z } = player.position;
   return Math.abs(x - ELEVATOR.x) < 1.6 && z < FLOOR.minZ + ELEVATOR.depth + 1.6 && z > FLOOR.minZ;
 }
+/** Floor 2's elevator doors: back down (or anywhere). */
+function atUpElevator(): boolean {
+  const { x, z } = player.position;
+  return inUpstairs(x) && Math.abs(x - UP_ELEVATOR.x) < 1.7 && z < UPSTAIRS.minZ + 3;
+}
+
+// --- things to do: darts, piano, treadmill, fishing, laps, the garden… ------------------------
+
+const activities = new Activities({
+  position: () => player.position,
+  placeAt: (x, z, facing) => player.placeAt(x, z, facing),
+  boostFor: (ms) => player.boostFor(ms),
+  toast: (text) => hud.toast(text),
+  setTreadmill: (i) => world.upstairs.setTreadmill(i),
+  fishing: world.park.fishing,
+  setBloom: (level) => world.park.setBloom(level),
+  busy: () => modalOpen(),
+});
 
 /** E in the game room, kitchen, stand-up room, outside… Returns true if it did something. */
+// --- your laptop, put down somewhere --------------------------------------------------------
+
+const LAPTOP_SPOT_KEY = "domain.laptopSpot";
+const laptopProp = myLaptopProp();
+laptopProp.visible = false;
+world.scene.add(laptopProp);
+let laptopSpot: WorkSpot | null = null;
+try {
+  laptopSpot = WORK_SPOTS.find((s) => s.id === localStorage.getItem(LAPTOP_SPOT_KEY)) ?? null;
+} catch {
+  /* no storage: it starts in your bag */
+}
+placeLaptop(laptopSpot);
+
+/** Leave the laptop open on a work spot (null: it's with you). */
+function placeLaptop(spot: WorkSpot | null): void {
+  laptopSpot = spot;
+  laptopProp.visible = !!spot;
+  if (spot) {
+    laptopProp.position.set(spot.laptop.x, spot.laptop.y, spot.laptop.z);
+    laptopProp.rotation.y = spot.laptop.rotY;
+  }
+  try {
+    if (spot) localStorage.setItem(LAPTOP_SPOT_KEY, spot.id);
+    else localStorage.removeItem(LAPTOP_SPOT_KEY);
+  } catch {
+    /* fine */
+  }
+}
+
+/** A seat you're standing at (or sitting in) where you can work on your laptop. */
+function nearWorkSpot(): WorkSpot | null {
+  const { x, z } = player.position;
+  let best: WorkSpot | null = null;
+  let bestD = 1.4;
+  for (const s of WORK_SPOTS) {
+    const d = Math.min(Math.hypot(x - s.sit.x, z - s.sit.z), Math.hypot(x - s.laptop.x, z - s.laptop.z) + 0.3);
+    if (d < bestD) {
+      bestD = d;
+      best = s;
+    }
+  }
+  return best;
+}
+
+/** Sit down, put the laptop on the table (or your lap) and open it. */
+function sitAndWork(spot: WorkSpot): void {
+  const moved = laptopSpot?.id !== spot.id;
+  player.sit(spot.sit.x, spot.sit.z, spot.sit.facing);
+  placeLaptop(spot);
+  sound.click();
+  if (moved) hud.toast(`💻 Set up on ${spot.label} — it stays here when you close it; walk back and press E to pick up where you left off`);
+  laptop.open();
+}
+
 function interactFun(): boolean {
   const { x, z } = player.position;
+  if (activities.use()) return true;
+  const spot = nearWorkSpot();
+  if (spot && spot.id === laptopSpot?.id) {
+    sitAndWork(spot);
+    return true;
+  }
+  if (atUpElevator()) {
+    openTravel();
+    return true;
+  }
   const arcade = nearArcade();
   if (arcade) {
     openArcade(arcade.id, (_score, best) => {
@@ -1493,6 +1613,9 @@ function interactFun(): boolean {
 function promptTarget(): { x: number; y: number; z: number } | null {
   if (modalOpen()) return null;
   const { x, z } = player.position;
+  const act = activities.near();
+  if (act) return act.key;
+  if (atUpElevator()) return { x: UP_ELEVATOR.x, y: 3.0, z: UPSTAIRS.minZ + 0.4 };
   const arcade = nearArcade();
   if (arcade) return { x: arcade.x, y: 2.35, z: arcade.z };
   if (atHoopSpot()) return { x: HOOP.rim.x, y: HOOP.rim.y + 0.7, z: HOOP.rim.z };
@@ -1501,6 +1624,8 @@ function promptTarget(): { x: number; y: number; z: number } | null {
   if (juke) return juke.key;
   if (nearGong()) return { x: GONG.x + 0.9, y: 1.6, z: GONG.z + 0.2 };
   if (nearCoffee()) return { x: KITCHEN.coffee.x, y: 1.95, z: KITCHEN.coffee.z };
+  const spot = nearWorkSpot();
+  if (spot && spot.id === laptopSpot?.id) return { x: spot.laptop.x, y: spot.laptop.y + 0.6, z: spot.laptop.z };
   if (onWorkPad()) return { x: WORK_PAD.x, y: 1.4, z: WORK_PAD.z };
   if (atElevator()) return { x: ELEVATOR.x, y: 2.9, z: FLOOR.minZ + ELEVATOR.depth + 0.1 };
   // Low, over the circle: up at eye height it would sit on the big screen's text.
@@ -1517,6 +1642,9 @@ function promptTarget(): { x: number; y: number; z: number } | null {
 }
 
 function hintFun(): string | null {
+  const act = activities.near();
+  if (act) return `<span class="title">${act.title}</span> ${act.id === "tread" ? "" : '<span class="key">E</span> '}${act.hint}`;
+  if (atUpElevator()) return `<span class="title">🛗 Elevator · Floor 2</span> <span class="key">E</span> Down to the office, or anywhere`;
   const arcade = nearArcade();
   if (arcade) {
     const best = arcadeBest(arcade.id);
@@ -1542,6 +1670,12 @@ function hintFun(): string | null {
   if (nearCoffee()) {
     const left = Math.ceil(player.boosted / 1000);
     return `<span class="title">☕ Coffee machine</span> <span class="key">E</span> ${left ? `Top up (${left}s left)` : "Grab a coffee · speed boost"}`;
+  }
+  const spot = nearWorkSpot();
+  if (spot) {
+    return spot.id === laptopSpot?.id
+      ? `<span class="title">💻 Your laptop</span> <span class="key">E</span> Sit down and work · <span class="key">P</span> phone`
+      : `<span class="title">🪑 A good spot to work</span> <span class="key">L</span> Sit down with your laptop`;
   }
   if (onWorkPad()) return `<span class="title">🖥 Back to work</span> <span class="key">E</span> Jump to the work floor`;
   if (atElevator()) return `<span class="title">🛗 Elevator</span> <span class="key">E</span> Fast travel`;
@@ -1615,6 +1749,10 @@ function hintWork(): string | null {
 }
 
 window.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && phone.isOpen && !modalOpen()) {
+    phone.close();
+    return;
+  }
   if (e.key === "Escape") {
     // Nothing open to close: Esc pauses into the settings.
     const justUnlocked = performance.now() - unlockedAt < 250;
@@ -1660,6 +1798,7 @@ window.addEventListener("keydown", (e) => {
   else if (key === "u") openStandupNow();
   else if (key === "m") applySettings({ ...settings, minimap: !settings.minimap });
   else if (key === "l") openLaptop();
+  else if (key === "p") phone.toggle();
   else if (e.key === "Tab") {
     e.preventDefault();
     // Tab frees a captured mouse for the menus; with the mouse free it shows or hides the panel.
@@ -1710,6 +1849,7 @@ function frame(now: number): void {
   world.update(dt, player.velocity);
   onMinigames();
   shotMeter.update(dt);
+  activities.update(now);
   world.gameRoom.setDisco(music.playing && music.current.id === "disco", music.pulse());
   world.hand.update(dt, player.speed, player.yawAngle, player.boosted > 0, settings.headBob);
   here = minimap.update({ x: player.position.x, z: player.position.z, facing: player.facing }, world.workerSpots(), world.peerSpots()).id;
@@ -1770,12 +1910,14 @@ void pickCharacter(myName, myLook).then(({ name, look }) => {
 
 // A handle for poking at the office from the console (and screenshot scripts) in dev builds.
 if (import.meta.env.DEV) {
-  (window as unknown as { domain: unknown }).domain = { world, player, vr, music, startOfficeHours, openLaptop, openTravel, openGoals, escapeModal, net, laptop, progress: () => progress, office: () => office };
+  (window as unknown as { domain: unknown }).domain = { world, player, vr, music, startOfficeHours, openLaptop, openTravel, openGoals, openHistory: () => openHistory((m) => net.send(m)), phone, escapeModal, net, laptop, progress: () => progress, office: () => office };
   (window as unknown as { __roomAt: unknown }).__roomAt = (x: number, z: number) => roomAt(x, z).id;
 }
 
-/** Your laptop (L): browser, workers' screens, the loop, decks, deploys. */
+/** Your laptop (L): browser, workers' screens, the loop, decks, deploys. Near a seat, you sit down and work there. */
 function openLaptop(): void {
   if (modalOpen()) return;
-  laptop.open();
+  const spot = nearWorkSpot();
+  if (spot) sitAndWork(spot);
+  else laptop.open();
 }

@@ -1,4 +1,4 @@
-import { BUILDING, PITCH, PLAZA, ROOMS, STREET, WORLD_BOUNDS, roomAt, type RoomDef } from "../../shared/layout.js";
+import { BUILDING, PITCH, PLAZA, POND, ROOMS, STREET, TRACK, UPSTAIRS, WORLD_BOUNDS, roomAt, type RoomDef } from "../../shared/layout.js";
 import { STATUS_BULB } from "../scene/characters.js";
 import type { WorkerStatus } from "../../shared/protocol.js";
 
@@ -91,6 +91,19 @@ export class Minimap {
     g.fillRect(...rect(PLAZA));
     g.fillStyle = "#5c6070";
     g.fillRect(...rect({ minX: WORLD_BOUNDS.minX, maxX: WORLD_BOUNDS.maxX, minZ: STREET.minZ, maxZ: STREET.maxZ }));
+    // The pond and the track out back.
+    g.fillStyle = "#4cc9f0";
+    g.beginPath();
+    g.ellipse(X(POND.x), Z(POND.z), POND.rx * k, POND.rz * k, 0, 0, Math.PI * 2);
+    g.fill();
+    g.strokeStyle = "#d9734e";
+    g.lineWidth = TRACK.width * k;
+    g.beginPath();
+    g.ellipse(X(TRACK.x), Z(TRACK.z), TRACK.rx * k, TRACK.rz * k, 0, 0, Math.PI * 2);
+    g.stroke();
+    // Floor 2 (off to the east, up the elevator).
+    g.fillStyle = "#3d405b";
+    g.fillRect(...rect({ minX: UPSTAIRS.minX - 0.3, maxX: UPSTAIRS.maxX + 0.3, minZ: UPSTAIRS.minZ - 0.3, maxZ: UPSTAIRS.maxZ + 0.3 }));
     // The building and its rooms (your office drawn last, on top).
     g.fillStyle = "#3d405b";
     g.fillRect(...rect({ minX: BUILDING.minX - 0.3, maxX: BUILDING.maxX + 0.3, minZ: BUILDING.minZ - 0.3, maxZ: BUILDING.maxZ + 0.3 }));

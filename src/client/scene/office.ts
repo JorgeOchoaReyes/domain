@@ -868,7 +868,7 @@ export function pendant(x: number, z: number, drop: number): THREE.Group {
   return pendantAt(x, z, WALL_HEIGHT, drop);
 }
 
-function pendantAt(x: number, z: number, ceiling: number, drop: number): THREE.Group {
+export function pendantAt(x: number, z: number, ceiling: number, drop: number): THREE.Group {
   const lamp = new THREE.Group();
   lamp.position.set(x, ceiling - drop, z);
   lamp.add(mesh(new THREE.CylinderGeometry(0.008, 0.008, drop, 4), toon(INK), 0, drop / 2, 0, false));

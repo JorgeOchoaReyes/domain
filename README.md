@@ -194,6 +194,16 @@ building:
   and fountain, a five-a-side pitch with a ball you can dribble and kick, picnic
   tables, a street. Walk all the way round the building; the sky follows your
   real time of day.
+- **Out back**, behind the building: a **running track** (run a lap through the
+  start arch and it's timed, best kept), a **campfire** with logs to sit and
+  work on (and marshmallows to roast), a **garden** that blooms as you water it
+  and wilts a little each day you don't, and east of the building a **pond**
+  with a dock — cast a line, and press **E** when the bobber dips.
+- **🛗 Floor 2**, up the elevator (**E** at its doors, or **T**): a
+  **library** (armchairs to work in, and a bookshelf of tips for running your
+  team), a **lounge** (a sofa, a piano you play from your keyboard, darts, a
+  vending machine) and a **gym** (treadmills, breathing mats for a calm minute,
+  a telescope at the window). The city's outside the glass.
 
 Press **T** anywhere to **fast travel** — the work floor, your office, any
 room, outside, or straight to a worker that needs you. When a worker needs you
@@ -286,6 +296,53 @@ A laptop in your hands, anywhere: a **Browser** showing the app your workers
 are building (your preview URL, or any local dev server it finds), **Workers**
 with each one's live terminal, the **Loop** for your goal, **Decks** for
 research goals, and the **Deploy** console.
+
+Press **L** by a couch, a table, an armchair or the campfire and you sit down
+and set it up there. It stays where you left it: walk back and press **E** to
+pick up where you were.
+
+### 📱 Your phone (P)
+
+Everything, in your pocket, while you keep walking: **Alerts** (what needs you
+now, with a button to deal with it), **Chat** (message everyone, or open any
+worker's channel), **Goals** with their deadlines, **Reviews** (the line, office
+hours, round up), **Workers** (chat, terminal, or go there), **History**,
+**Music** and **Travel**. The button in the corner buzzes with a count when
+something needs you.
+
+### 🔔 Reminders and deadlines
+
+Give a goal a **due date** (in Goals, or when you set it at stand-up) and you're
+reminded an hour out, fifteen minutes out and when it slips. You also hear —
+with a chime, in Alerts and from Pip — when a worker has been **waiting on you**
+for a minute and a half, when someone's been **waiting to present** for five
+minutes, when a task's **time budget** is about to run out, when the **session**
+is ending, and when a worker is **free** while tasks sit unassigned. Urgent ones
+come back every few minutes until they're dealt with.
+
+### 🔍 Pair workers: one builds, one audits
+
+On the assignment card, pick who **audits** it and how many rounds at most
+(1–5, three by default). When the builder says it's done (and the check
+passes), it goes to the auditor first — its changes are written into the
+auditor's own folder — and the auditor approves it or lists what's wrong. Issues
+go back to the builder, and back and forth until it's approved or the rounds
+run out (or the audit takes over 25 minutes). Then it comes to you, once, with
+the audit's verdict and everything it found along the way.
+
+### 👥 Groups
+
+In Goals, tick a few workers under **Group** and **give it to them**: if the
+goal has no tasks yet, the first one plans it; then a task goes to each one
+who's free, and the next one as each finishes.
+
+### 📜 History
+
+Everything that happens is kept (in `.domain/history.json`): hires, tasks
+handed out, reports, approvals and changes, audits, groups, deadlines, ships.
+Open **History** from the Office menu or the phone — by day, everything or one
+worker — and each worker's **Work** tab in the team chat shows what it's done
+before.
 
 ## Run the office (🏢)
 
@@ -595,11 +652,12 @@ Environment variables:
 | `B`           | Skateboard on / off — twice as fast, and you glide |
 | `C`           | Team chat |
 | `Q`           | Put your coffee down |
-| `E`           | Use whatever the floating **E** marks: hire, terminal, office hours, the idea boards, the jukeboxes, coffee, arcades, hoops, the ball, the elevator |
+| `E`           | Use whatever the floating **E** marks: hire, terminal, office hours, the idea boards, the jukeboxes, coffee, arcades, hoops, the ball, the elevator, your laptop where you left it, darts, the piano, the vending machine, treadmills, the breathing mats, the bookshelf, the telescope, fishing, the garden, the campfire |
 | `T`           | Fast travel |
 | `U`           | Stand-up |
 | `G`           | Goals |
-| `L`           | Your laptop |
+| `L`           | Your laptop — near a seat, sit down and work there |
+| `P`           | Your phone |
 | `F`           | Start a focus session |
 | `R`           | Round up workers for a review |
 | `O`           | Office hours: the next one in line presents |
@@ -614,7 +672,9 @@ Environment variables:
 src/
   shared/
     protocol.ts          typed client/server messages + office state
-    layout.ts            the floor plan: building, rooms, grounds, routes, camera walls
+    layout.ts            the floor plan: building, rooms, grounds, floor 2, work spots, routes, camera walls
+    history.ts           what the office remembers happened
+    darts.ts             where a dart scores
     progress.ts          goals, sessions, XP, levels, achievements, the loop's stages
     policy.ts            team policy and task briefs (models, leash, time, done)
   server/
@@ -636,12 +696,15 @@ src/
     loop.ts              config, plans, decks, deploys, local model discovery
     reports.ts           watches report and reply files; writes BRIEF.md
     progress.ts          keeps score; saved to .domain/
+    history.ts           the office's history, saved to .domain/history.json
+    audits.ts            pair workers: an auditor checks the work before you see it
   client/
     main.ts              glue: networking, interaction, the game loop
-    scene/               world, player, office, rooms, game room, minigames, hand, characters, boards
+    scene/               world, player, office, rooms, game room, floor 2, the grounds out back, minigames, hand, characters, boards
     ui/                  HUD, stand-up, goals, assignment card, team policy, review, laptop,
                          decks, arcade, fast travel, minimap, goal card, settings, Pip,
-                         projects, team, MCP, invite/join, logs, icons, idea board, sketchpad
+                         projects, team, MCP, invite/join, logs, icons, idea board, sketchpad,
+                         phone, reminders, history, activities (darts, piano, fishing…)
     vr/                  VR: the WebXR session and controllers, floating panels, what you do in VR
 electron/
   main.ts                desktop shell: picks the project, starts the server, opens a window
