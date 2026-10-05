@@ -1,3 +1,4 @@
+import { micButton, wireMic } from "../voice.js";
 import type { Desk, Presentation } from "../../shared/protocol.js";
 import { AGENT_LABELS } from "../../shared/protocol.js";
 import { STAGE_ICON, XP, briefLine, goalProgress, goalStage, stageLabel, type Goal, type GoalKind, type ProgressState, type TaskStatus, dueLabel, toLocalInput } from "../../shared/progress.js";
@@ -253,7 +254,7 @@ export class GoalsWindow {
           })
           .join("")}
       </ul>
-      <div class="add-task webhook"><input type="text" maxlength="160" placeholder="Add a task…" /><button class="btn small add">Add</button></div>
+      <div class="add-task webhook"><input type="text" maxlength="160" placeholder="Add a task — or press 🎤 and say it…" />${micButton("small g-mic")}<button class="btn small add">Add</button></div>
       <div class="gd-actions">
         <button class="btn small danger del">🗑 Delete goal</button>
         ${isGithubProject() && this.actions.loop ? `<button class="btn small gh-import">${icon("github", 14)} Import issues</button>` : ""}
@@ -266,6 +267,7 @@ export class GoalsWindow {
     else loopEl.remove();
 
     const input = this.detailEl.querySelector<HTMLInputElement>(".add-task input")!;
+    wireMic(this.detailEl.querySelector<HTMLButtonElement>(".g-mic"), input);
     input.value = draft;
     if (hadFocus) input.focus();
     const add = () => {

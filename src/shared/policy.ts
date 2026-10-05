@@ -8,7 +8,26 @@ import type { AgentKind } from "./protocol.js";
  */
 
 /** How much a worker may do without asking: "ask" before edits, or "auto"-accept edits. */
-export type Leash = "ask" | "auto";
+/**
+ * How much a worker may do without asking you, from most careful to most free.
+ * Each agent CLI gets its own flags for it (see launchCommand).
+ */
+export type Leash = "ask" | "auto" | "safe" | "full";
+export const LEASHES: readonly Leash[] = ["ask", "auto", "safe", "full"];
+
+export function isLeash(v: unknown): v is Leash {
+  return typeof v === "string" && (LEASHES as readonly string[]).includes(v);
+}
+
+export const LEASH_ICON: Record<Leash, string> = { ask: "🙋", auto: "✏️", safe: "🛡", full: "🚀" };
+
+/** What each level lets it do — shown in the windows, and told to the worker in its brief. */
+export const LEASH_RULES: Record<Leash, string> = {
+  ask: "ask before editing files or running commands",
+  auto: "edit files in your folder without asking; ask before running commands",
+  safe: "edit and run commands without asking when they're safe — risky ones are checked first (by your CLI's own reviewer)",
+  full: "edit files and run commands without asking — stay inside your own folder and don't touch anything outside it",
+};
 /** What happens when a task's time budget runs out. */
 export type OnTimeUp = "nudge" | "wrapup";
 /** What approving finished work does with the worker's branch. */
@@ -31,6 +50,10 @@ export interface TaskBrief {
   auditor?: string;
   /** At most this many audit rounds (builder ↔ auditor) before it comes to you anyway. */
   rounds?: number;
+  /** Anything else it should know, in your words (typed or dictated). */
+  notes?: string;
+  /** When its auditor checks: only the finished work, or checkpoints along the way too. */
+  auditWhen?: "end" | "along";
 }
 
 /** Audits go back and forth at most this many rounds by default. */
@@ -87,8 +110,10 @@ export const DEFAULT_POLICY: TeamPolicy = {
 export const GATE_RETRIES = 2;
 
 export const LEASH_LABEL: Record<Leash, string> = {
-  ask: "Ask before edits",
-  auto: "Go ahead (auto-accept edits)",
+  ask: "Asks first",
+  auto: "Edits OK",
+  safe: "Safe actions auto",
+  full: "Never asks",
 };
 
 export const ON_TIME_UP_LABEL: Record<OnTimeUp, string> = {
@@ -134,6 +159,8 @@ export function coerceBrief(raw: unknown, policy: TeamPolicy): TaskBrief {
     ...(typeof o.auditor === "string" && /^desk-\d{1,2}$/.test(o.auditor)
       ? { auditor: o.auditor, rounds: typeof o.rounds === "number" && o.rounds >= 1 ? Math.min(5, Math.round(o.rounds)) : DEFAULT_AUDIT_ROUNDS }
       : {}),
+    ...(typeof o.auditor === "string" && o.auditWhen === "along" ? { auditWhen: "along" as const } : {}),
+    ...(typeof o.notes === "string" && o.notes.trim() ? { notes: o.notes.trim().replace(/\s+/g, " ").slice(0, 2000) } : {}),
   };
 }
 
@@ -157,7 +184,7 @@ export function coercePolicy(raw: unknown, base: TeamPolicy = DEFAULT_POLICY): T
   return {
     models,
     defaultModel,
-    leash: o.leash === "auto" || o.leash === "ask" ? o.leash : base.leash,
+    leash: isLeash(o.leash) ? o.leash : base.leash,
     minutes: minutesOf(o.minutes, base.minutes),
     onTimeUp: o.onTimeUp === "nudge" || o.onTimeUp === "wrapup" ? o.onTimeUp : base.onTimeUp,
     planFirst: typeof o.planFirst === "boolean" ? o.planFirst : base.planFirst,

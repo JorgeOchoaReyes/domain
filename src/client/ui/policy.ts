@@ -1,6 +1,8 @@
 import { AGENT_KINDS, AGENT_LABELS, type AgentKind } from "../../shared/protocol.js";
 import {
+  LEASH_ICON,
   LEASH_LABEL,
+  LEASH_RULES,
   ON_TIME_UP_LABEL,
   TIME_BUDGETS,
   isModelName,
@@ -45,7 +47,7 @@ export function openPolicy(policy: TeamPolicy, onSave: (p: TeamPolicy) => void):
     </section>
     <section>
       <h4>New hires</h4>
-      <div class="seg po-leash">${(Object.keys(LEASH_LABEL) as Leash[]).map((l) => `<button data-l="${l}">${l === "ask" ? "🙋" : "🏃"} ${esc(LEASH_LABEL[l])}</button>`).join("")}</div>
+      <div class="seg po-leash">${(Object.keys(LEASH_LABEL) as Leash[]).map((l) => `<button data-l="${l}" title="${esc(LEASH_RULES[l])}">${LEASH_ICON[l]} ${esc(LEASH_LABEL[l])}</button>`).join("")}</div>
       <p class="as-note">“Go ahead” starts Claude Code with <code>--permission-mode acceptEdits</code>, Codex with <code>--sandbox workspace-write --ask-for-approval on-request</code> and Gemini CLI with <code>--approval-mode auto_edit</code>; OpenCode keeps its own prompts.</p>
     </section>
     <section>
@@ -120,11 +122,12 @@ export function openPolicy(policy: TeamPolicy, onSave: (p: TeamPolicy) => void):
   seg(".po-merge", "g", () => p.merge, (v) => (p.merge = v as MergeMode));
   seg(".po-gate", "k", () => p.gate, (v) => (p.gate = v as GateMode));
   renderDefaults();
-  // One click puts a local model on Codex's list (and OpenCode's, if it's set up for that provider).
+  // One click puts a local model on Codex's list (and OpenCode's, if it's set up for that provider);
+  // an Ollama model on Claude Code's too (it runs through Ollama's Anthropic-compatible API).
   body.querySelectorAll<HTMLButtonElement>("[data-local]").forEach((b) =>
     b.addEventListener("click", () => {
       const model = b.dataset.local!;
-      for (const k of ["codex", "opencode"] as AgentKind[]) {
+      for (const k of (model.startsWith("ollama/") ? ["claude", "codex", "opencode"] : ["codex", "opencode"]) as AgentKind[]) {
         const input = body.querySelector<HTMLInputElement>(`.po-agent[data-agent="${k}"] .po-models`)!;
         const list = input.value.split(",").map((x) => x.trim()).filter(Boolean);
         if (!list.includes(model)) input.value = [...list, model].join(", ");
@@ -171,7 +174,7 @@ function localModelsHtml(): string {
   if (!local.length) {
     return `<p class="as-note">🖥 Local models: none found. Start <b>Ollama</b> or <b>LM Studio</b> and reopen this to add their models.</p>`;
   }
-  return `<div class="po-local"><span class="as-note">🖥 On this machine — click to offer to Codex and OpenCode:</span>
+  return `<div class="po-local"><span class="as-note">🖥 On this machine — click to offer to Codex and OpenCode (and Ollama's to Claude Code):</span>
     ${local.map((m) => `<button class="btn chip" data-local="${esc(m)}">${esc(m)}</button>`).join("")}
-    <p class="as-note">Codex runs these with <code>--oss --local-provider</code>. OpenCode needs that provider in its own config.</p></div>`;
+    <p class="as-note">Codex runs these with <code>--oss --local-provider</code>; Claude Code runs Ollama's through its Anthropic-compatible API (Ollama 0.14 or newer). OpenCode needs that provider in its own config.</p></div>`;
 }

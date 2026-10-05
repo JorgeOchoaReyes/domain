@@ -202,3 +202,33 @@ test("a local model too big for this computer's memory is called out before it h
   assert.equal(localModelWarning("ollama/llama3.1:latest", 15 * GB, 9 * GB), null, "fits: no warning");
   assert.equal(localModelWarning("sonnet", 15 * GB, 1 * GB), null, "cloud models aren't local");
 });
+
+test("Claude Code on an Ollama model: --model, and pointed at Ollama for that worker only", async () => {
+  const { launchCommand, localEnv } = await import("../src/server/workerSession.ts");
+  assert.equal(launchCommand("claude", "ollama/qwen3.6:latest", "ask"), "claude --model qwen3.6:latest");
+  assert.deepEqual(localEnv("claude", "ollama/qwen3.6:latest", {}), { ANTHROPIC_BASE_URL: "http://127.0.0.1:11434", ANTHROPIC_AUTH_TOKEN: "ollama", ANTHROPIC_API_KEY: "" });
+  assert.equal(localEnv("claude", "ollama/x", { OLLAMA_HOST: "0.0.0.0:9999" }).ANTHROPIC_BASE_URL, "http://0.0.0.0:9999");
+  assert.deepEqual(localEnv("claude", "sonnet", {}), {}, "a cloud model: your own login");
+  assert.deepEqual(localEnv("codex", "ollama/x", {}), {}, "Codex has its own --oss");
+});
+
+test("permission levels: each CLI's own flags, and the worker is told", async () => {
+  const { launchCommand } = await import("../src/server/workerSession.ts");
+  const { taskBriefText } = await import("../src/server/office.ts");
+  const want: Record<string, Record<string, string>> = {
+    claude: { ask: "claude", auto: "claude --permission-mode acceptEdits", safe: "claude --permission-mode auto", full: "claude --permission-mode bypassPermissions" },
+    codex: {
+      ask: "codex --sandbox read-only --ask-for-approval on-request",
+      auto: "codex --sandbox workspace-write --ask-for-approval on-request",
+      safe: "codex --approve-for-me",
+      full: "codex --sandbox workspace-write --ask-for-approval never",
+    },
+    gemini: { ask: "gemini", auto: "gemini --approval-mode auto_edit", safe: "gemini --approval-mode auto_edit", full: "gemini --approval-mode yolo" },
+    opencode: { ask: "opencode", auto: "opencode", safe: "opencode", full: "opencode" },
+  };
+  for (const [agent, levels] of Object.entries(want)) {
+    for (const [leash, cmd] of Object.entries(levels)) assert.equal(launchCommand(agent as never, "", leash as never), cmd, `${agent} ${leash}`);
+  }
+  assert.match(taskBriefText("Goal", "Task", "", undefined, null, "auto"), /Your permissions: edit files in your folder without asking; ask before running commands\./);
+  assert.match(taskBriefText("Goal", "Task", "", undefined, null, "full"), /stay inside your own folder/);
+});

@@ -1,16 +1,13 @@
 /* ---------- The phone ---------- */
-.phone-btn {
-  position: absolute; right: 12px; bottom: 206px; z-index: 7; width: 52px; height: 52px; border-radius: 16px;
-  border: 3px solid var(--ink); background: var(--paper); box-shadow: var(--shadow); font-size: 26px; cursor: pointer; padding: 0;
-}
-.phone-btn:hover, .phone-btn.on { background: var(--paper-2); }
+.phone-btn { position: relative; }
+.phone-btn.on { background: #ffe8d6; }
 .phone-btn.ping:not(.on) { animation: ph-buzz 2.4s ease-in-out infinite; }
 .ph-badge:empty { display: none; }
-.ph-badge { position: absolute; top: -8px; right: -8px; min-width: 22px; height: 22px; padding: 0 5px; border-radius: 11px; background: var(--bad, #ef476f); color: #fff; font: 900 12px/22px var(--font); border: 2px solid var(--ink); }
+.ph-badge { position: absolute; top: -9px; right: -9px; min-width: 22px; height: 22px; padding: 0 5px; border-radius: 11px; background: var(--bad, #ef476f); color: #fff; font: 900 12px/22px var(--font); border: 2px solid var(--ink); }
 @keyframes ph-buzz { 0%, 86%, 100% { transform: rotate(0); } 88% { transform: rotate(-10deg); } 92% { transform: rotate(10deg); } 96% { transform: rotate(-6deg); } }
 
 .phone {
-  position: absolute; right: 74px; bottom: 12px; z-index: 30; width: 320px; height: min(640px, calc(100vh - 24px));
+  position: absolute; right: 12px; bottom: 12px; z-index: 30; width: 320px; height: min(640px, calc(100vh - 24px));
   background: #15161f; border-radius: 38px; padding: 12px; box-shadow: 0 18px 40px rgba(0, 0, 0, .45), inset 0 0 0 3px #3a3d5c;
   display: flex; flex-direction: column; animation: ph-up .22s ease-out; font-family: var(--font);
 }
@@ -73,3 +70,7 @@ button.ph-card { cursor: pointer; }
 .ph-hist .hi-row { font-size: 11px; padding: 4px 6px; }
 .ph-hist .hi-day { margin: 6px 0 2px; }
 @media (max-width: 520px) { .phone { right: 8px; left: 8px; width: auto; } }
+.ph-quick { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.ph-quick button { border: 2px solid var(--ink); border-radius: 12px; background: #fff; font: 800 11px var(--font); padding: 6px 2px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 2px; color: var(--ink); }
+.ph-quick button span { font-size: 18px; }
+.ph-quick button i { font-style: normal; background: #ef476f; color: #fff; border-radius: 8px; padding: 0 5px; }

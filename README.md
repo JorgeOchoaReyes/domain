@@ -31,7 +31,7 @@ it to a worker. Got a headset? Step in with **VR**.
   [Gemini CLI](https://github.com/google-gemini/gemini-cli) (`gemini`). Don't
   have one? The office installs it for you: the hire card shows **⬇ Install**
   next to any that's missing (it runs `npm install -g …`, with the output in
-  Logs), and Pip offers Claude Code on your first visit. Sign in to it the way
+  Logs), and Arnold offers Claude Code on your first visit. Sign in to it the way
   you normally would the first time it runs. No agents at all? Try
   [simulate mode](#try-it-without-any-agents).
 - Optional: [Ollama](https://ollama.com) or [LM Studio](https://lmstudio.ai)
@@ -71,7 +71,7 @@ project, **File → Open project folder… (Ctrl+O)**.
 
 ### Your first five minutes
 
-1. **Pick your character** and walk in. **Pip**, your assistant, says hi and
+1. **Pick your character** and walk in. **Arnold**, your assistant, says hi and
    offers a two-minute **guided tour** of the office — take it.
 2. **Hold the stand-up**: set today's goal (or start from a template), pick a
    **tone** for the session, say what would make it a win, choose a length,
@@ -90,14 +90,14 @@ project, **File → Open project folder… (Ctrl+O)**.
 
 The **goal card** under your player card always shows the goal, how far
 along it is, where it is in the loop and the one next step — click it to do
-that step. **Pip** (bottom left) speaks up when something needs you: a worker
+that step. **Arnold** (bottom left) speaks up when something needs you: a worker
 waiting on your answer, work ready to review, the session about to end. Click
-Pip any time to ask what's next, take the tour again, or have Pip **walk you
+Arnold any time to ask what's next, take the tour again, or have Arnold **walk you
 through** something — *start a focus session*, *put a worker on a task*, *ship a
 pull request*, *hand off an idea*. Each is a short checklist that ticks itself
 off as you go, with a button on every step that does it for you.
 
-![Pip, your assistant, offering the tour](docs/screenshots/pip.jpg)
+![Arnold, your assistant, offering the tour](docs/screenshots/pip.jpg)
 
 ### Try it without any agents
 
@@ -150,6 +150,9 @@ offers them in **Team policy** with one click (`ollama/<model>`,
 
 - **Codex** runs them through its open-source provider:
   `codex --oss --local-provider ollama --model <model>`.
+- **Claude Code** runs Ollama's models through Ollama's Anthropic-compatible
+  API (Ollama 0.14 or newer): just for that worker it's pointed at Ollama, and
+  your own Claude login is left alone.
 - **OpenCode** takes `ollama/<model>` once Ollama is set up as a provider in
   OpenCode's own config.
 
@@ -261,7 +264,7 @@ nothing gets stuck. Each goal's files live in `.domain/goals/<id>/`
   (`domain/<agent>-<desk>-…`), so parallel workers never touch the same files.
   `.domain/` is kept out of `git status` through `.git/info/exclude`.
 - **Trusting the folders, once**: agents like Claude Code ask whether to trust
-  a folder they haven't seen. The first time, Pip asks you instead — **✅ Trust
+  a folder they haven't seen. The first time, Arnold asks you instead — **✅ Trust
   this project** — and from then on every worker's prompt in that project is
   answered for you (the office reads which option is highlighted and picks
   *yes*; it never guesses). Until you answer, the desk shows *needs you* and
@@ -292,7 +295,8 @@ Nothing is pushed while workers work: every git step is local until you ship
 
 ### 💻 Your laptop (L)
 
-A laptop in your hands, anywhere: a **Browser** showing the app your workers
+A laptop in your hands, anywhere: **💬 Team** to message anyone, give someone
+a task or ask for an update; a **Browser** showing the app your workers
 are building (your preview URL, or any local dev server it finds), **Workers**
 with each one's live terminal, the **Loop** for your goal, **Decks** for
 research goals, and the **Deploy** console.
@@ -303,7 +307,9 @@ pick up where you were.
 
 ### 📱 Your phone (P)
 
-Everything, in your pocket, while you keep walking: **Alerts** (what needs you
+The top bar keeps the everyday few — Goals, Phone, Laptop, Office, Chat.
+Everything else is on the phone, in your pocket, while you keep walking: a
+row for **Stand-up**, **Focus**, **Round up** and **Reviews**, then **Alerts** (what needs you
 now, with a button to deal with it), **Chat** (message everyone, or open any
 worker's channel), **Goals** with their deadlines, **Reviews** (the line, office
 hours, round up), **Workers** (chat, terminal, or go there), **History**,
@@ -314,16 +320,43 @@ something needs you.
 
 Give a goal a **due date** (in Goals, or when you set it at stand-up) and you're
 reminded an hour out, fifteen minutes out and when it slips. You also hear —
-with a chime, in Alerts and from Pip — when a worker has been **waiting on you**
+with a chime, in Alerts and from Arnold — when a worker has been **waiting on you**
 for a minute and a half, when someone's been **waiting to present** for five
 minutes, when a task's **time budget** is about to run out, when the **session**
 is ending, and when a worker is **free** while tasks sit unassigned. Urgent ones
 come back every few minutes until they're dealt with.
 
+### 🗣 Say it
+
+Wherever you hand out work — the assignment card's **Anything else they
+should know?**, the chat, the laptop's Team app, the phone, a goal's **Add a
+task** — press **🎤** and say it instead of typing. In the desktop app it uses
+your computer's own dictation (Windows: **Win + H**; macOS: **Fn** twice); in a
+browser, the browser's.
+
+### 🔐 Permission levels
+
+How much a worker may do without asking you — set per hire, per character,
+or as the team default. Each agent gets its own CLI's flags, and the worker is
+told its level in every task brief:
+
+| | Claude Code | Codex | Gemini CLI |
+|---|---|---|---|
+| 🙋 **Asks first** | its prompts | read-only sandbox, asks | its prompts |
+| ✏️ **Edits OK** | `acceptEdits` | workspace-write, asks for commands | `auto_edit` |
+| 🛡 **Safe actions auto** | `auto` (its own reviewer) | `--approve-for-me` | `auto_edit` |
+| 🚀 **Never asks** | `bypassPermissions` | workspace-write, never asks (still sandboxed to its folder) | `yolo` |
+
+When a worker does stop to ask, its desk says **needs you**, you're
+reminded, and anything you send it waits until you've answered — so a
+message can never pick one of the prompt's options by accident.
+
 ### 🔍 Pair workers: one builds, one audits
 
-On the assignment card, pick who **audits** it and how many rounds at most
-(1–5, three by default). When the builder says it's done (and the check
+On the assignment card, pick who **audits** it, **when** — when it's done, or
+**along the way** (the builder stops at checkpoints, the auditor checks each
+one, and they go back and forth before it carries on) — and how many times
+at most it can be sent back (1–5, three by default). When the builder says it's done (and the check
 passes), it goes to the auditor first — its changes are written into the
 auditor's own folder — and the auditor approves it or lists what's wrong. Issues
 go back to the builder, and back and forth until it's approved or the rounds
@@ -490,10 +523,17 @@ toasts wherever you are. Each channel also shows:
   its prompts.
 - **📜 Work** — the task it's on, the commits on its branch and the files it
   has changed.
-- **⌨️ Terminal** mode in the message box types straight into its CLI
-  (commands, answers), and **🖥 Terminal** opens the terminal itself.
+- **🎯 Task** mode in the message box makes what you write a real task for
+  that worker: tracked (on the session's goal, or a "Quick tasks" goal),
+  checked, and presented to you when it's done.
+- **⌨️ Terminal** mode types straight into its CLI (commands, answers), and
+  **🖥 Terminal** opens the terminal itself.
+- **📍 Ask for an update** — from one worker, or everyone in #team.
 
-Clicking a worker in the Workers list opens its channel.
+A message to a worker that's asking you something (a permission prompt) waits
+until you've answered it, so it can never pick one of the prompt's options.
+The same is on your laptop (**💬 Team**) and your phone (**Chat**). Clicking a
+worker in the Workers list opens its channel.
 
 ## Closing up, and the gong
 
@@ -702,7 +742,7 @@ src/
     main.ts              glue: networking, interaction, the game loop
     scene/               world, player, office, rooms, game room, floor 2, the grounds out back, minigames, hand, characters, boards
     ui/                  HUD, stand-up, goals, assignment card, team policy, review, laptop,
-                         decks, arcade, fast travel, minimap, goal card, settings, Pip,
+                         decks, arcade, fast travel, minimap, goal card, settings, Arnold,
                          projects, team, MCP, invite/join, logs, icons, idea board, sketchpad,
                          phone, reminders, history, activities (darts, piano, fishing…)
     vr/                  VR: the WebXR session and controllers, floating panels, what you do in VR

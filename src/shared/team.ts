@@ -1,6 +1,6 @@
 import type { AgentKind } from "./protocol.js";
 import { AGENT_KINDS } from "./protocol.js";
-import { isModelName, type Leash } from "./policy.js";
+import { isLeash, isModelName, type Leash } from "./policy.js";
 
 /**
  * Your team: workers with names, faces and personalities you set once and
@@ -88,7 +88,7 @@ export function coerceCharacter(raw: unknown): Character | null {
     name,
     agent,
     model: typeof o.model === "string" && isModelName(o.model) ? o.model : "",
-    leash: o.leash === "auto" ? "auto" : "ask",
+    leash: isLeash(o.leash) ? o.leash : "ask",
     persona,
     voice: clean(o.voice, 80),
     look: coerceLook(o.look, agent),

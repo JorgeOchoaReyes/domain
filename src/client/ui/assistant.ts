@@ -1,8 +1,8 @@
 import { esc } from "./modal.js";
 
 /**
- * Pip, your office assistant: a little robot in the corner of the HUD who
- * keeps you oriented. Pip says the one thing that matters right now (a worker
+ * Arnold, your office assistant: a little robot in the corner of the HUD who
+ * keeps you oriented. Arnold says the one thing that matters right now (a worker
  * is waiting on you, work is ready to review, the session's about to end, the
  * goal's stuck), answers "what should I do now?", runs the guided tour —
  * walking you room by room and spotlighting the buttons and keys that matter —
@@ -45,7 +45,7 @@ export interface GuideStep {
   spot?: string;
 }
 
-/** Something Pip can walk you through, start to finish. */
+/** Something Arnold can walk you through, start to finish. */
 export interface Guide {
   id: string;
   icon: string;
@@ -65,9 +65,9 @@ export interface AssistantCtx {
   whatNow(): Tip;
   /** Free the mouse so the tour's buttons can be clicked. */
   freeMouse(): void;
-  /** Windows are open (Pip stays quiet and out of the way). */
+  /** Windows are open (Arnold stays quiet and out of the way). */
   busy(): boolean;
-  /** What Pip can walk you through. */
+  /** What Arnold can walk you through. */
   guides(): Guide[];
   /** A step of a guide got done (a sound, a sparkle). */
   cheer?(final: boolean): void;
@@ -94,7 +94,7 @@ export class Assistant {
     this.el = document.createElement("div");
     this.el.className = "pip";
     this.el.innerHTML = `
-      <button class="pip-face" title="Pip, your assistant — click for help" aria-label="Pip, your assistant">${PIP_SVG}</button>
+      <button class="pip-face" title="Arnold, your assistant — click for help" aria-label="Arnold, your assistant">${PIP_SVG}</button>
       <div class="pip-bubble hidden" role="status" aria-live="polite"></div>`;
     this.bubble = this.el.querySelector(".pip-bubble")!;
     this.el.querySelector(".pip-face")!.addEventListener("click", () => this.menu());
@@ -117,7 +117,7 @@ export class Assistant {
       {
         id: "welcome",
         urgency: 3,
-        text: `Hi ${name}! I'm Pip — I'll keep you pointed at what matters. Want a two-minute tour of the office first?`,
+        text: `Hi ${name}! I'm Arnold — I'll keep you pointed at what matters. Want a two-minute tour of the office first?`,
         action: { label: "🗺 Take the tour", run: () => this.startTour(then) },
       },
       { label: "Skip — start the stand-up", run: () => (this.markToured(), then()) },
@@ -160,7 +160,7 @@ export class Assistant {
     this.hide();
   }
 
-  /** Click on Pip: what now, plus everything Pip can walk you through. */
+  /** Click on Arnold: what now, plus everything Arnold can walk you through. */
   private menu(): void {
     if (this.touring) return;
     if (this.guide) {
@@ -374,7 +374,7 @@ function safe(f: () => boolean): boolean {
   }
 }
 
-/** Pip: a round little robot with an antenna, in the game's toon style. */
+/** Arnold: a round little robot with an antenna, in the game's toon style. */
 const PIP_SVG = `<svg viewBox="0 0 64 64" width="56" height="56" aria-hidden="true">
   <line x1="32" y1="10" x2="32" y2="3" stroke="#2b2d42" stroke-width="3" stroke-linecap="round"/>
   <circle class="pip-bulb" cx="32" cy="4" r="4" fill="#ffd166" stroke="#2b2d42" stroke-width="2.5"/>

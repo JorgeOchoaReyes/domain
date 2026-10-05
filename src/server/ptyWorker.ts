@@ -1,9 +1,10 @@
+import { doingFrom } from "./doing.js";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import type { AgentKind, WorkerStatus } from "../shared/protocol.js";
 import { AGENT_LABELS } from "../shared/protocol.js";
-import type { IWorkerSession } from "./workerSession.js";
+import { enterDelay, type IWorkerSession } from "./workerSession.js";
 
 /**
  * A worker backed by a real pseudo-terminal on the host machine.
@@ -109,8 +110,22 @@ export class PtyWorker implements IWorkerSession {
   private queue: string[] = [];
   private ready = true;
   private launchedAt = 0;
+  /** The folder the agent runs in (its shell prompt names it once the agent quits). */
+  private cwd = "";
+  /** What it's doing in a word or three (see doing.ts), and who wants to know when it changes. */
+  private doingNow = "";
+  private doingListeners = new Set<() => void>();
+  /** Where this desk's report and reply go (typed out in full: see withPaths). */
+  private paths = { report: "", reply: "", reports: "", desk: "" };
+  /** Already skipped an "update available" menu this many times. */
+  private updatesSkipped = 0;
+  /** The agent quit back to the shell: nothing more is typed until it's running again. */
+  private exited = false;
+  private promptSince = 0;
   private autoTrust: () => boolean;
   private lastOutputAt = 0;
+  /** When the question now on screen first showed up (0: none). */
+  private askingSince = 0;
   private readyTimer: ReturnType<typeof setInterval> | null = null;
   /** The agent asked whether to trust its folder: waiting on you. */
   private trustAsked = false;
@@ -130,6 +145,13 @@ export class PtyWorker implements IWorkerSession {
     if (!ptyModule) throw new Error("PTY backend unavailable");
     this.agent = agent;
     this.autoTrust = opts.autoTrust ?? (() => false);
+    this.cwd = opts.cwd;
+    this.paths = {
+      report: join(opts.reportsDir, `${opts.deskId}.json`),
+      reply: join(opts.repliesDir, `${opts.deskId}.json`),
+      reports: opts.reportsDir,
+      desk: opts.deskId,
+    };
 
     const shell = defaultShell();
     this.pty = ptyModule.spawn(shell.file, shell.args, {
@@ -233,6 +255,9 @@ export class PtyWorker implements IWorkerSession {
   }
 
   send(data: string): void {
+    // Never type a brief into a bare shell: it would run as commands.
+    if (this.exited) return;
+    data = this.withPaths(data);
     if (this.ready) this.write(data);
     else this.queue.push(data);
   }
@@ -290,6 +315,7 @@ export class PtyWorker implements IWorkerSession {
       return;
     }
     if (this.trustAsked) return;
+    if (this.skipUpdateMenu()) return;
     // Settled: the agent drew its screen (more than the shell echoing the command) and went quiet.
     const drawn = this.scrollback.length - this.scanFrom > DRAWN;
     const settled = drawn && now - this.lastOutputAt > 1500 && now - this.launchedAt > 2500;
@@ -305,7 +331,7 @@ export class PtyWorker implements IWorkerSession {
     // With a brief waiting, whatever the office set meanwhile ("🧠 Planning…") stays on the desk.
     if (this.status !== "waiting") this.setStatus("working", queued.length ? "" : `${AGENT_LABELS[this.agent]} ready`);
     // Typed one piece at a time, spaced as typeLine spaces them.
-    queued.forEach((d, i) => setTimeout(() => this.write(d), i * 150));
+    queued.forEach((d, i) => setTimeout(() => this.write(d), i * enterDelay(this.agent)));
     this.watchTimer = setInterval(() => this.watch(), 1000);
     this.watchTimer.unref?.();
   }
@@ -317,14 +343,42 @@ export class PtyWorker implements IWorkerSession {
    * means it's back at work.
    */
   private watch(): void {
-    if (this.disposed || this.status === "done" || this.trustAsked) return;
+    if (this.disposed || this.trustAsked || (this.status === "done" && !this.exited)) return;
     const quiet = Date.now() - this.lastOutputAt;
     // Read the actual screen: agents redraw only what changes, so the raw
     // output often doesn't contain the question that's sitting on screen.
-    const asking = ASKING.test(this.screen().join("\n"));
-    if (asking && this.status !== "waiting" && quiet > 1500) {
+    const screen = this.screen();
+    if (this.skipUpdateMenu(screen)) return;
+    // The agent quit and left its shell: say so, and stop typing into it.
+    const atPrompt = looksLikeShellPrompt(screen, this.cwd);
+    if (!atPrompt) this.promptSince = 0;
+    else if (!this.promptSince) this.promptSince = Date.now();
+    if (atPrompt && !this.exited && Date.now() - this.promptSince >= 3000) {
+      this.exited = true;
+      this.setStatus("done", `${AGENT_LABELS[this.agent]} quit — open its terminal to start it again`);
+      return;
+    }
+    if (this.exited) {
+      if (!atPrompt && Date.now() - this.lastOutputAt < 3000) {
+        // Started again in its terminal: back in business.
+        this.exited = false;
+        this.setStatus("working", `${AGENT_LABELS[this.agent]} is back`);
+      }
+      return;
+    }
+    // What it's on, in a word or three, for the bubble over its desk.
+    const doing = this.status === "working" ? doingFrom(screen) : "";
+    if (doing !== this.doingNow) {
+      this.doingNow = doing;
+      for (const l of this.doingListeners) l();
+    }
+    const asking = ASKING.test(screen.join("\n"));
+    // On screen for a moment and it's a real question — even while a spinner keeps drawing under it.
+    if (!asking) this.askingSince = 0;
+    else if (!this.askingSince) this.askingSince = Date.now();
+    if (asking && this.status !== "waiting" && Date.now() - this.askingSince >= 2000) {
       this.setStatus("waiting", `${AGENT_LABELS[this.agent]} is asking you something — answer in its terminal`);
-    } else if (!asking && this.status === "waiting" && quiet > 1500) {
+    } else if (!asking && this.status === "waiting") {
       // Answered (here or in its terminal): back to it, or free if it's gone quiet.
       this.setStatus(quiet >= QUIET_MS ? "idle" : "working", "");
     } else if (this.status === "working" && quiet >= QUIET_MS) {
@@ -363,6 +417,41 @@ export class PtyWorker implements IWorkerSession {
     for (const l of this.outputListeners) l(data);
   }
 
+  doing(): string {
+    return this.doingNow;
+  }
+
+  onDoing(listener: () => void): () => void {
+    this.doingListeners.add(listener);
+    return () => this.doingListeners.delete(listener);
+  }
+
+  /** The office's instructions with this desk's real file paths in place of the variables. */
+  private withPaths(text: string): string {
+    return text
+      .replace(/\$DOMAIN_REPORT_FILE\b/g, this.paths.report)
+      .replace(/\$DOMAIN_REPLY_FILE\b/g, this.paths.reply)
+      .replace(/\$DOMAIN_REPORTS\b/g, this.paths.reports)
+      .replace(/\$DOMAIN_DESK\b/g, this.paths.desk);
+  }
+
+  /**
+   * Codex (and others) can open with an "Update available" menu whose first
+   * option installs the update and quits — and any "1" typed into it picks
+   * that. Skip it (Esc) before anything else is typed; you update on your own.
+   */
+  private skipUpdateMenu(screen = this.screen()): boolean {
+    if (this.updatesSkipped >= 3 || !UPDATE_MENU.test(screen.join("\n"))) return false;
+    this.updatesSkipped++;
+    try {
+      this.pty.write("\x1b");
+    } catch {
+      /* gone */
+    }
+    this.lastOutputAt = Date.now();
+    return true;
+  }
+
   private setStatus(status: WorkerStatus, activity: string): void {
     if (this.disposed) return;
     this.status = status;
@@ -386,7 +475,8 @@ const QUIET_MS = 8000;
 /** More than this much output in one run and it's working again (not just a cursor or a clock). */
 const BURST = 400;
 /** An agent asking for permission or a choice: Claude Code, Codex, Gemini CLI, and plain y/n. */
-export const ASKING = /do you want to (?:proceed|make this edit|create|run|allow)|allow (?:this )?(?:command|execution|edit)\??|approve this|\(y\/n\)|\[y\/n\]/i;
+export const ASKING =
+  /do\s*you\s*want\s*to\s*(?:proceed|make\s*this\s*edit|create|run|allow)|allow\s*(?:this\s*)?(?:command|execution|edit)\??|approve\s*this|\(y\/n\)|\[y\/n\]|press\s*enter\s*to\s*confirm|yes,\s*proceed\s*\(y\)/i;
 
 /** Claude Code, Codex and Gemini CLI each ask, on a folder they haven't seen, whether to trust it. */
 export const TRUST_PROMPT = /trust (?:this folder|the (?:contents|files) (?:of|in) this (?:directory|folder))|do you trust/i;
@@ -408,3 +498,22 @@ export function plain(s: string): string {
     .replace(/\x1b\[[0-9;?>]*[ -\/]*[@-~]/g, "")
     .replace(/\x1b\][^\x07]*\x07/g, "");
 }
+
+/** A startup menu offering to update the CLI (Codex: "Update available … 1. Update now 2. Skip"). */
+export const UPDATE_MENU = /update\s*available[\s\S]*\bskip\b/i;
+
+/**
+ * The agent's gone and its shell is waiting: the screen's last line is a shell
+ * prompt in the agent's folder — cmd ("C:\\…\\desk-2>"), PowerShell
+ * ("PS C:\\…>"), or a POSIX shell ("…/desk-2 $", "desk-2 %").
+ */
+export function looksLikeShellPrompt(screen: string[], cwd: string): boolean {
+  const last = [...screen].reverse().find((l) => l.trim())?.trimEnd() ?? "";
+  if (!last || !cwd) return false;
+  const base = cwd.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? "";
+  if (/^(?:PS )?[A-Za-z]:\\.*>$/.test(last)) return true;
+  // A long cmd prompt wraps: its last line ends "\desk-2>".
+  if (base && last.toLowerCase().endsWith(`\\${base.toLowerCase()}>`)) return true;
+  return /[$%#]$/.test(last) && !!base && last.includes(base);
+}
+

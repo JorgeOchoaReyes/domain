@@ -72,6 +72,20 @@ const PRESETS: Preset[] = [
 ];
 
 let seen: McpSeen[] = [];
+const changeListeners = new Set<() => void>();
+
+/** Be told when what's known about MCP servers changes. */
+export function onMcpChange(fn: () => void): () => void {
+  changeListeners.add(fn);
+  return () => changeListeners.delete(fn);
+}
+
+/** The MCP tools a new hire of this agent starts with: its CLI's own, plus the office's for everyone. */
+export function mcpToolsFor(agent: string, office: McpServer[]): string[] {
+  const own = seen.filter((s) => s.agent === agent).map((s) => s.name);
+  const ours = office.filter((s) => s.enabled && s.everyone).map((s) => s.name);
+  return [...new Set([...own, ...ours])];
+}
 const health = new Map<string, McpHealth>();
 let rerender: (() => void) | null = null;
 
@@ -82,6 +96,7 @@ export function ingestMcp(msg: ServerMessage): void {
     for (const h of msg.health) health.set(h.key, h);
   } else if (msg.t !== "progress") return;
   rerender?.();
+  for (const l of changeListeners) l();
 }
 
 function badge(key: string): string {

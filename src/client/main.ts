@@ -1,3 +1,4 @@
+import { osDictationHint } from "./voice.js";
 import type { AgentKind, ClientMessage, Desk, Look, OfficeState, Presentation } from "../shared/protocol.js";
 import { AGENT_LABELS, DEFAULT_LOOK, coerceLook } from "../shared/protocol.js";
 import {
@@ -168,7 +169,7 @@ const hud = new Hud(hudRoot, {
 });
 const minimap = new Minimap(hudRoot, () => openTravel());
 const objective = new ObjectiveTracker(hudRoot, (o) => doObjective(o));
-/** Pip, the assistant: reminders, "what now?", and the guided tour. */
+/** Arnold, the assistant: reminders, "what now?", and the guided tour. */
 const assistant = new Assistant(hudRoot, {
   tips: () => pipTips(),
   tour: () => pipTour(),
@@ -186,10 +187,10 @@ const assistant = new Assistant(hudRoot, {
     } else sound.xp();
   },
 });
-/** When you last pressed a key or clicked (Pip only nudges after a quiet spell). */
+/** When you last pressed a key or clicked (Arnold only nudges after a quiet spell). */
 let lastActivity = performance.now();
 for (const ev of ["keydown", "pointerdown"]) window.addEventListener(ev, () => (lastActivity = performance.now()), { capture: true, passive: true });
-/** A first visit: Pip offers the tour before the first stand-up. */
+/** A first visit: Arnold offers the tour before the first stand-up. */
 let welcomeDue = false;
 applySettings(settings);
 
@@ -638,6 +639,7 @@ function teamCtx(): TeamContext {
     onSave: (c) => net.send({ t: "characterSave", character: c }),
     onDelete: (id) => net.send({ t: "characterDelete", id }),
     onEditPolicy: () => openPolicyNow(),
+    scanMcp: () => net.send({ t: "mcpScan" }),
   };
 }
 
@@ -798,7 +800,9 @@ function warnVoice(err: string): void {
   hud.toast(
     err === "not-allowed"
       ? "🎤 Microphone blocked — allow it to talk to workers"
-      : `🎤 Voice input isn't available in this window — open ${location.origin} in Chrome to talk, or type`,
+      : /Electron/.test(navigator.userAgent)
+        ? `🎤 To talk, click in a text box and ${osDictationHint()} — your computer types what you say`
+        : `🎤 Voice input isn't available in this window — open ${location.origin} in Chrome to talk, or type`,
     "warn",
   );
 }
@@ -929,9 +933,9 @@ function endOfficeHours(): void {
   document.body.classList.remove("projecting");
 }
 
-// --- Pip, the assistant ---------------------------------------------------------------------
+// --- Arnold, the assistant ---------------------------------------------------------------------
 
-/** What Pip should mention right now, most urgent first. */
+/** What Arnold should mention right now, most urgent first. */
 // --- reminders: what needs you, and what's coming up ------------------------------------------
 
 const reminders = new Reminders({
@@ -973,6 +977,7 @@ const phone = new Phone({
   officeHours: () => startOfficeHours(),
   roundup: () => openRoundup(),
   standup: () => openStandupNow(),
+  focus: () => openFocus(),
   openHistory: () => openHistory((m) => net.send(m)),
   openLaptop: () => openLaptop(),
   travel: (p) => travelTo({ label: p.label, icon: p.icon, x: p.x, z: p.z, facing: p.facing }),
@@ -981,6 +986,7 @@ const phone = new Phone({
     if (open && player.mouseCaptured) player.unlock();
   },
 });
+hudRoot.querySelector('.dock [data-act="laptop"]')?.before(phone.dockButton);
 
 function pipTips(): Tip[] {
   const tips: Tip[] = [];
@@ -1062,7 +1068,7 @@ function pipTips(): Tip[] {
   if (!progress.goals.some((g) => !g.doneAt && !g.shippedAt) && !s) {
     tips.push({ id: "no-goal", urgency: 1, text: "There's no goal yet. Every session starts with a stand-up — want to hold one?", action: { label: "☀️ Hold the stand-up", run: () => openStandupNow() } });
   }
-  // The goal card already shows the next step: Pip only brings it up if you've been idle a while.
+  // The goal card already shows the next step: Arnold only brings it up if you've been idle a while.
   if (performance.now() - lastActivity > 90_000) {
     const o = nextObjective(progress, office.desks, office.presentations);
     tips.push({ id: `next-${o.text}`, urgency: 0, text: `Still here? Next up: ${o.text}`, action: { label: o.key ? `Do it (${o.key})` : "Do it", run: () => doObjective(o) } });
@@ -1084,7 +1090,7 @@ function hireAtFreeDesk(): void {
   travelTo({ label: "", icon: "", x: at.x, z: at.z, facing: def.rotY + Math.PI, then: () => hire(desk) });
 }
 
-/** What Pip can walk you through, as checklists that tick themselves off. */
+/** What Arnold can walk you through, as checklists that tick themselves off. */
 function pipGuides(): Guide[] {
   const goalReady = () => !!focusGoal();
   const staffed = () => office.desks.some((d) => d.worker);
@@ -1905,6 +1911,23 @@ void pickCharacter(myName, myLook).then(({ name, look }) => {
   joined = true;
   standupDue = true;
   welcomeDue = !assistant.toured;
+  // Once, after an update: where the new things are.
+  try {
+    if (assistant.toured && localStorage.getItem("domain.seenNews") !== "phone-1") {
+      localStorage.setItem("domain.seenNews", "phone-1");
+      setTimeout(
+        () =>
+          hud.toastHtml(
+            `🤖 <b>Arnold here — what's new:</b> <b>📱 Phone</b> (top bar or <span class="key">P</span>) has stand-up, round up, reviews and alerts now · <b>💬 Chat</b> (<span class="key">C</span>) or the laptop's <b>Team</b> app: message anyone, give a task, or ask for an update · <b>🛗 Floor 2</b> is up the elevator`,
+            "",
+            16000,
+          ),
+        4000,
+      );
+    }
+  } catch {
+    /* no storage: no news */
+  }
   net.send({ t: "join", name, look });
 });
 

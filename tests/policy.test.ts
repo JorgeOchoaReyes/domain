@@ -11,8 +11,8 @@ test("workers launch on their model and leash, with only safe model names", () =
   assert.equal(launchCommand("codex", "", "auto"), "codex --sandbox workspace-write --ask-for-approval on-request");
   assert.equal(launchCommand("gemini", "gemini-pro", "auto"), "gemini --model gemini-pro --approval-mode auto_edit");
   // Local models: Codex runs them through its open-source provider; OpenCode takes provider/model as is.
-  assert.equal(launchCommand("codex", "ollama/qwen3.6:latest"), "codex --oss --local-provider ollama --model qwen3.6:latest");
-  assert.equal(launchCommand("codex", "lmstudio/llama-3"), "codex --oss --local-provider lmstudio --model llama-3");
+  assert.equal(launchCommand("codex", "ollama/qwen3.6:latest"), "codex --oss --local-provider ollama --model qwen3.6:latest --sandbox read-only --ask-for-approval on-request");
+  assert.equal(launchCommand("codex", "lmstudio/llama-3"), "codex --oss --local-provider lmstudio --model llama-3 --sandbox read-only --ask-for-approval on-request");
   assert.equal(launchCommand("opencode", "ollama/llama3"), "opencode --model ollama/llama3");
   // Anything that could break out of the command line is dropped, not typed.
   assert.equal(launchCommand("claude", "opus; rm -rf /"), "claude");

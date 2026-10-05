@@ -1,7 +1,11 @@
+import { TEAM_THREAD, type ChatThread } from "../../shared/chat.js";
+import { UPDATE_ASK } from "./chat.js";
+import { micButton, wireMic } from "../voice.js";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import type { OfficeState, ServerMessage } from "../../shared/protocol.js";
+import { AGENT_LABELS } from "../../shared/protocol.js";
 import { EMPTY_PROGRESS, goalProgress, goalStage, stageLabel, STAGE_ICON, type Goal, type ProgressState } from "../../shared/progress.js";
 import { AGENT_COLOR, STATUS_BULB } from "../scene/characters.js";
 import { esc, openModal, type Modal } from "./modal.js";
@@ -24,9 +28,10 @@ import "../styles/loop.css";
  * the office and progress.
  */
 
-export type LaptopApp = "browser" | "workers" | "loop" | "decks" | "deploy";
+export type LaptopApp = "team" | "browser" | "workers" | "loop" | "decks" | "deploy";
 
 const APPS: { id: LaptopApp; icon: string; label: string }[] = [
+  { id: "team", icon: "💬", label: "Team" },
   { id: "browser", icon: "🌐", label: "Browser" },
   { id: "workers", icon: "🖥", label: "Workers" },
   { id: "loop", icon: "🎯", label: "Loop" },
@@ -40,7 +45,10 @@ export type LaptopActions = Omit<LoopHandlers, "openLaptop">;
 
 export class MyLaptop {
   private modal: Modal | null = null;
-  private app: LaptopApp = "browser";
+  private app: LaptopApp = "team";
+  /** The Team app: chat threads, and who's selected ("team" is everyone). */
+  private threads: ChatThread[] = [];
+  private teamTo = TEAM_THREAD;
   private office: OfficeState = { desks: [], peers: [], presentations: [] };
   private progress: ProgressState = EMPTY_PROGRESS;
   private root!: HTMLElement;
@@ -104,6 +112,10 @@ export class MyLaptop {
       case "progress":
         this.progress = msg.progress;
         this.soft();
+        break;
+      case "chat":
+        this.threads = msg.threads;
+        if (this.isOpen && this.app === "team") this.renderTeamLog();
         break;
       case "output":
         if (this.term && this.watching === msg.deskId && !this.waitingScrollback) this.term.write(msg.data);
@@ -174,7 +186,8 @@ export class MyLaptop {
     this.root.querySelectorAll<HTMLElement>(".lt-tabs [data-app]").forEach((b) => b.classList.toggle("on", b.dataset.app === app));
     this.content.innerHTML = "";
     this.content.dataset.app = app;
-    if (app === "browser") this.showBrowser();
+    if (app === "team") this.showTeam();
+    else if (app === "browser") this.showBrowser();
     else if (app === "workers") this.showWorkers();
     else if (app === "deploy") this.showDeploy();
     else this.soft();
@@ -186,7 +199,94 @@ export class MyLaptop {
     if (this.app === "loop") this.renderLoopApp();
     else if (this.app === "decks") this.renderDecks();
     else if (this.app === "workers") this.renderWorkerList();
+    else if (this.app === "team") this.renderTeamPeople();
     else if (this.app === "deploy") this.renderDeployHead();
+  }
+
+  // --- team: message anyone, hand out work, ask for updates -------------------------
+
+  private showTeam(): void {
+    this.actions.send({ t: "chatGet" });
+    this.content.innerHTML = `
+      <div class="tm">
+        <div class="tm-people"></div>
+        <div class="tm-log"></div>
+        <div class="tm-compose">
+          <div class="tm-box"><textarea rows="2" placeholder="Write to them — or press 🎤 and say it…"></textarea>${micButton("tm-mic")}</div>
+          <div class="tm-acts">
+            <button class="btn small tm-say">💬 Send message</button>
+            <button class="btn small primary tm-task">🎯 Give as a task</button>
+            <button class="btn small tm-update">📍 Ask for an update</button>
+          </div>
+        </div>
+      </div>`;
+    const box = this.content.querySelector<HTMLTextAreaElement>(".tm-compose textarea")!;
+    wireMic(this.content.querySelector<HTMLButtonElement>(".tm-mic"), box);
+    box.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape") e.stopPropagation();
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        say();
+      }
+    });
+    const text = () => box.value.trim();
+    const say = () => {
+      if (!text()) return;
+      this.actions.send({ t: "chatSend", to: this.teamTo, text: text() });
+      box.value = "";
+    };
+    this.content.querySelector(".tm-say")!.addEventListener("click", say);
+    this.content.querySelector(".tm-task")!.addEventListener("click", () => {
+      if (!text()) return box.focus();
+      const to = this.teamTo === TEAM_THREAD ? this.office.desks.filter((d) => d.worker && d.worker.status === "idle").map((d) => d.id) : [this.teamTo];
+      if (!to.length) {
+        box.placeholder = "Nobody's free right now — pick someone above to give it to";
+        return;
+      }
+      // To everyone: the first one who's free takes it.
+      this.actions.send({ t: "quickTask", deskId: to[0], text: text() });
+      box.value = "";
+    });
+    this.content.querySelector(".tm-update")!.addEventListener("click", () => this.actions.send({ t: "chatSend", to: this.teamTo, text: UPDATE_ASK }));
+    this.renderTeamPeople();
+    this.renderTeamLog();
+  }
+
+  private renderTeamPeople(): void {
+    const el = this.content.querySelector<HTMLElement>(".tm-people");
+    if (!el) return;
+    const staffed = this.office.desks.filter((d) => d.worker);
+    const key = JSON.stringify([this.teamTo, staffed.map((d) => [d.id, d.worker!.status, d.worker!.activity])]);
+    if (el.dataset.key === key) return;
+    el.dataset.key = key;
+    el.innerHTML =
+      `<button class="tm-p ${this.teamTo === TEAM_THREAD ? "on" : ""}" data-to="${TEAM_THREAD}"><b># Everyone</b><small>${staffed.length} worker${staffed.length === 1 ? "" : "s"}</small></button>` +
+      staffed
+        .map((d) => {
+          const w = d.worker!;
+          const name = w.identity?.name ?? AGENT_LABELS[w.agent];
+          return `<button class="tm-p ${this.teamTo === d.id ? "on" : ""}" data-to="${d.id}"><b><i style="background:${AGENT_COLOR[w.agent]}"></i>${esc(name)}</b><small>${esc(w.status === "waiting" ? "needs you" : w.status)} · ${esc(w.activity.slice(0, 38))}</small></button>`;
+        })
+        .join("") +
+      (staffed.length ? "" : `<p class="tm-none">Nobody's hired yet — walk up to a desk with a + and press E.</p>`);
+    el.querySelectorAll<HTMLButtonElement>(".tm-p").forEach((b) =>
+      b.addEventListener("click", () => {
+        this.teamTo = b.dataset.to!;
+        this.renderTeamPeople();
+        this.renderTeamLog();
+      }),
+    );
+  }
+
+  private renderTeamLog(): void {
+    const el = this.content.querySelector<HTMLElement>(".tm-log");
+    if (!el) return;
+    const t = this.threads.find((x) => x.id === this.teamTo);
+    const msgs = (t?.messages ?? []).slice(-30);
+    el.innerHTML = msgs.length
+      ? msgs.map((m) => `<div class="tm-m ${m.from}"><b>${esc(m.who)}</b> <span>${new Date(m.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span><p>${esc(m.text)}</p></div>`).join("")
+      : `<p class="tm-none">${this.teamTo === TEAM_THREAD ? "Say something to everyone, or ask for an update." : "No messages yet — message it, give it a task, or ask how it's going."}</p>`;
+    el.scrollTop = el.scrollHeight;
   }
 
   // --- browser ----------------------------------------------------------------------

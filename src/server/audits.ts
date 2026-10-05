@@ -11,6 +11,11 @@ import type { Report } from "../shared/protocol.js";
  * to the builder; it fixes them and presents again; and round it goes —
  * until the auditor approves, or the rounds run out, or an audit takes too
  * long. Either way you then get one report, with what the audit found.
+ *
+ * "Along the way" audits also check the builder's checkpoints as it goes
+ * (reports titled "Checkpoint: …"): an approved checkpoint sends it on to the
+ * next step, issues go back to it — the same rounds limit applies to every
+ * send-back, so it can't loop forever.
  */
 
 export interface AuditOffice {
@@ -50,6 +55,22 @@ interface Pair {
   since: number;
   /** What each round found. */
   findings: string[];
+  /** Also audit checkpoints as it goes, not just the finished work. */
+  along: boolean;
+  /** Is the audit underway on a checkpoint (vs the finished work)? */
+  checkpoint: boolean;
+  /** Checkpoints audited so far. */
+  checkpoints: number;
+  /** Times the work went back to the builder: at the limit, it comes to you as it is. */
+  sendBacks: number;
+}
+
+/** At most this many checkpoints are audited; later ones go straight through. */
+export const MAX_CHECKPOINTS = 8;
+
+/** A builder's report that's a checkpoint (along-the-way audits), not the finished work. */
+export function isCheckpoint(r: Report): boolean {
+  return /^\s*checkpoint\b/i.test(r.title);
 }
 
 const DEFAULT_MAX_AUDIT_MS = 25 * 60_000;
@@ -64,9 +85,22 @@ export class Audits {
   constructor(private deps: AuditDeps) {}
 
   /** A task handed to a builder with an auditor. */
-  start(builder: string, auditor: string, task: string, rounds: number): boolean {
+  start(builder: string, auditor: string, task: string, rounds: number, along = false): boolean {
     if (builder === auditor || !this.deps.office.isStaffed(auditor)) return false;
-    this.pairs.set(builder, { builder, auditor, task, max: Math.max(1, rounds), round: 0, phase: "building", since: Date.now(), findings: [] });
+    this.pairs.set(builder, {
+      builder,
+      auditor,
+      task,
+      max: Math.max(1, rounds),
+      round: 0,
+      phase: "building",
+      since: Date.now(),
+      findings: [],
+      along,
+      checkpoint: false,
+      checkpoints: 0,
+      sendBacks: 0,
+    });
     return true;
   }
 
@@ -85,22 +119,37 @@ export class Audits {
    * The builder's finished work (it passed the check): true if its auditor
    * takes it first (then it's held out of the line); false to let it through.
    */
+  /** What the builder's desk says while its work is with the auditor. */
+  private holdLabel(p: Pair): string {
+    const who = this.deps.nameOf(p.auditor);
+    return p.checkpoint ? `🔍 Checkpoint ${p.checkpoints} with ${who}` : `🔍 Being audited by ${who} (round ${p.round} of ${p.max})`;
+  }
+
   builderReady(builder: string, report: Report): boolean {
     const p = this.pairs.get(builder);
     if (!p || report.status !== "ready") return false;
     // Presented again mid-audit: it stays with the auditor (the verdict covers it).
     if (p.phase === "auditing") {
-      this.deps.office.hold(builder, `🔍 Being audited by ${this.deps.nameOf(p.auditor)} (round ${p.round} of ${p.max})`);
+      this.deps.office.hold(builder, this.holdLabel(p));
       return true;
     }
     if (!this.deps.office.isStaffed(p.auditor)) {
       this.pairs.delete(builder);
       return false;
     }
+    p.checkpoint = p.along && isCheckpoint(report);
+    if (p.checkpoint) {
+      // Past the checkpoint limit: no audit, straight on to the next step.
+      if (p.checkpoints >= MAX_CHECKPOINTS) {
+        this.deps.office.dismiss(builder, "[Audit] Checkpoint noted — carry on with the next step.");
+        return true;
+      }
+      p.checkpoints++;
+    }
     p.round++;
     p.phase = "auditing";
     p.since = Date.now();
-    this.deps.office.hold(builder, `🔍 Being audited by ${this.deps.nameOf(p.auditor)} (round ${p.round} of ${p.max})`);
+    this.deps.office.hold(builder, this.holdLabel(p));
     void this.briefAuditor(p, report);
     return true;
   }
@@ -112,20 +161,31 @@ export class Audits {
     const approved = report.status === "ready";
     const issues = [report.summary, ...report.slides].filter(Boolean).join(" · ");
     this.deps.office.dismiss(auditor, approved ? "[Audit] Thanks — your approval is on its way to your manager. Carry on." : "[Audit] Thanks — the issues are with the builder now. You'll be asked again when it's fixed.");
+    if (approved && p.checkpoint) {
+      // A checkpoint passed: on to the next step (the finished work gets audited too).
+      p.findings.push(`Checkpoint ${p.checkpoints}: approved — ${report.summary}`);
+      p.phase = "building";
+      p.since = Date.now();
+      this.deps.note(`${this.deps.nameOf(p.auditor)} approved checkpoint ${p.checkpoints} of “${p.task}”`, p.builder, "audit");
+      this.deps.office.dismiss(p.builder, `[Audit] ${this.deps.nameOf(p.auditor)} approved your checkpoint: ${report.summary.replace(/\s+/g, " ").slice(0, 300)} — carry on with the next step.`);
+      this.deps.simulate?.recall(p.builder);
+      return true;
+    }
     if (approved) {
       p.findings.push(`Round ${p.round}: approved — ${report.summary}`);
       this.finish(p, `🔍 Audited by ${this.deps.nameOf(p.auditor)}: approved after ${p.round} round${p.round === 1 ? "" : "s"}`);
       return true;
     }
-    p.findings.push(`Round ${p.round}: ${issues}`);
-    if (p.round >= p.max) {
+    p.findings.push(`${p.checkpoint ? `Checkpoint ${p.checkpoints}` : `Round ${p.round}`}: ${issues}`);
+    p.sendBacks++;
+    if (p.sendBacks >= p.max) {
       this.finish(p, `🔍 Audit stopped after ${p.max} round${p.max === 1 ? "" : "s"} — still open: ${issues}`);
       return true;
     }
     // Back to the builder with what the auditor found.
     p.phase = "building";
     p.since = Date.now();
-    this.deps.note(`${this.deps.nameOf(p.auditor)} sent “${p.task}” back to ${this.deps.nameOf(p.builder)} (round ${p.round} of ${p.max})`, p.builder, "audit");
+    this.deps.note(`${this.deps.nameOf(p.auditor)} sent “${p.task}” back to ${this.deps.nameOf(p.builder)} (${p.sendBacks} of ${p.max})`, p.builder, "audit");
     this.deps.office.review(
       p.builder,
       false,
@@ -139,7 +199,9 @@ export class Audits {
   tick(now = Date.now()): void {
     const limit = this.deps.maxAuditMs ?? DEFAULT_MAX_AUDIT_MS;
     for (const p of [...this.pairs.values()]) {
-      if (p.phase === "auditing" && now - p.since > limit) {
+      if (p.phase === "auditing" && !this.deps.office.isStaffed(p.auditor)) {
+        this.finish(p, `🔍 ${this.deps.nameOf(p.auditor)} stopped before finishing the audit (round ${p.round}) — review it yourself`);
+      } else if (p.phase === "auditing" && now - p.since > limit) {
         this.deps.office.instruct(p.auditor, "[Audit] Time's up on this audit — your manager will review it directly. Stop the audit and carry on.");
         this.finish(p, `🔍 Audit by ${this.deps.nameOf(p.auditor)} timed out in round ${p.round} — review it yourself`);
       }
@@ -178,7 +240,7 @@ export class Audits {
     }
     this.deps.office.instruct(
       p.auditor,
-      `[Audit] ${this.deps.nameOf(p.builder)} says “${p.task}” is done (round ${p.round} of ${p.max}). Before your manager sees it, audit it: read .domain/audit/${name} (their summary and the full diff). Check it does what the task asks, that nothing is broken or missing, and that it's clean. Don't change their files. Then write a report to $DOMAIN_REPORT_FILE: status "ready" if it's good to go (summary: why), or status "blocked" if not — one concrete problem per slide. Only real problems: if it's good, approve it.`,
+      `[Audit] ${p.checkpoint ? `${this.deps.nameOf(p.builder)} reached checkpoint ${p.checkpoints} on “${p.task}” — not finished yet: check the direction and what's there so far.` : `${this.deps.nameOf(p.builder)} says “${p.task}” is done (round ${p.round} of ${p.max}).`} Before your manager sees it, audit it: read .domain/audit/${name} (their summary and the full diff). Check it does what the task asks, that nothing is broken or missing, and that it's clean. Don't change their files. Then write a report to $DOMAIN_REPORT_FILE: status "ready" if it's good to go (summary: why), or status "blocked" if not — one concrete problem per slide. Only real problems: if it's good, approve it.`,
     );
     this.deps.simulate?.verdict(p.auditor, report);
   }

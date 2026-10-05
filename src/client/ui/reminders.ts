@@ -7,7 +7,7 @@ import { dueLabel, type ProgressState } from "../../shared/progress.js";
  * worker waiting on an answer, work waiting to be reviewed), what's coming up
  * (a goal's deadline, a task's time budget, the session's end) and what's
  * going to waste (a free worker while there's work). Urgent ones chime and
- * pop up, and come back until they're dealt with; the rest wait in Pip and on
+ * pop up, and come back until they're dealt with; the rest wait in Arnold and on
  * the phone.
  */
 

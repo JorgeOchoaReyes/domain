@@ -30,6 +30,10 @@ export interface IWorkerSession {
   send?(data: string): void;
   resize(cols: number, rows: number): void;
   dispose(): void;
+  /** What it's doing right now, in a word or three, read off its screen (when the backend can tell). */
+  doing?(): string;
+  /** Told when that changes. */
+  onDoing?(listener: () => void): () => void;
   /**
    * Some backends (the simulated worker) emit reports in-process. Real
    * terminal workers instead write report files that the server watches, so
@@ -97,6 +101,8 @@ const LOCAL_PROVIDERS = ["ollama", "lmstudio"] as const;
  * it goes on a command line typed into a real shell.
  *
  * - Claude Code: `--model <alias|name>`; "auto" = `--permission-mode acceptEdits`.
+ *   An Ollama model (`ollama/<m>`) runs as `--model <m>` with Claude Code
+ *   pointed at Ollama's Anthropic-compatible API (see localEnv).
  * - Codex: `--model <name>`, or a local model (`ollama/<m>`, `lmstudio/<m>`)
  *   via `--oss --local-provider <p> --model <m>`; "auto" =
  *   `--sandbox workspace-write --ask-for-approval on-request` (edits in the
@@ -129,6 +135,32 @@ export function localModelWarning(model: string, total = totalmem(), free = free
   return null;
 }
 
+/**
+ * Each CLI's own flags for a permission level (only flags in its --help):
+ *
+ * |          | Claude Code                         | Codex                                                     | Gemini CLI              |
+ * | ask      | (its prompts)                       | --sandbox read-only --ask-for-approval on-request         | (its prompts)           |
+ * | auto     | --permission-mode acceptEdits       | --sandbox workspace-write --ask-for-approval on-request   | --approval-mode auto_edit |
+ * | safe     | --permission-mode auto              | --approve-for-me                                          | --approval-mode auto_edit |
+ * | full     | --permission-mode bypassPermissions | --sandbox workspace-write --ask-for-approval never        | --approval-mode yolo    |
+ *
+ * Codex's "full" keeps its sandbox: it never asks, but it can't write outside
+ * the worker's own folder. OpenCode has no flags for this (its config decides).
+ */
+export function leashFlags(agent: AgentKind, leash: Leash): string[] {
+  if (agent === "claude") {
+    return leash === "auto" ? ["--permission-mode", "acceptEdits"] : leash === "safe" ? ["--permission-mode", "auto"] : leash === "full" ? ["--permission-mode", "bypassPermissions"] : [];
+  }
+  if (agent === "codex") {
+    if (leash === "ask") return ["--sandbox", "read-only", "--ask-for-approval", "on-request"];
+    if (leash === "auto") return ["--sandbox", "workspace-write", "--ask-for-approval", "on-request"];
+    if (leash === "safe") return ["--approve-for-me"];
+    return ["--sandbox", "workspace-write", "--ask-for-approval", "never"];
+  }
+  if (agent === "gemini") return leash === "ask" ? [] : leash === "full" ? ["--approval-mode", "yolo"] : ["--approval-mode", "auto_edit"];
+  return [];
+}
+
 export function launchCommand(agent: AgentKind, model = "", leash: Leash = "ask", extraArgs: string[] = [], resume = false): string {
   const parts = [AGENT_COMMAND[agent]];
   // Back into its last conversation in this folder.
@@ -140,16 +172,13 @@ export function launchCommand(agent: AgentKind, model = "", leash: Leash = "ask"
   if (model && isModelName(model)) {
     const [provider, ...rest] = model.split("/");
     const local = agent === "codex" && rest.length > 0 && (LOCAL_PROVIDERS as readonly string[]).includes(provider);
-    if (local) {
+    if (agent === "claude" && provider === "ollama" && rest.length) parts.push("--model", rest.join("/"));
+    else if (local) {
       parts.push("--oss", "--local-provider", provider, "--model", rest.join("/"));
       if (LOCAL_NO_THINKING.has(model)) parts.push("-c", "model_reasoning_effort=none");
     } else parts.push("--model", model);
   }
-  if (leash === "auto") {
-    if (agent === "claude") parts.push("--permission-mode", "acceptEdits");
-    else if (agent === "codex") parts.push("--sandbox", "workspace-write", "--ask-for-approval", "on-request");
-    else if (agent === "gemini") parts.push("--approval-mode", "auto_edit");
-  }
+  parts.push(...leashFlags(agent, leash));
   parts.push(...extraArgs);
   return parts.join(" ");
 }
@@ -159,6 +188,17 @@ export function launchCommand(agent: AgentKind, model = "", leash: Leash = "ask"
  * to the simulated worker when asked, or when no PTY backend is available
  * (e.g. the native module failed to load on this platform).
  */
+/**
+ * Environment for running an agent on a local model. Claude Code talks to
+ * Ollama's Anthropic-compatible API: just for this worker, it's pointed at
+ * Ollama (your own Claude login is left alone). Codex and OpenCode need none.
+ */
+export function localEnv(agent: AgentKind, model: string, env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  if (agent !== "claude" || !/^ollama\/./.test(model)) return {};
+  const host = env.OLLAMA_HOST ? (/^https?:\/\//.test(env.OLLAMA_HOST) ? env.OLLAMA_HOST : `http://${env.OLLAMA_HOST}`) : "http://127.0.0.1:11434";
+  return { ANTHROPIC_BASE_URL: host.replace(/\/+$/, ""), ANTHROPIC_AUTH_TOKEN: "ollama", ANTHROPIC_API_KEY: "" };
+}
+
 export function createWorker(agent: AgentKind, opts: CreateWorkerOptions): IWorkerSession {
   if (opts.simulate || !ptyAvailable) {
     const note = ptyAvailable ? undefined : "no local terminal backend — running simulated";
@@ -171,7 +211,7 @@ export function createWorker(agent: AgentKind, opts: CreateWorkerOptions): IWork
     // Launch the agent CLI if it is on PATH; otherwise hand over a plain shell
     // with a note, which is still a real local terminal.
     launch: found ? launchCommand(agent, opts.model ?? "", opts.leash ?? "ask", opts.extraArgs ?? [], opts.resume ?? false) : null,
-    env: opts.env,
+    env: { ...localEnv(agent, opts.model ?? ""), ...opts.env },
     missingLabel: found ? null : AGENT_LABELS[agent],
     deskId: opts.deskId,
     reportsDir: opts.reportsDir,
@@ -203,4 +243,13 @@ export function findOnPath(command: string): string | null {
     }
   }
   return null;
+}
+
+/**
+ * How long to wait after typing a line before pressing Enter. Codex takes fast
+ * typing for a paste, and an Enter inside the paste becomes a new line in its
+ * box instead of sending it.
+ */
+export function enterDelay(agent: AgentKind): number {
+  return agent === "codex" ? 800 : 150;
 }

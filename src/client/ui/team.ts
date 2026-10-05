@@ -1,9 +1,10 @@
+import { mcpToolsFor, onMcpChange } from "./mcp.js";
 import * as THREE from "three";
 import { OutlineEffect } from "three/examples/jsm/effects/OutlineEffect.js";
 import type { AgentKind, Desk, Worker } from "../../shared/protocol.js";
 import { AGENT_KINDS, AGENT_LABELS } from "../../shared/protocol.js";
 import type { ProgressState } from "../../shared/progress.js";
-import { LEASH_LABEL, modelLabel, type Leash } from "../../shared/policy.js";
+import { LEASH_ICON, LEASH_LABEL, LEASH_RULES, modelLabel, type Leash } from "../../shared/policy.js";
 import {
   ACCESSORIES,
   BOT_COLORS,
@@ -41,7 +42,7 @@ export function workerName(w: Pick<Worker, "agent" | "identity">): string {
 
 const NAMES = [
   "Ada", "Linus", "Grace", "Pixel", "Bolt", "Nova", "Ziggy", "Mochi", "Rex", "Juno", "Sprocket", "Byte",
-  "Echo", "Kiwi", "Atlas", "Zola", "Turing", "Hopper", "Lovelace", "Fizz", "Biscuit", "Comet", "Pip", "Orbit",
+  "Echo", "Kiwi", "Atlas", "Zola", "Turing", "Hopper", "Lovelace", "Fizz", "Biscuit", "Comet", "Pixel", "Orbit",
 ];
 function randomName(taken: Set<string>): string {
   const free = NAMES.filter((n) => !taken.has(n.toLowerCase()));
@@ -130,6 +131,8 @@ function avatarHtml(look: CharacterLook | null, agent: AgentKind, size = 64): st
 // --- the windows -----------------------------------------------------------------------
 
 export interface TeamContext {
+  /** Ask for a fresh look at the agents' MCP settings (to show each one's tools). */
+  scanMcp?(): void;
   progress: ProgressState;
   desks: Desk[];
   /** Save a new or changed character. */
@@ -165,7 +168,7 @@ function cardHtml(c: Character, desks: Desk[], hiring: boolean, policy: Progress
     ${avatarHtml(c.look, c.agent)}
     <div class="tm-main">
       <div class="tm-name">${esc(c.name)}</div>
-      <div class="tm-meta"><span class="dot" style="background:${AGENT_COLOR[c.agent]}"></span>${esc(AGENT_LABELS[c.agent])} · ${esc(modelLabel(model))} · ${c.leash === "auto" ? "🏃 goes ahead" : "🙋 asks first"}</div>
+      <div class="tm-meta"><span class="dot" style="background:${AGENT_COLOR[c.agent]}"></span>${esc(AGENT_LABELS[c.agent])} · ${esc(modelLabel(model))} · ${LEASH_ICON[c.leash]} ${esc(LEASH_LABEL[c.leash].toLowerCase())}</div>
       ${c.persona ? `<div class="tm-persona">“${esc(c.persona.length > 90 ? c.persona.slice(0, 88) + "…" : c.persona)}”</div>` : ""}
       <div class="tm-stats">${c.hires ? `Hired ${c.hires}×` : "Never hired yet"}${at ? ` · <b>at ${esc(at.label)}</b>` : ""}</div>
     </div>
@@ -211,12 +214,13 @@ function openRoster(ctx: TeamContext & Partial<Pick<HireContext, "onHire">>, des
       hiring
         ? `<section class="tm-quick">
       <h4>⚡ Quick hire <span class="tm-sub">a plain worker, no character</span></h4>
-      <div class="seg tm-leash">${(Object.keys(LEASH_LABEL) as Leash[]).map((l) => `<button data-l="${l}">${l === "ask" ? "🙋" : "🏃"} ${esc(LEASH_LABEL[l])}</button>`).join("")}</div>
+      <div class="seg tm-leash">${(Object.keys(LEASH_LABEL) as Leash[]).map((l) => `<button data-l="${l}" title="${esc(LEASH_RULES[l])}">${LEASH_ICON[l]} ${esc(LEASH_LABEL[l])}</button>`).join("")}</div>
       <ul class="tm-agents">${AGENT_KINDS.map((k) => {
         const models = [...new Set(["", ...policy.models[k], policy.defaultModel[k]])];
         return `<li data-agent="${k}"><span class="dot" style="background:${AGENT_COLOR[k]}"></span><b>${AGENT_LABELS[k]}</b>
           <select class="tm-model" title="Model">${models.map((m) => `<option value="${esc(m)}" ${m === policy.defaultModel[k] ? "selected" : ""}>${esc(modelLabel(m))}</option>`).join("")}</select>
           <button class="btn small tm-quick-hire">Hire</button>
+          <span class="tm-tools" data-agent="${k}"></span>
           <button class="btn small primary tm-install" title="Install it with npm">⬇ Install</button></li>`;
       }).join("")}</ul>
     </section>`
@@ -242,9 +246,23 @@ function openRoster(ctx: TeamContext & Partial<Pick<HireContext, "onHire">>, des
       inst.title = s?.npm === false ? "Install Node.js from nodejs.org first (it brings npm)" : "Install it with npm — the output's in Logs";
     });
   };
-  const stopWatching = onAgentsChange(showInstalled);
+  // Each agent's MCP tools (from its own config and the office's), so you know what it can use.
+  const showTools = () =>
+    body.querySelectorAll<HTMLElement>(".tm-tools").forEach((el) => {
+      const tools = mcpToolsFor(el.dataset.agent!, ctx.progress.mcp);
+      el.textContent = tools.length ? `🧰 ${tools.join(", ")}` : "🧰 no MCP tools";
+      el.title = tools.length ? "MCP servers it starts with — its own config plus the office's (Office → MCP tools)" : "Add some in Office → MCP tools";
+    });
+  const stopTools = onMcpChange(showTools);
+  ctx.scanMcp?.();
+  const stopAgents = onAgentsChange(showInstalled);
+  const stopWatching = () => {
+    stopAgents();
+    stopTools();
+  };
   const modal = openModal({ title: hiring ? `Hire a worker · ${desk!.label}` : "Your team", icon: "👥", className: "team-modal", body, footer, onClose: stopWatching });
   showInstalled();
+  showTools();
 
   footer.querySelector(".tm-policy")!.addEventListener("click", () => {
     modal.close();
@@ -346,7 +364,7 @@ function openEditor(
 
       <div class="tm-row">
         <div><label>Model</label><select class="tm-model-in"></select></div>
-        <div><label>Leash</label><div class="seg tm-leash-in">${(Object.keys(LEASH_LABEL) as Leash[]).map((l) => `<button data-l="${l}">${l === "ask" ? "🙋 Asks first" : "🏃 Goes ahead"}</button>`).join("")}</div></div>
+        <div><label>Leash</label><div class="seg tm-leash-in">${(Object.keys(LEASH_LABEL) as Leash[]).map((l) => `<button data-l="${l}" title="${esc(LEASH_RULES[l])}">${LEASH_ICON[l]} ${esc(LEASH_LABEL[l])}</button>`).join("")}</div></div>
       </div>
 
       <label>How it works <span class="tm-sub">— added to every task it gets</span></label>

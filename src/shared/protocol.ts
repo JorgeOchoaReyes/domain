@@ -105,6 +105,38 @@ export interface Worker {
   branch: string | null;
   /** Who it is, when it's one of your team's characters. */
   identity: WorkerIdentity | null;
+  /** The MCP servers (tools) it started with: its CLI's own, plus the office's. */
+  mcp?: string[];
+  /** What it's doing right now, in a word or three ("Editing math.js", "Running tests"). */
+  doing?: string;
+}
+
+/** "Editing math.js" → "✏️ Editing math.js": a worker's step with an icon, for its bubble. */
+export function doingLabel(doing: string): string {
+  const icon = /^Reading/.test(doing)
+    ? "📖"
+    : /^Editing/.test(doing)
+      ? "✏️"
+      : /tests/.test(doing)
+        ? "🧪"
+        : /^Installing/.test(doing)
+          ? "📦"
+          : /^(Committing|Pushing|Checking git)/.test(doing)
+            ? "🌿"
+            : /^(Searching|Exploring|Looking)/.test(doing)
+              ? "🔍"
+              : /^Browsing/.test(doing)
+                ? "🌐"
+                : /^Using/.test(doing)
+                  ? "🧰"
+                  : /^Thinking/.test(doing)
+                    ? "💭"
+                    : /^Planning/.test(doing)
+                      ? "🗒"
+                      : /^Building/.test(doing)
+                        ? "🔨"
+                        : "⚙️";
+  return `${icon} ${doing}`;
 }
 
 /** A worker's place in the line waiting to present in your office. */
@@ -231,6 +263,8 @@ export type ClientMessage =
   | { t: "taskAdd"; goalId: string; title: string }
   /** Put the worker at a desk on a task (it's briefed in its terminal). */
   | { t: "taskAssign"; goalId: string; taskId: string; deskId: string; brief?: TaskBrief }
+  /** Hand a worker something to do, straight from the chat: tracked as a task (on the session's goal, or "Quick tasks"). */
+  | { t: "quickTask"; deskId: string; text: string; goalId?: string }
   /** Change the team's defaults for hiring and handing out tasks. */
   | { t: "policySet"; policy: TeamPolicy }
   /** Tick a task off (or back on) by hand. */

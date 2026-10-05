@@ -1,3 +1,4 @@
+import { doingLabel } from "../../shared/protocol.js";
 import type { Desk, Peer, Presentation, WorkerStatus } from "../../shared/protocol.js";
 import { SHIRT_COLORS } from "../../shared/protocol.js";
 import { AGENT_COLOR, STATUS_BULB } from "../scene/characters.js";
@@ -82,13 +83,13 @@ export class Hud {
         </div>
       </div>
       <div class="dock">
-        <button class="btn dock-btn" data-act="standup" title="Stand-up: set the goal and tone (U)">☀️ <span class="lbl">Stand-up</span></button>
+        <button class="btn dock-btn moved" data-act="standup" title="Stand-up: set the goal and tone (U)">☀️ <span class="lbl">Stand-up</span></button>
         <button class="btn dock-btn" data-act="goals" title="Goals (G)">🎯 <span class="lbl">Goals</span> <span class="svc-count goals-n hidden">0</span></button>
-        <button class="btn dock-btn sec" data-act="focus" title="Focus session (F)">⏱ <span class="lbl">Focus</span></button>
-        <button class="btn dock-btn sec" data-act="roundup" title="Call workers to your office (R)">📣 <span class="lbl">Round up</span></button>
-        <button class="btn dock-btn sec" data-act="hours" title="Hold office hours (O)">🎤 <span class="lbl">Office hours</span> <span class="svc-count hidden">0</span></button>
+        <button class="btn dock-btn sec moved" data-act="focus" title="Focus session (F)">⏱ <span class="lbl">Focus</span></button>
+        <button class="btn dock-btn sec moved" data-act="roundup" title="Call workers to your office (R)">📣 <span class="lbl">Round up</span></button>
+        <button class="btn dock-btn sec moved" data-act="hours" title="Hold office hours (O)">🎤 <span class="lbl">Office hours</span> <span class="svc-count hidden">0</span></button>
         <button class="btn dock-btn" data-act="laptop" title="Your laptop: browser, workers, loop, decks (L)">💻 <span class="lbl">Laptop</span></button>
-        <button class="btn dock-btn sec" data-act="travel" title="Fast travel (T)">🌀 <span class="lbl">Travel</span></button>
+        <button class="btn dock-btn sec moved" data-act="travel" title="Fast travel (T)">🌀 <span class="lbl">Travel</span></button>
         <button class="btn dock-btn dock-icon" data-act="settings" title="Settings: speed, mouse, view (Esc)" aria-label="Settings">⚙️</button>
         <button class="btn dock-btn dock-icon dock-help" data-act="help" title="Controls (H)" aria-label="Controls">?</button>
       </div>`;
@@ -199,10 +200,10 @@ export class Hud {
           .map((d) => {
             const w = d.worker!;
             const place = inLine.get(d.id);
-            const pillText = place ? `#${place} in line` : STATUS_LABEL[w.status];
+            const pillText = place ? `#${place} in line` : w.status === "working" && w.doing ? doingLabel(w.doing) : STATUS_LABEL[w.status];
             return `<li data-desk="${d.id}" class="${w.status === "waiting" ? "needs-you-row" : ""}" title="Open terminal">
               <span class="dot" style="background:${AGENT_COLOR[w.agent]}"></span>
-              <span class="name">${esc(workerName(w))} <span class="sub">${esc(d.label)} · ${esc(modelLabel(w.model))} · ${esc(w.activity)}</span></span>
+              <span class="name">${esc(workerName(w))} <span class="sub">${esc(d.label)} · ${esc(modelLabel(w.model))} · ${esc(w.activity)}${w.mcp?.length ? ` · 🧰 ${esc(w.mcp.join(", "))}` : ""}</span></span>
               <span class="pill" style="background:${STATUS_BULB[w.status]}">${esc(pillText)}</span>
             </li>`;
           })

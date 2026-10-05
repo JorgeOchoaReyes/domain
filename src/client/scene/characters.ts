@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import type { AgentKind, Look, WorkerStatus } from "../../shared/protocol.js";
 import { defaultLook, type CharacterLook } from "../../shared/team.js";
-import { AGENT_LABELS, HAIR_COLORS, SHIRT_COLORS, SKIN_TONES } from "../../shared/protocol.js";
+import { AGENT_LABELS, HAIR_COLORS, SHIRT_COLORS, SKIN_TONES, doingLabel } from "../../shared/protocol.js";
 import { cardSprite, disposeSprite, INK, mesh, textSprite, toon, toonUnique } from "./toon.js";
 
 /**
@@ -498,9 +498,11 @@ export class Bot {
    * doing. `onStage` says whether it's the one presenting (rather than waiting
    * in line).
    */
-  setCard(status: WorkerStatus, hiredBy: string, activity: string, onStage = false): void {
-    const chip = status === "presenting" && !onStage ? IN_LINE : CHIP[status];
-    const key = `${status}|${hiredBy}|${activity}|${onStage}|${this.name ?? ""}`;
+  setCard(status: WorkerStatus, hiredBy: string, activity: string, onStage = false, doing = ""): void {
+    const base = status === "presenting" && !onStage ? IN_LINE : CHIP[status];
+    // At work, the chip says what it's on right now, in a word or three.
+    const chip: typeof base = status === "working" && doing ? [doingLabel(doing), base[1], base[2]] : base;
+    const key = `${status}|${hiredBy}|${activity}|${onStage}|${this.name ?? ""}|${chip[0]}`;
     if (key === this.cardKey) return;
     this.cardKey = key;
     if (this.card) {

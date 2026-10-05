@@ -1,8 +1,9 @@
+import { doingLabel } from "../../shared/protocol.js";
 import type { ChatPeek, ChatThread, ChatWork } from "../../shared/chat.js";
 import { TEAM_THREAD } from "../../shared/chat.js";
 import type { ClientMessage, Desk } from "../../shared/protocol.js";
 import { AGENT_COLOR } from "../scene/characters.js";
-import { Dictation, sttSupported } from "../voice.js";
+import { micButton, wireMic, type Dictation } from "../voice.js";
 import { KIND_ICON, historyOf } from "./history.js";
 import { esc, openModal, type Modal } from "./modal.js";
 import "../styles/chat.css";
@@ -13,6 +14,10 @@ import "../styles/chat.css";
  * doing (read off its terminal). Messages reach a worker as team chat and it
  * answers in the thread; flip to ⌨️ Terminal to type straight into its CLI.
  */
+
+
+/** What "Ask for an update" says. */
+export const UPDATE_ASK = "Quick update, please: what are you on, how far along is it, and is anything blocking you? Two or three lines.";
 
 export interface ChatActions {
   send(msg: ClientMessage): void;
@@ -35,6 +40,8 @@ export class TeamChat {
   /** A worker's thread shows the conversation, or its record of work. */
   private view: "chat" | "work" = "chat";
   private raw = false;
+  /** What you write becomes a task for this worker (tracked, reviewed) instead of a message. */
+  private task = false;
   private draft = "";
   private timer = 0;
   private dictation: Dictation | null = null;
@@ -150,6 +157,7 @@ export class TeamChat {
             isTeam
               ? ""
               : `<div class="seg ch-views"><button data-view="chat" class="${this.view === "chat" ? "on" : ""}">💬 Chat</button><button data-view="work" class="${this.view === "work" ? "on" : ""}">📜 Work</button></div>
+                 <button class="btn small ch-update" title="Ask it where it's at">📍 Ask for an update</button>
                  <button class="btn small ch-term" title="Open its terminal: watch it live, type into it">🖥 Terminal</button>`
           }
         </header>
@@ -160,9 +168,13 @@ export class TeamChat {
             : `<div class="ch-log">${(t?.messages ?? []).map((m) => this.messageHtml(m)).join("") || `<p class="ch-empty">${isTeam ? "Say something to the whole team." : "No messages yet. Ask how it's going."}</p>`}</div>`
         }
         <footer class="ch-compose">
-          ${isTeam ? "" : `<div class="seg ch-mode"><button data-raw="0" class="${this.raw ? "" : "on"}" title="A message it answers in the chat">💬 Message</button><button data-raw="1" class="${this.raw ? "on" : ""}" title="Type straight into its terminal (commands, answers to its prompts)">⌨️ Terminal</button></div>`}
-          <textarea class="ch-input ${this.raw && !isTeam ? "raw" : ""}" rows="2" placeholder="${isTeam ? "Message everyone…" : this.raw ? "Typed into its terminal, then Enter (e.g. /model, y, a command)…" : `Message ${esc(t?.title ?? "")}…`}"></textarea>
-          ${sttSupported() ? `<button class="btn mic ch-mic" title="Dictate">🎤</button>` : ""}
+          ${
+            isTeam
+              ? `<button class="btn small ch-update-all" title="Everyone says where they're at">📍 Ask everyone for an update</button>`
+              : `<div class="seg ch-mode"><button data-mode="say" class="${!this.raw && !this.task ? "on" : ""}" title="A message it answers in the chat">💬 Message</button><button data-mode="task" class="${this.task ? "on" : ""}" title="Give it something to work on: tracked as a task, and it presents when it's done">🎯 Task</button><button data-mode="raw" class="${this.raw ? "on" : ""}" title="Type straight into its terminal (commands, answers to its prompts)">⌨️ Terminal</button></div>`
+          }
+          <textarea class="ch-input ${this.raw && !isTeam ? "raw" : ""}" rows="2" placeholder="${isTeam ? "Message everyone…" : this.raw ? "Typed into its terminal, then Enter (e.g. /model, y, a command)…" : this.task ? `What should ${esc(t?.title ?? "it")} work on? It's tracked, and it presents when done…` : `Message ${esc(t?.title ?? "")}…`}"></textarea>
+          ${micButton("ch-mic")}
           <button class="btn primary ch-send">Send</button>
         </footer>
       </section>`;
@@ -194,10 +206,13 @@ export class TeamChat {
     );
     body.querySelectorAll<HTMLButtonElement>(".ch-mode button").forEach((b) =>
       b.addEventListener("click", () => {
-        this.raw = b.dataset.raw === "1";
+        this.raw = b.dataset.mode === "raw";
+        this.task = b.dataset.mode === "task";
         this.render();
       }),
     );
+    body.querySelector(".ch-update")?.addEventListener("click", () => this.actions.send({ t: "chatSend", to: this.selected, text: UPDATE_ASK }));
+    body.querySelector(".ch-update-all")?.addEventListener("click", () => this.actions.send({ t: "chatSend", to: TEAM_THREAD, text: UPDATE_ASK }));
     body.querySelector(".ch-term")?.addEventListener("click", () => {
       const id = this.selected;
       this.modal?.close();
@@ -210,22 +225,7 @@ export class TeamChat {
         setTimeout(() => this.poll(), 400);
       }),
     );
-    const mic = body.querySelector<HTMLButtonElement>(".ch-mic");
-    if (mic) {
-      this.dictation ??= new Dictation(
-        (text) => {
-          const el = this.modal?.body.querySelector<HTMLTextAreaElement>(".ch-input");
-          if (el) el.value = text;
-        },
-        () => this.modal?.body.querySelector(".ch-mic")?.classList.remove("live"),
-        (err) => this.actions.onVoiceError?.(err),
-      );
-      mic.addEventListener("click", () => {
-        if (this.dictation!.isActive) return this.dictation!.stop();
-        mic.classList.add("live");
-        this.dictation!.start(box.value);
-      });
-    }
+    wireMic(body.querySelector<HTMLButtonElement>(".ch-mic"), box, (err) => this.actions.onVoiceError?.(err));
     this.renderNow();
     const log = body.querySelector(".ch-log")!;
     log.scrollTop = log.scrollHeight;
@@ -241,6 +241,7 @@ export class TeamChat {
       ? `<div class="ch-now-status"><span class="ch-pill" style="background:${STATUS_COLOR[p.status] ?? "#c9ced8"}">${esc(STATUS[p.status] ?? p.status)}</span> ${esc(p.activity)}</div>
          <pre>${p.lines.map(esc).join("\n") || "(nothing on its screen yet)"}</pre>`
       : `<div class="ch-now-status">${esc(w?.activity ?? "")}</div><pre>…</pre>`;
+    if (w) el.insertAdjacentHTML("afterbegin", `<div class="ch-tools">${w.doing && w.status === "working" ? `<b>${esc(doingLabel(w.doing))}</b> · ` : ""}🧰 ${w.mcp?.length ? `MCP tools: ${esc(w.mcp.join(", "))}` : "No MCP tools — add some in Office → MCP tools"}</div>`);
   }
 
   private workHtml(): string {
@@ -285,7 +286,8 @@ export class TeamChat {
     if (!box || !text) return;
     this.dictation?.stop();
     const raw = this.raw && this.selected !== TEAM_THREAD;
-    this.actions.send({ t: "chatSend", to: this.selected, text, ...(raw ? { raw: true } : {}) });
+    if (this.task && this.selected !== TEAM_THREAD) this.actions.send({ t: "quickTask", deskId: this.selected, text });
+    else this.actions.send({ t: "chatSend", to: this.selected, text, ...(raw ? { raw: true } : {}) });
     box.value = "";
     this.draft = "";
     if (raw) setTimeout(() => this.poll(), 600);

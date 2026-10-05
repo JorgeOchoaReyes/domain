@@ -3,7 +3,7 @@ import type { AgentKind, ClientMessage, ServerMessage } from "../../shared/proto
 
 /**
  * Which agent CLIs this machine has, for the hire card (an Install button on
- * a missing one) and for Pip (a nudge when none is installed yet).
+ * a missing one) and for Arnold (a nudge when none is installed yet).
  */
 
 let state: AgentsState | null = null;

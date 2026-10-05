@@ -209,3 +209,54 @@ export class Dictation {
     this.onStop();
   }
 }
+
+/** The desktop app: its built-in browser has no speech service, but the OS has dictation. */
+const DESKTOP = typeof navigator !== "undefined" && /Electron/.test(navigator.userAgent);
+const MAC = typeof navigator !== "undefined" && /Mac/.test(navigator.platform || navigator.userAgent);
+
+/** How to start the OS's own dictation, in the desktop app. */
+export function osDictationHint(): string {
+  return MAC ? "press Fn twice (or 🌐 D) and speak" : "press Win + H and speak";
+}
+
+/** A 🎤 button's HTML (empty when there's no way to dictate here). */
+export function micButton(cls = ""): string {
+  if (!DESKTOP && !sttSupported()) return "";
+  return `<button type="button" class="btn mic ${cls}" title="${DESKTOP ? `Dictate: ${osDictationHint()}` : "Dictate — click again to stop"}">🎤</button>`;
+}
+
+/**
+ * Wire a 🎤 button to a text field: click to dictate into it (after what's
+ * there), click again to stop. It stops by itself when the field goes away.
+ */
+export function wireMic(button: HTMLButtonElement | null, field: HTMLInputElement | HTMLTextAreaElement, onError?: (error: string) => void): void {
+  if (!button) return;
+  if (DESKTOP) {
+    // The OS dictates into whatever has focus: put the cursor in the box and say how.
+    button.addEventListener("click", () => {
+      field.focus();
+      field.placeholder = `🎤 ${osDictationHint()[0].toUpperCase()}${osDictationHint().slice(1)} — it types here`;
+      button.classList.add("live");
+      setTimeout(() => button.classList.remove("live"), 4000);
+    });
+    return;
+  }
+  const d = new Dictation(
+    (text) => {
+      if (!field.isConnected) return d.stop();
+      field.value = text;
+      field.dispatchEvent(new Event("input"));
+    },
+    () => button.classList.remove("live"),
+    (err) => {
+      field.placeholder = err === "not-allowed" ? "🎤 The microphone is blocked — allow it to dictate" : "🎤 Couldn't hear you — try again, or type it";
+      onError?.(err);
+    },
+  );
+  button.addEventListener("click", () => {
+    if (d.isActive) return d.stop();
+    button.classList.add("live");
+    d.start(field.value);
+  });
+}
+

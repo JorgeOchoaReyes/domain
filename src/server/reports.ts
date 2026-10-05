@@ -97,7 +97,11 @@ export class DropWatcher<T extends { at: number }> {
  * work and to talk back during a review. Rewritten on every start so it
  * tracks the office's current contract.
  */
-export function writeBrief(domainDir: string): void {
+export function writeBrief(domainDir: string, deskId?: string): void {
+  // In a worker's own folder, the files are named outright: an agent whose
+  // commands run in a long-lived helper (Codex's) can see stale variables.
+  const reportPath = deskId ? `\`${join(domainDir, "reports", `${deskId}.json`)}\`` : "`$DOMAIN_REPORT_FILE` (also `$DOMAIN_REPORTS/$DOMAIN_DESK.json`)";
+  const replyPath = deskId ? `\`${join(domainDir, "replies", `${deskId}.json`)}\`` : "`$DOMAIN_REPLY_FILE` (also `.domain/replies/$DOMAIN_DESK.json`)";
   const brief = `# Working in domain
 
 You are a worker in **domain**, a 3D office. Your manager reviews your work in
@@ -109,7 +113,7 @@ a whiteboard, and you can talk back.
 When you finish a chunk of work, get blocked, or your manager rounds everyone
 up for a review, write a single JSON file:
 
-- Path: \`$DOMAIN_REPORT_FILE\` (also \`$DOMAIN_REPORTS/$DOMAIN_DESK.json\`).
+- Path: ${reportPath}. Create the folder if it's missing.
 - Overwrite it each time you have something new, and bump \`at\` so the office
   notices.
 
@@ -135,7 +139,7 @@ Your manager may message you: while you present (starting with
 (starting with \`[Team chat]\` — answer, then carry on with what you were
 doing). Answer by writing:
 
-- Path: \`$DOMAIN_REPLY_FILE\` (also \`.domain/replies/$DOMAIN_DESK.json\`).
+- Path: ${replyPath}.
 
 \`\`\`json
 { "say": "What you want to say back, in a sentence or two.", "at": 1700000000000 }

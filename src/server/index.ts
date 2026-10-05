@@ -1,3 +1,5 @@
+import { isLeash } from "../shared/policy.js";
+import { homedir } from "node:os";
 import { HistoryLog } from "./history.js";
 import { Audits } from "./audits.js";
 import type { HistoryEvent } from "../shared/history.js";
@@ -17,7 +19,7 @@ import { runCheck, simulateCheck } from "./checks.js";
 import { OpLogger } from "./oplog.js";
 import { allowed } from "./permissions.js";
 import { MODULES } from "./modules.js";
-import { describeLaunch, mcpCleanup, mcpLaunch, serversFor, withGithubAuth } from "./mcp.js";
+import { describeLaunch, mcpCleanup, mcpLaunch, scanAgents, serversFor, withGithubAuth } from "./mcp.js";
 import type { ClientRec, Route, ServerCtx } from "./ctx.js";
 import { personaBrief, type WorkerIdentity } from "../shared/team.js";
 import { Office } from "./office.js";
@@ -323,7 +325,7 @@ const audits = new Audits({
     : undefined,
 });
 const simAudited = new Map<string, number>();
-setInterval(() => audits.tick(), 30_000).unref();
+setInterval(() => audits.tick(), 10_000).unref();
 
 office.onReport = (presentation) => {
   const { deskId, report } = presentation;
@@ -570,7 +572,7 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
         const policy = progress.policy;
         const model =
           typeof msg.model === "string" && isModelName(msg.model) ? msg.model : character?.model || policy.defaultModel[agent];
-        const leash = msg.leash === "auto" || msg.leash === "ask" ? msg.leash : (character?.leash ?? policy.leash);
+        const leash = isLeash(msg.leash) ? msg.leash : (character?.leash ?? policy.leash);
         const identity: WorkerIdentity | null = character
           ? { characterId: character.id, name: character.name, look: character.look, voice: character.voice }
           : null;
@@ -707,6 +709,21 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
         if (goalId && taskId) assignTask(client.name, goalId, taskId, msg.deskId, msg.brief);
         break;
       }
+      case "quickTask": {
+        // "Work on this" from the chat, the laptop or the phone: a real task, tracked and reviewed like any other.
+        const text = str(msg.text, 300)?.trim();
+        if (!text || !office.isStaffed(msg.deskId)) break;
+        const snap = progress.snapshot();
+        const open = (id: string | null | undefined) => snap.goals.find((g) => g.id === id && !g.shippedAt && !g.doneAt);
+        let goal = open(str(msg.goalId, 64)) ?? open(snap.session?.goalId) ?? snap.goals.find((g) => g.title === "Quick tasks" && !g.shippedAt && !g.doneAt);
+        goal ??= progress.createGoal(client.name, "Quick tasks", "Small things handed out from the chat", [], "build") ?? undefined;
+        if (!goal) break;
+        const taskId = progress.addTask(goal.id, text);
+        if (!taskId) break;
+        office.onSaid?.(msg.deskId, "you", `🎯 New task: ${text}`);
+        assignTask(client.name, goal.id, taskId, msg.deskId, {});
+        break;
+      }
       case "policySet": {
         progress.setPolicy(client.name, coercePolicy(msg.policy, progress.policy));
         break;
@@ -825,11 +842,11 @@ function assignTask(who: string, goalId: string, taskId: string, deskId: string,
   const brief = coerceBrief(rawBrief ?? {}, progress.policy);
   const got = progress.assign(who, goalId, taskId, deskId, brief);
   if (!got) return false;
-  const paired = brief.auditor ? audits.start(deskId, brief.auditor, got.title, brief.rounds ?? DEFAULT_AUDIT_ROUNDS) : false;
+  const paired = brief.auditor ? audits.start(deskId, brief.auditor, got.title, brief.rounds ?? DEFAULT_AUDIT_ROUNDS, brief.auditWhen === "along") : false;
   history.add({
     kind: "assigned",
     who,
-    text: `${who} put ${nameAt(deskId)} on “${got.title}”${paired ? `, audited by ${nameAt(brief.auditor!)}` : ""}`,
+    text: `${who} put ${nameAt(deskId)} on “${got.title}”${paired ? `, audited by ${nameAt(brief.auditor!)}${brief.auditWhen === "along" ? " along the way" : ""}` : ""}`,
     worker: workerRef(deskId),
     goalId,
     task: got.title,
@@ -841,7 +858,7 @@ function assignTask(who: string, goalId: string, taskId: string, deskId: string,
   const delay = switched === "restarted" ? 6000 : switched === "switched" && !SIMULATE ? 1500 : 0;
   const ws = office.workspaceOf(deskId);
   if (ws) office.workspaces?.sync(ws.path);
-  const notes = briefNotes.map((f) => f(goalId, taskId, deskId)).join("");
+  const notes = briefNotes.map((f) => f(goalId, taskId, deskId)).join("") + (brief.notes ? ` Notes from your manager: "${brief.notes}"` : "");
   const handOver = () => {
     if (got.goal.kind === "research") {
       goalFiles.ensure(goalId);
@@ -908,6 +925,18 @@ const ctx: ServerCtx = {
 };
 // Per-session MCP configs from a previous run (e.g. after a crash) can hold tokens: clear them.
 mcpCleanup(CWD);
+
+// What a worker's tools are, to show: its CLI's own MCP servers (user and project config) plus the office's.
+office.mcpNames = (agent, identity) => {
+  const picks = identity ? (progress.character(identity.characterId)?.mcp ?? []) : null;
+  let own: string[] = [];
+  try {
+    own = scanAgents({ home: homedir(), projectDir: CWD }).filter((s) => s.agent === agent).map((s) => s.name);
+  } catch {
+    /* unreadable config: just the office's */
+  }
+  return [...new Set([...own, ...serversFor(progress.mcp, picks).map((s) => s.name)])].slice(0, 20);
+};
 
 // Each worker launches with its MCP servers: its character's picks plus the ones for everyone.
 office.mcpFor = (deskId, agent, identity) => {

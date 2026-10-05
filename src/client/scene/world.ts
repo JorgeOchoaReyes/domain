@@ -499,7 +499,7 @@ export class World {
       const task = this.progress?.goals.flatMap((g) => g.tasks).find((t) => t.deskId === desk.id && t.status !== "done");
       const terms = task ? briefLine(task) : "";
       view.bot.name = w.identity?.name ?? null;
-      view.bot.setCard(w.status, w.hiredBy, terms ? `${w.activity} · ${terms}` : w.activity, desk.id === this.presenting);
+      view.bot.setCard(w.status, w.hiredBy, terms ? `${w.activity} · ${terms}` : w.activity, desk.id === this.presenting, w.doing ?? "");
     }
     for (const id of [...this.workers.keys()]) if (!seen.has(id)) this.removeWorker(id);
   }

@@ -1,5 +1,5 @@
 import type { OfficeState } from "../../shared/protocol.js";
-import { AGENT_LABELS } from "../../shared/protocol.js";
+import { AGENT_LABELS, doingLabel } from "../../shared/protocol.js";
 import { dueLabel, goalProgress, type ProgressState } from "../../shared/progress.js";
 import { PLACES } from "../../shared/layout.js";
 import { TEAM_THREAD } from "../../shared/chat.js";
@@ -8,6 +8,7 @@ import { AGENT_COLOR } from "../scene/characters.js";
 import { historyEvents, onHistory, timelineHtml } from "./history.js";
 import type { Reminder } from "./reminders.js";
 import { esc } from "./modal.js";
+import { micButton, wireMic } from "../voice.js";
 import "../styles/phone.css";
 
 /**
@@ -34,6 +35,7 @@ export interface PhoneActions {
   officeHours(): void;
   roundup(): void;
   standup(): void;
+  focus(): void;
   openHistory(): void;
   openLaptop(): void;
   travel(place: (typeof PLACES)[number]): void;
@@ -72,9 +74,10 @@ export class Phone {
 
   constructor(private a: PhoneActions) {
     this.button = document.createElement("button");
-    this.button.className = "phone-btn";
-    this.button.title = "Your phone (P)";
-    this.button.innerHTML = `📱<span class="ph-badge"></span>`;
+    this.button.className = "btn dock-btn phone-btn";
+    this.button.dataset.act = "phone";
+    this.button.title = "Your phone (P): alerts, chat, goals, reviews, workers, history, music, travel";
+    this.button.innerHTML = `📱 <span class="lbl">Phone</span><span class="ph-badge"></span>`;
     this.button.addEventListener("click", () => this.toggle());
     this.el = document.createElement("div");
     this.el.className = "phone hidden";
@@ -92,9 +95,15 @@ export class Phone {
       if (e.key === "Escape") this.close();
       e.stopPropagation();
     });
-    document.body.append(this.button, this.el);
+    // The button sits in the dock (see dockButton); the phone itself over the game.
+    document.body.append(this.el);
     onHistory(() => this.app === "history" && this.refresh(true));
     setInterval(() => this.refresh(), 1000);
+  }
+
+  /** The phone's button, for the dock. */
+  get dockButton(): HTMLButtonElement {
+    return this.button;
   }
 
   get isOpen(): boolean {
@@ -179,7 +188,13 @@ export class Phone {
           <div class="ph-hero">
             <div class="ph-time">${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</div>
             <div class="ph-date">${new Date().toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })}</div>
-            ${session ? `<div class="ph-session">🔥 Focus · ${Math.floor(left / 60000)}:${String(Math.floor((left % 60000) / 1000)).padStart(2, "0")} left</div>` : `<button class="ph-pill" data-do="standup">☀️ Start a session</button>`}
+            ${session ? `<div class="ph-session">🔥 Focus · ${Math.floor(left / 60000)}:${String(Math.floor((left % 60000) / 1000)).padStart(2, "0")} left</div>` : ""}
+          </div>
+          <div class="ph-quick">
+            <button data-do="standup"><span>☀️</span>Stand-up</button>
+            <button data-do="focus"><span>⏱</span>Focus</button>
+            <button data-do="roundup"><span>📣</span>Round up</button>
+            <button data-do="hours"><span>🎤</span>Reviews${b.reviews ? ` <i>${b.reviews}</i>` : ""}</button>
           </div>
           ${next ? `<button class="ph-next u${next.urgency}" data-app="alerts">${next.icon} ${esc(next.text)}</button>` : `<div class="ph-next calm">✨ Nothing needs you right now</div>`}
           <div class="ph-grid">
@@ -200,7 +215,7 @@ export class Phone {
         const desks = office.desks.filter((d) => d.worker);
         return (
           this.head("💬 Team chat", `<button class="ph-link" data-do="chat">Open ›</button>`) +
-          `<div class="ph-send"><input type="text" maxlength="500" placeholder="Message everyone…" /><button>Send</button></div>
+          `<div class="ph-send"><input type="text" maxlength="500" placeholder="Message everyone…" />${micButton("ph-mic")}<button class="ph-go">Send</button></div>
           <button class="ph-row" data-chat="${TEAM_THREAD}"><span class="ph-av" style="background:#4cc9f0">#</span><span><b>team</b><small>Everyone at once</small></span></button>
           ${desks
             .map((d) => {
@@ -252,7 +267,7 @@ export class Phone {
                   const [st, c] = STATUS[w.status] ?? [w.status, "#adb5bd"];
                   const task = progress.goals.flatMap((g) => g.tasks).find((t) => t.deskId === d.id && t.status !== "done");
                   return `<div class="ph-card"><b><i class="dot" style="background:${c}"></i>${esc(this.name(d.id))} <small>${esc(AGENT_LABELS[w.agent])} · ${esc(d.label)}</small></b>
-                    <span>${esc(st)}${task ? ` — “${esc(task.title)}”` : ""}</span><span class="ph-sub">${esc(w.activity.slice(0, 80))}</span>
+                    <span>${esc(w.status === "working" && w.doing ? doingLabel(w.doing) : st)}${task ? ` — “${esc(task.title)}”` : ""}</span><span class="ph-sub">${esc(w.activity.slice(0, 80))}${w.mcp?.length ? ` · 🧰 ${esc(w.mcp.join(", "))}` : ""}</span>
                     <div class="ph-acts"><button data-chat="${d.id}">💬</button><button data-term="${d.id}">🖥 Terminal</button><button data-goto="${d.id}">🚶 Go</button></div></div>`;
                 })
                 .join("")
@@ -287,6 +302,7 @@ export class Phone {
     on("[data-do]", (el) => {
       const d = el.dataset.do;
       if (d === "standup") away(() => this.a.standup());
+      else if (d === "focus") away(() => this.a.focus());
       else if (d === "laptop") away(() => this.a.openLaptop());
       else if (d === "chat") away(() => this.a.openChat());
       else if (d === "hours") away(() => this.a.officeHours());
@@ -320,6 +336,7 @@ export class Phone {
       this.a.sendTeam(text);
     };
     input?.addEventListener("keydown", (e) => e.key === "Enter" && send());
-    s.querySelector(".ph-send button")?.addEventListener("click", send);
+    s.querySelector(".ph-go")?.addEventListener("click", send);
+    if (input) wireMic(s.querySelector<HTMLButtonElement>(".ph-mic"), input);
   }
 }

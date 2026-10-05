@@ -3,6 +3,8 @@ import { AGENT_LABELS } from "../../shared/protocol.js";
 import type { Goal, GoalTask } from "../../shared/progress.js";
 import {
   DEFAULT_AUDIT_ROUNDS,
+  LEASH_ICON,
+  LEASH_LABEL,
   ON_TIME_UP_LABEL,
   TIME_BUDGETS,
   modelLabel,
@@ -13,6 +15,7 @@ import {
 import { AGENT_COLOR } from "../scene/characters.js";
 import { esc, openModal } from "./modal.js";
 import { workerName } from "./team.js";
+import { micButton, wireMic } from "../voice.js";
 
 /**
  * The assignment card: handing a task to a worker on your terms. Who does it,
@@ -50,6 +53,7 @@ export function openAssignCard(o: AssignOptions): void {
   // Pair workers: another worker audits it before it comes to you.
   let auditor = start?.auditor ?? "";
   let rounds = start?.rounds ?? DEFAULT_AUDIT_ROUNDS;
+  let auditWhen: "end" | "along" = start?.auditWhen ?? "end";
 
   const body = document.createElement("div");
   body.className = "assign";
@@ -67,7 +71,7 @@ export function openAssignCard(o: AssignOptions): void {
             const on = o.busy.get(d.id);
             return `<button class="as-worker" data-desk="${d.id}">
               <span class="dot" style="background:${AGENT_COLOR[w.agent]}"></span>
-              <span class="as-w-main"><b>${esc(workerName(w))}</b><span>${esc(d.label)} · ${esc(modelLabel(w.model))} · ${w.leash === "auto" ? "auto-edits" : "asks first"}</span></span>
+              <span class="as-w-main"><b>${esc(workerName(w))}</b><span>${esc(d.label)} · ${esc(modelLabel(w.model))} · ${LEASH_ICON[w.leash]} ${esc(LEASH_LABEL[w.leash].toLowerCase())}</span></span>
               <span class="as-w-state ${on ? "busy" : "free"}">${on ? `on: ${esc(on.slice(0, 22))}` : "free"}</span>
             </button>`;
           })
@@ -95,11 +99,16 @@ export function openAssignCard(o: AssignOptions): void {
     <section>
       <h4>🔍 Audited by <span class="as-hint">another worker checks it, back and forth, before it reaches you</span></h4>
       <div class="seg as-auditors"></div>
-      <div class="seg as-rounds"><span class="as-hint">At most</span>${[1, 2, 3, 4, 5].map((n) => `<button data-r="${n}">${n} round${n === 1 ? "" : "s"}</button>`).join("")}</div>
+      <div class="seg as-when"><button data-w="end">✅ When it's done</button><button data-w="along">🔁 Along the way — checkpoints too</button></div>
+      <div class="seg as-rounds"><span class="as-hint">Send it back at most</span>${[1, 2, 3, 4, 5].map((n) => `<button data-r="${n}">${n}×</button>`).join("")}</div>
     </section>
     <section>
       <h4>Done means <span class="as-hint">one per line — it's held to these in the review</span></h4>
       <textarea class="as-done" rows="3">${esc(done.join("\n"))}</textarea>
+    </section>
+    <section>
+      <h4>🗣 Anything else they should know? <span class="as-hint">optional — type it, or ${micButton("as-mic") ? "press 🎤 and say it" : "jot it down"}</span></h4>
+      <div class="as-notes-row"><textarea class="as-notes" rows="2" placeholder="e.g. Keep the old endpoint working, and ask me before adding a dependency">${esc(start?.notes ?? "")}</textarea>${micButton("as-mic")}</div>
     </section>`;
 
   const footer = document.createElement("div");
@@ -147,8 +156,17 @@ export function openAssignCard(o: AssignOptions): void {
     );
     const roundsEl = body.querySelector<HTMLElement>(".as-rounds")!;
     roundsEl.style.display = auditor ? "" : "none";
+    const whenEl = body.querySelector<HTMLElement>(".as-when")!;
+    whenEl.style.display = auditor ? "" : "none";
+    whenEl.querySelectorAll<HTMLButtonElement>("button").forEach((b) => b.classList.toggle("on", b.dataset.w === auditWhen));
     roundsEl.querySelectorAll<HTMLButtonElement>("button").forEach((b) => b.classList.toggle("on", Number(b.dataset.r) === rounds));
   };
+  body.querySelectorAll<HTMLButtonElement>(".as-when button").forEach((b) =>
+    b.addEventListener("click", () => {
+      auditWhen = b.dataset.w === "along" ? "along" : "end";
+      renderAuditors();
+    }),
+  );
   body.querySelectorAll<HTMLButtonElement>(".as-rounds button").forEach((b) =>
     b.addEventListener("click", () => {
       rounds = Number(b.dataset.r);
@@ -188,6 +206,11 @@ export function openAssignCard(o: AssignOptions): void {
   doneEl.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") e.stopPropagation();
   });
+  const notesEl = body.querySelector<HTMLTextAreaElement>(".as-notes")!;
+  notesEl.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") e.stopPropagation();
+  });
+  wireMic(body.querySelector<HTMLButtonElement>(".as-mic"), notesEl);
   footer.querySelector(".policy")!.addEventListener("click", () => {
     modal.close();
     o.onEditPolicy();
@@ -195,7 +218,8 @@ export function openAssignCard(o: AssignOptions): void {
   footer.querySelector(".go")!.addEventListener("click", () => {
     const lines = doneEl.value.split("\n").map((x) => x.trim()).filter(Boolean);
     modal.close();
-    o.onAssign(deskId, { model, minutes, onTimeUp, planFirst, done: lines.length ? lines : [...o.policy.done], ...(auditor ? { auditor, rounds } : {}) });
+    const notes = notesEl.value.trim();
+    o.onAssign(deskId, { model, minutes, onTimeUp, planFirst, done: lines.length ? lines : [...o.policy.done], ...(auditor ? { auditor, rounds, auditWhen } : {}), ...(notes ? { notes } : {}) });
   });
 
   renderWorkers();

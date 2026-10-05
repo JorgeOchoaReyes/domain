@@ -13,8 +13,8 @@ import type {
 } from "../shared/protocol.js";
 import { AGENT_LABELS, DEFAULT_LOOK, coerceReply, coerceReport } from "../shared/protocol.js";
 import { DESKS, SPAWN } from "../shared/layout.js";
-import { createWorker, type IWorkerSession } from "./workerSession.js";
-import type { Leash, TaskBrief } from "../shared/policy.js";
+import { createWorker, enterDelay, type IWorkerSession } from "./workerSession.js";
+import { LEASH_RULES, type Leash, type TaskBrief } from "../shared/policy.js";
 import type { WorkerIdentity } from "../shared/team.js";
 import { DropWatcher, writeBrief } from "./reports.js";
 import { Workspaces, type Workspace } from "./workspace.js";
@@ -28,6 +28,15 @@ interface Seat {
   workspace: Workspace | null;
   /** What it was doing before it went quiet, to show again when it picks up. */
   busyWith?: string;
+  /** What it was doing when it stopped to ask you something. */
+  beforeAsk?: string;
+  /** The MCP servers its session started with (names, to show). */
+  mcp?: string[];
+  /**
+   * Lines to type once the question on its screen is answered: typed into a
+   * permission menu, a message could pick one of its options.
+   */
+  held?: string[];
   /** Remembered from last time and not running yet: the gong (or E) wakes it. */
   asleep?: Remembered;
   /**
@@ -90,6 +99,8 @@ export class Office {
   onReport: ((presentation: Presentation) => void) | null = null;
   /** The MCP servers a worker launches with: extra CLI args and env (set by the server). */
   mcpFor: ((deskId: string, agent: AgentKind, identity: WorkerIdentity | null) => { args: string[]; env: Record<string, string> } | null) | null = null;
+  /** The names of the MCP servers a worker will have (its CLI's own and the office's), to show. */
+  mcpNames: ((agent: AgentKind, identity: WorkerIdentity | null) => string[]) | null = null;
   /** Called when you or a worker says something during its review. */
   onSaid: ((deskId: string, from: "agent" | "you", text: string) => void) | null = null;
 
@@ -196,7 +207,7 @@ export class Office {
     const dirs = { reports: join(base, "reports"), replies: join(base, "replies") };
     if (seat.drops?.dir !== base) {
       this.stopDrops(seat);
-      writeBrief(base);
+      writeBrief(base, deskId);
       const watchers = [
         new DropWatcher(dirs.reports, coerceReport, (d, r) => this.reportDropped(d, r)),
         new DropWatcher(dirs.replies, coerceReply, (d, r) => this.replyDropped(d, r)),
@@ -214,6 +225,9 @@ export class Office {
 
   private launch(deskId: string, agent: AgentKind, model: string, leash: Leash, cwd: string, identity: WorkerIdentity | null, resume = false): IWorkerSession {
     const mcp = this.simulate ? null : this.mcpFor?.(deskId, agent, identity);
+    const mcpNames = this.simulate ? [] : (this.mcpNames?.(agent, identity) ?? []);
+    const seat = this.seats.find((s) => s.desk.id === deskId);
+    if (seat) seat.mcp = mcpNames;
     const drops = this.dropDirs(deskId, cwd);
     return createWorker(agent, {
       cwd,
@@ -273,6 +287,7 @@ export class Office {
 
   private attach(seat: Seat, session: IWorkerSession): void {
     const deskId = seat.desk.id;
+    if (session.onDoing) seat.cleanup.push(session.onDoing(() => this.changed()));
     seat.cleanup.push(
       session.onOutput((data) => this.onOutput?.(deskId, data)),
       session.onStatus((status, activity) => {
@@ -281,6 +296,18 @@ export class Office {
           // Presenting (a report is up) belongs to the review, not to the terminal going quiet.
           if (w.report && status !== "done") return;
           if (status === "idle" && w.status === "working") seat.busyWith = w.activity;
+          if (status === "waiting" && w.status !== "waiting") seat.beforeAsk = w.activity;
+          if (status !== "waiting" && w.status === "waiting" && seat.held?.length) {
+            const lines = seat.held.splice(0);
+            lines.forEach((l, i) => setTimeout(() => seat.session && typeLine(seat.session, l), 800 + i * 1500));
+          }
+          if (w.status === "waiting" && status !== "waiting" && !activity && seat.beforeAsk) {
+            w.status = status;
+            w.activity = status === "idle" ? `Free · last: ${stripIcon(seat.beforeAsk)}` : seat.beforeAsk;
+            seat.beforeAsk = undefined;
+            this.changed();
+            return;
+          }
           w.status = status;
           // An empty activity: keep the task's own label ("🎯 Add the README…").
           // (A new task set since then has its own label: only "Free · …" goes back to the old one.)
@@ -361,13 +388,21 @@ export class Office {
   /** Type an instruction into a worker's terminal (simulated workers act things out themselves). */
   instruct(deskId: string, text: string): void {
     const seat = this.seats.find((s) => s.desk.id === deskId);
-    if (seat?.session && !seat.session.summon) typeLine(seat.session, text);
+    if (seat?.session && !seat.session.summon) this.typeWhenFree(seat, text);
+  }
+
+  /** Type a line now — or, if it's asking you something, once that's answered (it's not an answer). */
+  private typeWhenFree(seat: Seat, line: string): void {
+    if (!seat.session) return;
+    if (seat.desk.worker?.status === "waiting") (seat.held ??= []).push(line);
+    else typeLine(seat.session, line);
   }
 
   /** Whether someone's working at a desk (not asleep, not empty). */
   isStaffed(deskId: string): boolean {
     const seat = this.seats.find((s) => s.desk.id === deskId);
-    return !!seat?.session && !!seat.desk.worker;
+    // A worker whose agent quit (or whose session ended) can't take work.
+    return !!seat?.session && !!seat.desk.worker && seat.desk.worker.status !== "done";
   }
 
   /** Keep a worker's report out of the line for now (its auditor reviews it first). */
@@ -458,7 +493,7 @@ export class Office {
     const seat = this.seats.find((s) => s.desk.id === deskId);
     if (!seat?.session || !seat.desk.worker) return false;
     if (seat.session.assign) seat.session.assign(taskTitle, brief?.planFirst ?? false);
-    else typeLine(seat.session, taskBriefText(goalTitle, taskTitle, why, brief, seat.workspace?.branch) + extra);
+    else typeLine(seat.session, taskBriefText(goalTitle, taskTitle, why, brief, seat.workspace?.branch, seat.desk.worker?.leash) + extra);
     seat.desk.worker.activity = brief?.planFirst ? `🧠 Planning: ${taskTitle}` : `🎯 ${taskTitle}`;
     this.changed();
     return true;
@@ -555,13 +590,13 @@ export class Office {
     const review = via === "review" || (via === "auto" && !!seat.desk.worker?.report);
     if (seat.session.tell) seat.session.tell(said);
     else if (review) {
-      typeLine(
-        seat.session,
+      this.typeWhenFree(
+        seat,
         `[Office hours] Your manager says: "${said.replace(/\s+/g, " ")}" — answer out loud by writing {"say": "...", "at": <now in ms>} to $DOMAIN_REPLY_FILE (see .domain/BRIEF.md).`,
       );
     } else {
-      typeLine(
-        seat.session,
+      this.typeWhenFree(
+        seat,
         `[Team chat] Your manager says: "${said.replace(/\s+/g, " ")}" — reply in the chat by writing {"say": "...", "at": <now in ms>} to $DOMAIN_REPLY_FILE (see .domain/BRIEF.md), then carry on with what you were doing.`,
       );
     }
@@ -653,7 +688,13 @@ export class Office {
     return {
       desks: this.seats.map((s) => ({
         ...s.desk,
-        worker: s.desk.worker ? { ...s.desk.worker } : null,
+        worker: s.desk.worker
+          ? {
+              ...s.desk.worker,
+              ...(s.mcp?.length ? { mcp: s.mcp } : {}),
+              ...(s.desk.worker.status === "working" && s.session?.doing?.() ? { doing: s.session.doing() } : {}),
+            }
+          : null,
       })),
       peers: [...this.presences.values()].map((p) => ({ ...p.peer, look: { ...p.peer.look } })),
       presentations: this.buildPresentations(),
@@ -828,7 +869,7 @@ export class Office {
  * "done" means for it, its time budget, and — for plan-first tasks — to
  * present a plan before touching anything.
  */
-export function taskBriefText(goalTitle: string, taskTitle: string, why = "", brief?: TaskBrief, branch?: string | null): string {
+export function taskBriefText(goalTitle: string, taskTitle: string, why = "", brief?: TaskBrief, branch?: string | null, leash?: Leash): string {
   const done = brief?.done.length
     ? brief.done.map((d, i) => `(${i + 1}) ${d}`).join(" ")
     : "the change does what the task says, the project still builds and its tests pass, and nothing unrelated changed.";
@@ -839,10 +880,15 @@ export function taskBriefText(goalTitle: string, taskTitle: string, why = "", br
     ? ` Plan first: before changing anything, write your plan as a report to $DOMAIN_REPORT_FILE with status "plan" (title "Plan: …", the approach in the summary, the steps and risks as slides) and wait. Build only once the plan is approved.`
     : "";
   const own = branch ? ` You're on your own branch, ${branch}: commit your work there before you present.` : "";
+  const rules = leash ? ` Your permissions: ${LEASH_RULES[leash]}.` : "";
+  const checkpoints =
+    brief?.auditor && brief.auditWhen === "along"
+      ? ` Work in checkpoints: after each meaningful step (two to four for this task), commit, then present it as a report with status "ready" and a title starting "Checkpoint:" — a teammate reviews it, and you'll be told to carry on (or what to fix). Title the finished work "Done: …".`
+      : "";
   return (
     // Said as your manager, through the office: an agent that sees a bare task
     // card can take it for pasted text and stop to ask before starting.
-    `[Task from your manager, via the domain office] Goal: "${goalTitle}"${why ? ` (why: ${why})` : ""}. Your task: "${taskTitle}". Done means: ${done}${time}${plan}${own} ` +
+    `[Task from your manager, via the domain office] Goal: "${goalTitle}"${why ? ` (why: ${why})` : ""}. Your task: "${taskTitle}". Done means: ${done}${time}${plan}${own}${rules}${checkpoints} ` +
     `Start on it now — no need to check with me first. When it's done — or you're blocked on a decision — present it by writing a report to $DOMAIN_REPORT_FILE as described in .domain/BRIEF.md (status "ready" or "blocked"), then wait for the review.`
   );
 }
@@ -854,7 +900,7 @@ export function taskBriefText(goalTitle: string, taskTitle: string, why = "", br
 function typeLine(session: IWorkerSession, text: string): void {
   const send = session.send ? (d: string) => session.send!(d) : (d: string) => session.write(d);
   send(text);
-  setTimeout(() => send("\r"), 120);
+  setTimeout(() => send("\r"), enterDelay(session.agent));
 }
 
 /** An activity without its leading emoji ("🎯 Fix it" → "Fix it"). */
