@@ -428,3 +428,13 @@ export const IDEA_BOARDS = [
   { id: "standup", label: "Stand-up idea board", key: { x: PARTITIONS_X[1] - 0.35, y: 1.85, z: STANDUP.circle.z + 1.75 }, spot: { x: PARTITIONS_X[1] - 1.3, z: STANDUP.circle.z }, r: 1.5 },
 ] as const;
 export type IdeaBoardId = (typeof IDEA_BOARDS)[number]["id"];
+
+/**
+ * The jukeboxes: one against the game room's west wall, one by the lounge on
+ * the work floor. E at one picks the music; `spot` is where you stand, `key`
+ * where its E key floats.
+ */
+export const JUKEBOXES = [
+  { id: "gameroom", spot: { x: PARTITIONS_X[2] + 1.7, z: 27.0 }, key: { x: PARTITIONS_X[2] + 0.75, y: 2.35, z: 27.0 } },
+  { id: "lounge", spot: { x: FLOOR.maxX - 1.65, z: -7.2 }, key: { x: FLOOR.maxX - 0.6, y: 2.35, z: -7.2 } },
+] as const;

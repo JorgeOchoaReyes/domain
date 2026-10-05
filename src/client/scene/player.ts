@@ -15,6 +15,8 @@ import { DEFAULT_SETTINGS, type Settings } from "../ui/settings.js";
 export type ViewMode = "third" | "first";
 
 const WALK = 5.5;
+/** How much faster the skateboard is than walking. */
+const BOARD_SPEED = 2.1;
 const JUMP_V = 5.4;
 const GRAVITY = 17;
 const EYE = 1.48;
@@ -63,6 +65,8 @@ export class Player {
   speed = 0;
   /** In VR: the headset places the camera, the thumbstick walks you. */
   xr = false;
+  /** On the skateboard (B): about twice as fast, and you glide. */
+  board = false;
   /** A thumbstick: x right, y forward (-1..1). */
   readonly stick = { x: 0, y: 0 };
   /** In VR, which way your head faces (moves go that way); null: where you look. */
@@ -252,7 +256,7 @@ export class Player {
         mx /= len;
         mz /= len;
         const sprint = this.has("ShiftLeft") || this.has("ShiftRight");
-        const speed = WALK * this.settings.walk * (sprint ? this.settings.sprint : 1) * (Date.now() < this.boost.until ? this.boost.k : 1) * throttle;
+        const speed = WALK * this.settings.walk * (sprint ? this.settings.sprint : 1) * (Date.now() < this.boost.until ? this.boost.k : 1) * throttle * (this.board ? BOARD_SPEED : 1);
         wantX = mx * speed;
         wantZ = mz * speed;
       }
@@ -262,7 +266,8 @@ export class Player {
     // in the air. Frame-rate independent.
     const going = wantX !== 0 || wantZ !== 0;
     const airborne = group.position.y > 0;
-    const rate = airborne ? 6 : going ? 16 : 22;
+    // On the board: pushing off takes a moment, and you roll on when you let go.
+    const rate = airborne ? 6 : this.board ? (going ? 3.2 : 1.4) : going ? 16 : 22;
     const k = 1 - Math.exp(-rate * dt);
     this.vel.x += (wantX - this.vel.x) * k;
     this.vel.z += (wantZ - this.vel.z) * k;
@@ -313,7 +318,7 @@ export class Player {
       moved = true;
     }
 
-    const bobbing = this.speed > 0.5 && group.position.y === 0 && this.settings.headBob;
+    const bobbing = this.speed > 0.5 && group.position.y === 0 && this.settings.headBob && !this.board;
     this.bob = THREE.MathUtils.lerp(this.bob, bobbing ? Math.sin(this.bobT) * 0.04 * Math.min(1, this.speed / 5) : 0, Math.min(1, dt * 12));
     this.updateCamera(dt);
     return moved;

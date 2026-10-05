@@ -31,6 +31,8 @@ export interface GameRoom {
   setBest(id: ArcadeId, best: number): void;
   /** Neon pulse, attract-mode animation on cabinet screens, pad glow. */
   update(dt: number, now: number): void;
+  /** Disco: the ball spins up and lights sweep the floor, beating with the music (pulse 0..1). */
+  setDisco(on: boolean, pulse: number): void;
 }
 
 const ROOM = {
@@ -198,6 +200,28 @@ export function buildGameRoom(): GameRoom {
   add(miniFridge(ROOM.maxX - 0.42, ROOM.maxZ - 0.42));
   solid(ROOM.maxX - 0.42, ROOM.maxZ - 0.42, 0.37, 0.37);
 
+  // --- the disco ball, and its lights on the floor ----------------------------------------
+  const disco = discoBall();
+  disco.position.set((ROOM.minX + ROOM.maxX) / 2, WALL_HEIGHT - 0.75, (ROOM.minZ + ROOM.maxZ) / 2);
+  add(disco);
+  const spots = new THREE.Group();
+  const spotMats: THREE.MeshBasicMaterial[] = [];
+  for (let i = 0; i < 14; i++) {
+    const m = new THREE.MeshBasicMaterial({ color: NEON[i % NEON.length], transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending });
+    spotMats.push(m);
+    const s = new THREE.Mesh(new THREE.CircleGeometry(0.28 + (i % 3) * 0.08, 18), m);
+    s.rotation.x = -Math.PI / 2;
+    const a = (i / 14) * Math.PI * 2;
+    const r = 1.6 + (i % 4) * 0.9;
+    s.position.set(Math.cos(a) * r, 0.02 + i * 0.0005, Math.sin(a) * r);
+    spots.add(s);
+  }
+  spots.position.set(disco.position.x, 0, disco.position.z);
+  add(spots);
+  let discoOn = false;
+  let discoPulse = 0;
+  let discoLevel = 0;
+
   // --- claw machine, jukebox, plants --------------------------------------------------
   add(clawMachine(14.7, ROOM.maxZ - 0.62));
   solid(14.7, ROOM.maxZ - 0.62, 0.55, 0.55);
@@ -268,7 +292,17 @@ export function buildGameRoom(): GameRoom {
       paintCabinetScreen(c, performance.now());
       c.board.texture.needsUpdate = true;
     },
+    setDisco(on, pulse) {
+      discoOn = on;
+      discoPulse = pulse;
+    },
     update(dt, now) {
+      // The ball always turns a little; with disco on it spins and the lights come up.
+      discoLevel += ((discoOn ? 1 : 0) - discoLevel) * Math.min(1, dt * 2);
+      disco.rotation.y += dt * (0.25 + discoLevel * 1.4);
+      spots.rotation.y -= dt * (0.15 + discoLevel * 0.9);
+      spots.visible = discoLevel > 0.01;
+      spotMats.forEach((m, i) => (m.opacity = discoLevel * (0.6 + 0.4 * discoPulse) * (0.75 + 0.25 * Math.sin(now * 0.003 + i))));
       const pulse = 0.75 + 0.25 * Math.sin(now * 0.004);
       neonMats.forEach((m, i) => {
         const k = i % 3 === 0 ? pulse : 0.85 + 0.15 * Math.sin(now * 0.006 + i);
@@ -289,6 +323,28 @@ export function buildGameRoom(): GameRoom {
 // ---------------------------------------------------------------------------
 // Pieces
 // ---------------------------------------------------------------------------
+
+/** A mirror ball on a short chain: silver tiles with a few that catch the light. */
+function discoBall(): THREE.Group {
+  const g = new THREE.Group();
+  const c = document.createElement("canvas");
+  c.width = 256;
+  c.height = 128;
+  const x = c.getContext("2d")!;
+  for (let i = 0; i < 32; i++) {
+    for (let j = 0; j < 16; j++) {
+      const v = 150 + Math.floor(Math.random() * 90);
+      x.fillStyle = Math.random() < 0.06 ? NEON[(i + j) % NEON.length] : `rgb(${v},${v},${v + 10})`;
+      x.fillRect(i * 8, j * 8, 7, 7);
+    }
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const ball = new THREE.Mesh(new THREE.SphereGeometry(0.42, 24, 16), new THREE.MeshBasicMaterial({ map: tex }));
+  g.add(ball);
+  g.add(mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.7, 6), toon("#c9ced8"), 0, 0.75, 0, false));
+  return g;
+}
 
 function carpetTexture(w: number, d: number): THREE.CanvasTexture {
   const c = document.createElement("canvas");

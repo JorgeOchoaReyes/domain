@@ -213,7 +213,9 @@ function buildWalls(add: Add, colliders: Collider[]): void {
       [0.09, 0.18],
       [3.6, 0.08],
     ]) {
-      add(mesh(alongX ? box(w, h, d + 0.08) : box(w + 0.08, h, d), trimMat, cx, y, cz, false));
+      // Where two walls meet, their trims overlap in the corner: the ones along z
+      // sit a hair lower and thinner so the two never share a face (no flicker).
+      add(mesh(alongX ? box(w, h, d + 0.08) : box(w + 0.08, h - 0.006, d), trimMat, cx, alongX ? y : y - 0.002, cz, false));
     }
   }
 
@@ -221,8 +223,13 @@ function buildWalls(add: Add, colliders: Collider[]): void {
   const doorway = (g: { x0: number; x1: number }, z: number, height = DOOR_H) => {
     const w = g.x1 - g.x0;
     const cx = (g.x0 + g.x1) / 2;
-    add(mesh(box(w, H - height, T), wallMat, cx, (H + height) / 2, z, false));
+    // The wall over the door starts a little above the opening, inside the
+    // trim: if both bottoms sat at the same height they'd flicker as you move.
+    const lift = 0.05;
+    add(mesh(box(w, H - height - lift, T), wallMat, cx, (H + height + lift) / 2, z, false));
     add(mesh(box(w + 0.24, 0.14, T + 0.14), trimMat, cx, height + 0.07, z, false));
+    // The picture rail carries on over the door (the walls either side only have it up to the opening).
+    if (height < 3.6 - 0.1) add(mesh(box(w, 0.08, T + 0.08), trimMat, cx, 3.6, z, false));
     for (const x of [g.x0, g.x1]) add(mesh(box(0.12, height, T + 0.14), trimMat, x, height / 2, z, false));
   };
   const officeWallZ = FLOOR.maxZ + T / 2;

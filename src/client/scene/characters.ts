@@ -55,6 +55,8 @@ export class Person {
   private look: Look;
   private phase = Math.random() * 6;
   private blinkAt = 1 + Math.random() * 3;
+  /** On a skateboard: stand on the deck, no walking. */
+  riding = false;
   private eyes: THREE.Mesh[] = [];
 
   constructor(name: string, look: Look, opts: { tag?: boolean } = {}) {
@@ -166,6 +168,19 @@ export class Person {
 
   /** Advance the walk cycle; `speed` is how fast it's moving (0 = standing). */
   update(dt: number, speed: number): void {
+    if (this.riding) {
+      // Side-on stance, knees soft, arms out, a little sway with speed.
+      const ease = Math.min(1, dt * 10);
+      const sway = Math.sin((this.phase += dt * 3)) * Math.min(1, speed / 6) * 0.08;
+      this.legL.rotation.x += (0.28 - this.legL.rotation.x) * ease;
+      this.legR.rotation.x += (-0.28 - this.legR.rotation.x) * ease;
+      this.armL.rotation.x += (-0.3 - this.armL.rotation.x) * ease;
+      this.armR.rotation.x += (0.3 - this.armR.rotation.x) * ease;
+      this.body.position.y = 0.13 + sway * 0.2;
+      this.body.rotation.z = sway;
+      return;
+    }
+    this.body.rotation.z = 0;
     const walking = speed > 0.1;
     this.phase += dt * (walking ? 9 : 2);
     const swing = walking ? Math.sin(this.phase) * 0.7 : 0;

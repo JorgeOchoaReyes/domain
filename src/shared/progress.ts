@@ -115,10 +115,10 @@ export interface Session {
 export type ToneId = "ship" | "focus" | "explore" | "bughunt";
 
 export const TONES: readonly { id: ToneId; icon: string; label: string; blurb: string; minutes: number; color: string }[] = [
-  { id: "ship", icon: "🚀", label: "Ship it", blurb: "Energetic — get things out the door", minutes: 50, color: "#ff8a5b" },
-  { id: "focus", icon: "🧘", label: "Deep focus", blurb: "Quiet — heads down, no distractions", minutes: 90, color: "#5b7cfa" },
-  { id: "explore", icon: "🧪", label: "Explore", blurb: "Playful — try ideas, spike, learn", minutes: 25, color: "#06d6a0" },
-  { id: "bughunt", icon: "🐛", label: "Bug hunt", blurb: "Methodical — fix and harden", minutes: 50, color: "#ef476f" },
+  { id: "ship", icon: "🚀", label: "Ship it", blurb: "Energetic — get things out the door", minutes: 120, color: "#ff8a5b" },
+  { id: "focus", icon: "🧘", label: "Deep focus", blurb: "Quiet — heads down, no distractions", minutes: 180, color: "#5b7cfa" },
+  { id: "explore", icon: "🧪", label: "Explore", blurb: "Playful — try ideas, spike, learn", minutes: 60, color: "#06d6a0" },
+  { id: "bughunt", icon: "🐛", label: "Bug hunt", blurb: "Methodical — fix and harden", minutes: 120, color: "#ef476f" },
 ];
 
 export function isTone(v: unknown): v is ToneId {
@@ -192,7 +192,27 @@ export const XP = {
   ship: 150,
 } as const;
 
-export const SESSION_LENGTHS = [25, 50, 90] as const;
+/** Focus sessions run for hours, like a real block of work. */
+export const SESSION_LENGTHS = [60, 120, 180, 240] as const;
+/** The longest a session may be (a full working day). */
+export const MAX_SESSION_MINUTES = 480;
+
+/** A session's length in words: "45 min", "2 h", "1 h 30 min". */
+export function sessionLength(minutes: number): string {
+  if (minutes < 60) return `${minutes} min`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return m ? `${h} h ${m} min` : `${h} h`;
+}
+
+/** Time left on a clock: "2:05:09", or "45:09" under an hour. */
+export function clock(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = String(total % 60).padStart(2, "0");
+  return h ? `${h}:${String(m).padStart(2, "0")}:${s}` : `${m}:${s}`;
+}
 
 /** Level titles, from your first day to running the place. */
 export const TITLES = [

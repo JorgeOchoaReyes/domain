@@ -3,7 +3,7 @@ import type { Idea } from "../../shared/ideas.js";
 import { AGENT_LABELS } from "../../shared/protocol.js";
 import { AGENT_COLOR, STATUS_BULB } from "./characters.js";
 import { wrap } from "./toon.js";
-import { TONES, goalProgress, goalStage, type LoopStage, type ProgressState, type Session } from "../../shared/progress.js";
+import { TONES, goalProgress, goalStage, type LoopStage, type ProgressState, type Session, clock } from "../../shared/progress.js";
 
 /**
  * What the office's live surfaces show, painted onto their canvases: the
@@ -228,9 +228,7 @@ export function paintTv(c: HTMLCanvasElement, line: Presentation[], presenting: 
     g.font = `800 40px ${F}`;
     g.fillText("🔥 Focus session", c.width / 2, c.height * 0.22);
     g.font = `900 150px ${F}`;
-    const mm = Math.floor(left / 60000);
-    const ss = Math.floor((left % 60000) / 1000);
-    g.fillText(`${mm}:${String(ss).padStart(2, "0")}`, c.width / 2, c.height * 0.52);
+    g.fillText(clock(left), c.width / 2, c.height * 0.52);
     g.font = `800 34px ${F}`;
     g.fillStyle = "#a5b4fc";
     g.fillText(goalTitle ? `🎯 ${goalTitle}` : `✅ ${session.tasksDone} done · ⭐ ${session.xp} XP`, c.width / 2, c.height * 0.8);
@@ -365,7 +363,7 @@ export function paintStandupBoard(c: HTMLCanvasElement, p: ProgressState | null,
   g.font = `800 30px ${F}`;
   if (s) {
     const left = Math.max(0, s.endsAt - Date.now());
-    g.fillText(`${Math.floor(left / 60000)}:${String(Math.floor((left % 60000) / 1000)).padStart(2, "0")} left`, W - 32, 48);
+    g.fillText(`${clock(left)} left`, W - 32, 48);
   } else {
     g.fillText(new Date().toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" }), W - 32, 48);
   }

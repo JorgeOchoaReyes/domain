@@ -185,7 +185,11 @@ building:
   (*Snake*, *Bug Smash*, *Brick Breaker*, best scores kept), free throws at the
   hoop (time the power meter), ping-pong and beanbags. Two screens keep the
   workers and the goal in view, and the glowing pad by the door jumps you
-  straight back to the work floor.
+  straight back to the work floor. The **jukebox** picks the office's music —
+  *Lo-fi focus*, *Disco fever* (the mirror ball spins up and lights sweep the
+  floor), *Synthwave drive* or *Ambient office* — composed live, nothing
+  downloaded; there's a second jukebox by the lounge, and volume in Settings.
+- **🛹 A skateboard**, anywhere: **B** hops on — twice as fast, and you glide.
 - **🛎 The lobby**, whose sliding front doors open onto **the grounds**: a plaza
   and fountain, a five-a-side pitch with a ball you can dribble and kick, picnic
   tables, a street. Walk all the way round the building; the sky follows your
@@ -557,7 +561,8 @@ Environment variables:
 | `W A S D`     | Walk where you're looking · `Shift` run · `Space` jump |
 | Scroll        | Zoom — all the way in for first person, out again for third |
 | `V`           | Switch first / third person (also in Settings) |
-| `E`           | Use whatever the floating **E** marks: hire, terminal, office hours, the idea boards, coffee, arcades, hoops, the ball, the elevator |
+| `B`           | Skateboard on / off — twice as fast, and you glide |
+| `E`           | Use whatever the floating **E** marks: hire, terminal, office hours, the idea boards, the jukeboxes, coffee, arcades, hoops, the ball, the elevator |
 | `T`           | Fast travel |
 | `U`           | Stand-up |
 | `G`           | Goals |

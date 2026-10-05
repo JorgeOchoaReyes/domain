@@ -17,6 +17,7 @@ import {
   type RoomId,
   type IdeaBoardId,
   IDEA_BOARDS,
+  JUKEBOXES,
 } from "../shared/layout.js";
 import { Net } from "./net.js";
 import { World } from "./scene/world.js";
@@ -30,6 +31,8 @@ import { ObjectiveTracker, nextObjective, type Objective } from "./ui/objective.
 import { MyLaptop } from "./ui/mylaptop.js";
 import { openDeck, refreshDeck } from "./ui/deck.js";
 import { loadSettings, openSettings, saveSettings, type Settings } from "./ui/settings.js";
+import { Music } from "./music.js";
+import { openJukebox } from "./ui/jukebox.js";
 import { openAssignCard } from "./ui/assign.js";
 import { Assistant, type Guide, type Tip, type TourStep } from "./ui/assistant.js";
 import { ingestLan, lanChip, onLanChange, openInvite } from "./ui/invite.js";
@@ -56,7 +59,7 @@ import { GoalsWindow } from "./ui/goals.js";
 import { SessionPill, openStartSession, showSessionSummary } from "./ui/session.js";
 import { PlayerCard, blankStats, openProfile } from "./ui/profile.js";
 import { confetti, floatXp, isMuted, setMuted, sound } from "./ui/fx.js";
-import { ACHIEVEMENTS, EMPTY_PROGRESS, type Goal, type ProgressState } from "../shared/progress.js";
+import { ACHIEVEMENTS, EMPTY_PROGRESS, sessionLength, type Goal, type ProgressState } from "../shared/progress.js";
 import * as THREE from "three";
 import "./styles/main.css";
 
@@ -103,6 +106,12 @@ player.onLock = (locked) => {
   if (!locked) unlockedAt = performance.now();
 };
 let settings: Settings = loadSettings();
+/** The background music (composed live); the jukeboxes and Settings pick it. */
+const music = new Music();
+// Browsers only let sound start after you click or press a key: start it then.
+const startMusic = () => music.set({ on: settings.music, track: settings.track, volume: settings.musicVolume });
+window.addEventListener("pointerdown", startMusic, { once: true });
+window.addEventListener("keydown", startMusic, { once: true });
 let lastQuality: Settings["graphics"] | null = null;
 world.onAutoQuality = (q) => {
   settings = { ...settings, graphics: q };
@@ -121,6 +130,8 @@ function applySettings(s: Settings): void {
   }
   world.autoQuality = s.autoGraphics;
   minimap?.el.classList.toggle("hidden", !s.minimap);
+  // Before your first click the music waits (see startMusic); after it, changes apply at once.
+  if (music.playing || !s.music) music.set({ on: s.music, track: s.track, volume: s.musicVolume });
 }
 const terminal = new TerminalOverlay();
 const review = new ReviewPanel();
@@ -365,7 +376,7 @@ net.onMessage = (msg) => {
       refreshGame();
       if (startedNow) {
         sound.bell();
-        hud.toast(`🔥 Focus session started — ${progress.session!.minutes} minutes. Let's go!`);
+        hud.toast(`🔥 Focus session started — ${sessionLength(progress.session!.minutes)}. Let's go!`);
       }
       if (welcomeDue) {
         welcomeDue = false;
@@ -1232,6 +1243,29 @@ function nearArcade(): (typeof ARCADES)[number] | null {
     return Math.hypot(x - s.x, z - s.z) < 0.85;
   }) ?? null;
 }
+/** Hop on or off the skateboard. */
+function toggleBoard(): void {
+  player.board = !player.board;
+  world.setBoard(player.board);
+  sound.click();
+  hud.toast(player.board ? "🛹 Skateboard! You're twice as fast and you glide — B to hop off" : "🚶 Back on your feet");
+}
+
+/** The jukebox you're standing at, if any. */
+function nearJukebox(): (typeof JUKEBOXES)[number] | null {
+  const { x, z } = player.position;
+  return JUKEBOXES.find((j) => Math.hypot(x - j.spot.x, z - j.spot.z) < 1.4) ?? null;
+}
+
+function openJukeboxNow(): void {
+  openJukebox({ on: settings.music, track: settings.track, volume: settings.musicVolume }, (j) => {
+    const next = { ...settings, music: j.on, track: j.track, musicVolume: j.volume };
+    saveSettings(next);
+    applySettings(next);
+    music.set({ on: next.music, track: next.track, volume: next.musicVolume });
+  });
+}
+
 function nearCoffee(): boolean {
   const { x, z } = player.position;
   return Math.hypot(x - KITCHEN.coffeeSpot.x, z - KITCHEN.coffeeSpot.z) < 1.4;
@@ -1277,6 +1311,10 @@ function interactFun(): boolean {
     sound.click();
     return true;
   }
+  if (nearJukebox()) {
+    openJukeboxNow();
+    return true;
+  }
   if (nearCoffee()) {
     player.boostFor(90_000);
     sound.bell();
@@ -1311,6 +1349,8 @@ function promptTarget(): { x: number; y: number; z: number } | null {
   if (arcade) return { x: arcade.x, y: 2.35, z: arcade.z };
   if (atHoopSpot()) return { x: HOOP.rim.x, y: HOOP.rim.y + 0.7, z: HOOP.rim.z };
   if (world.ball.near(x, z)) return { x: world.ball.position.x, y: 0.95, z: world.ball.position.z };
+  const juke = nearJukebox();
+  if (juke) return juke.key;
   if (nearCoffee()) return { x: KITCHEN.coffee.x, y: 1.95, z: KITCHEN.coffee.z };
   if (onWorkPad()) return { x: WORK_PAD.x, y: 1.4, z: WORK_PAD.z };
   if (atElevator()) return { x: ELEVATOR.x, y: 2.9, z: FLOOR.minZ + ELEVATOR.depth + 0.1 };
@@ -1340,6 +1380,10 @@ function hintFun(): string | null {
   }
   const { x, z } = player.position;
   if (world.ball.near(x, z)) return `<span class="title">⚽ Ball</span> <span class="key">E</span> Kick where you're looking · or just run into it`;
+  if (nearJukebox()) {
+    const now = music.playing ? `now: ${music.current.icon} ${music.current.name}` : "music's off";
+    return `<span class="title">🪩 Jukebox</span> <span class="key">E</span> Pick the music · ${now}`;
+  }
   if (nearCoffee()) {
     const left = Math.ceil(player.boosted / 1000);
     return `<span class="title">☕ Coffee machine</span> <span class="key">E</span> ${left ? `Top up (${left}s left)` : "Grab a coffee · speed boost"}`;
@@ -1439,6 +1483,7 @@ window.addEventListener("keydown", (e) => {
   else if (key === "h" || key === "?") hud.openHelp();
   else if (key === "t") openTravel();
   else if (key === "v") player.toggleView();
+  else if (key === "b") toggleBoard();
   else if (key === "u") openStandupNow();
   else if (key === "m") applySettings({ ...settings, minimap: !settings.minimap });
   else if (key === "l") openLaptop();
@@ -1459,6 +1504,8 @@ canvas.addEventListener("pointerdown", (e) => {
 
 // --- main loop -------------------------------------------------------------------------------
 
+/** The mouse was captured when a window opened: capture it again when the window closes. */
+let relockAfterWindow = false;
 let lastPresence = 0;
 let last = performance.now();
 let sentX = NaN;
@@ -1477,12 +1524,20 @@ function frame(now: number): void {
   }
   vr.update();
   player.enabled = !modalOpen();
-  // A window opening hands the mouse back.
-  if (!player.enabled && player.mouseCaptured) player.unlock();
+  // A window opening hands the mouse back — and closing it takes it again,
+  // if it was captured when the window opened (freed with Tab, it stays free).
+  if (!player.enabled && player.mouseCaptured) {
+    player.unlock();
+    relockAfterWindow = true;
+  } else if (player.enabled && relockAfterWindow && !terminal.isOpen && !review.isOpen) {
+    relockAfterWindow = false;
+    if (!vr.presenting) player.lock();
+  }
   player.update(dt);
   world.update(dt, player.velocity);
   onMinigames();
   shotMeter.update(dt);
+  world.gameRoom.setDisco(music.playing && music.current.id === "disco", music.pulse());
   world.hand.update(dt, player.speed, player.yawAngle, player.boosted > 0, settings.headBob);
   here = minimap.update({ x: player.position.x, z: player.position.z, facing: player.facing }, world.workerSpots(), world.peerSpots()).id;
   hud.setHint(hintFor());
@@ -1541,7 +1596,7 @@ void pickCharacter(myName, myLook).then(({ name, look }) => {
 
 // A handle for poking at the office from the console (and screenshot scripts) in dev builds.
 if (import.meta.env.DEV) {
-  (window as unknown as { domain: unknown }).domain = { world, player, vr, startOfficeHours, openLaptop, openTravel, openGoals, escapeModal, net, laptop, progress: () => progress, office: () => office };
+  (window as unknown as { domain: unknown }).domain = { world, player, vr, music, startOfficeHours, openLaptop, openTravel, openGoals, escapeModal, net, laptop, progress: () => progress, office: () => office };
   (window as unknown as { __roomAt: unknown }).__roomAt = (x: number, z: number) => roomAt(x, z).id;
 }
 

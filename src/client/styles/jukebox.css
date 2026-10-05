@@ -1,0 +1,27 @@
+/* ---------- The jukebox ---------- */
+.modal.jukebox-modal { width: min(760px, 100%); }
+.jukebox { display: flex; flex-direction: column; gap: 14px; }
+.jb-records { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
+.jb-record { position: relative; font: inherit; color: var(--ink); display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 14px 10px 12px; border: 3px solid var(--ink); border-radius: 16px; background: #fff; box-shadow: 0 4px 0 var(--ink); cursor: pointer; transition: transform .12s; }
+.jb-record:hover { transform: translateY(-2px); }
+.jb-record b { font-size: 15px; font-weight: 900; }
+.jb-vibe { font-size: 12px; font-weight: 700; color: var(--muted); text-align: center; }
+.jb-bpm { font-size: 11px; font-weight: 900; color: var(--accent); }
+.jb-disc { width: 76px; height: 76px; border-radius: 50%; border: 3px solid var(--ink); background: repeating-radial-gradient(circle, #2b2d42 0 3px, #3d405b 3px 6px); display: grid; place-items: center; margin-bottom: 4px; }
+.jb-icon { width: 34px; height: 34px; border-radius: 50%; background: #ffd166; border: 2px solid var(--ink); display: grid; place-items: center; font-size: 18px; }
+.jb-record.playing { background: linear-gradient(160deg, #ffe5f6, #e3f1ff); }
+.jb-record.playing .jb-disc { animation: jb-spin 2.4s linear infinite; }
+@keyframes jb-spin { to { transform: rotate(360deg); } }
+.jb-eq { position: absolute; top: 8px; right: 10px; display: flex; gap: 2px; align-items: flex-end; height: 16px; }
+.jb-eq i { width: 4px; background: #ff4fd8; border-radius: 2px; animation: jb-eq .6s ease-in-out infinite alternate; }
+.jb-eq i:nth-child(2) { animation-delay: .15s; background: #3ef0ff; }
+.jb-eq i:nth-child(3) { animation-delay: .3s; background: #ffe14d; }
+.jb-eq i:nth-child(4) { animation-delay: .45s; background: #7cff6b; }
+@keyframes jb-eq { from { height: 3px; } to { height: 16px; } }
+.jb-controls { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.jb-vol { display: flex; align-items: center; gap: 8px; font-weight: 800; flex: 1; min-width: 220px; }
+.jb-vol input { flex: 1; accent-color: var(--accent); }
+.jb-note { margin: 0; font-size: 12px; font-weight: 700; color: var(--muted); }
+.st-tracks { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
+.st-track.on { background: var(--ink); color: var(--paper); }
+@media (prefers-reduced-motion: reduce) { .jb-record.playing .jb-disc, .jb-eq i { animation: none; } }

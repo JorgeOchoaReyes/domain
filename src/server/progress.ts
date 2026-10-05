@@ -22,8 +22,7 @@ import {
   type PlayerStats,
   type ProgressState,
   type Session,
-  type SessionSummary,
-} from "../shared/progress.js";
+  type SessionSummary, MAX_SESSION_MINUTES, sessionLength } from "../shared/progress.js";
 
 /** Something worth telling the person who earned it (and the office). */
 export interface Award {
@@ -496,7 +495,7 @@ export class Progress {
 
   startSession(who: string, minutes: number, goalId: string | null, tone: ToneId | null = null, intention = ""): boolean {
     if (this.state.session) return false;
-    const m = Math.max(1, Math.min(180, Math.round(minutes)));
+    const m = Math.max(1, Math.min(MAX_SESSION_MINUTES, Math.round(minutes)));
     const now = Date.now();
     this.state.session = {
       id: randomUUID().slice(0, 8),
@@ -512,7 +511,7 @@ export class Progress {
       intention: clean(intention, 200),
     };
     const goal = this.state.session.goalId ? this.goal(this.state.session.goalId) : null;
-    this.feed(who, `started a ${m}-minute focus session${goal ? ` on ${goal.title}` : ""}`, 0);
+    this.feed(who, `started a ${sessionLength(m)} focus session${goal ? ` on ${goal.title}` : ""}`, 0);
     this.changed();
     return true;
   }
@@ -539,10 +538,10 @@ export class Progress {
           st.today = 1;
           st.lastDay = today;
         }
-        this.award(name, bonus, `Finished a ${s.minutes}-minute focus session`);
+        this.award(name, bonus, `Finished a ${sessionLength(s.minutes)} focus session`);
       }
       xp += bonus;
-      this.feed(s.startedBy, `finished a ${s.minutes}-minute focus session 🎉`, bonus);
+      this.feed(s.startedBy, `finished a ${sessionLength(s.minutes)} focus session 🎉`, bonus);
     } else {
       this.feed(s.startedBy, "ended the focus session early", 0);
     }

@@ -1,3 +1,4 @@
+import { TRACKS, type TrackId } from "../music.js";
 import { esc, openModal } from "./modal.js";
 
 /**
@@ -26,6 +27,10 @@ export interface Settings {
   graphics: "high" | "balanced" | "fast";
   /** Drop the graphics a level by itself when the game runs slow. */
   autoGraphics: boolean;
+  /** Background music, how loud, and which track (the jukeboxes pick it too). */
+  music: boolean;
+  musicVolume: number;
+  track: TrackId;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -40,6 +45,9 @@ export const DEFAULT_SETTINGS: Settings = {
   dayNight: true,
   graphics: "balanced",
   autoGraphics: true,
+  music: true,
+  musicVolume: 0.35,
+  track: "lofi",
 };
 
 const KEY = "domain.settings";
@@ -56,6 +64,8 @@ export function loadSettings(): Settings {
     s.sensitivity = clamp(s.sensitivity, 0.3, 2.5);
     s.fov = clamp(s.fov, 50, 100);
     if (!["high", "balanced", "fast"].includes(s.graphics)) s.graphics = "balanced";
+    s.musicVolume = clamp(s.musicVolume, 0, 1);
+    if (!TRACKS.some((t) => t.id === s.track)) s.track = DEFAULT_SETTINGS.track;
     return s;
   } catch {
     return { ...DEFAULT_SETTINGS };
@@ -150,6 +160,15 @@ export function openSettings(current: Settings, onChange: (s: Settings) => void,
       <h3>Display & sound</h3>
       ${TOGGLES.map((t) => `<label class="st-check"><input type="checkbox" data-t="${t.key}" ${s[t.key] ? "checked" : ""} /> ${t.label}</label>`).join("")}
       <label class="st-check"><input type="checkbox" class="st-sound" ${extras.muted ? "" : "checked"} /> 🔊 Sound effects</label>
+    </section>
+    <section>
+      <h3>Music</h3>
+      <label class="st-check"><input type="checkbox" class="st-music" ${s.music ? "checked" : ""} /> 🎵 Background music</label>
+      <label class="st-row"><span class="st-label">🔉 Music volume</span>
+        <input type="range" class="st-music-vol" min="0" max="1" step="0.05" value="${s.musicVolume}" />
+        <output class="st-music-out">${Math.round(s.musicVolume * 100)}%</output></label>
+      <div class="st-tracks">${TRACKS.map((t) => `<button class="btn small st-track ${t.id === s.track ? "on" : ""}" data-track="${t.id}">${t.icon} ${esc(t.name)}</button>`).join("")}</div>
+      <p class="st-hint">Or pick it at a jukebox — there's one in the game room and one by the lounge.</p>
     </section>`;
   const footer = document.createElement("div");
   footer.style.display = "contents";
@@ -175,6 +194,24 @@ export function openSettings(current: Settings, onChange: (s: Settings) => void,
     }),
   );
   body.querySelector<HTMLInputElement>(".st-sound")!.addEventListener("change", (e) => extras.setMuted(!(e.target as HTMLInputElement).checked));
+  body.querySelector<HTMLInputElement>(".st-music")!.addEventListener("change", (e) => {
+    s.music = (e.target as HTMLInputElement).checked;
+    emit();
+  });
+  body.querySelector<HTMLInputElement>(".st-music-vol")!.addEventListener("input", (e) => {
+    s.musicVolume = Number((e.target as HTMLInputElement).value);
+    body.querySelector(".st-music-out")!.textContent = `${Math.round(s.musicVolume * 100)}%`;
+    emit();
+  });
+  body.querySelectorAll<HTMLButtonElement>(".st-track").forEach((b) =>
+    b.addEventListener("click", () => {
+      s.track = b.dataset.track as TrackId;
+      s.music = true;
+      body.querySelector<HTMLInputElement>(".st-music")!.checked = true;
+      body.querySelectorAll(".st-track").forEach((x) => x.classList.toggle("on", x === b));
+      emit();
+    }),
+  );
   body.querySelectorAll<HTMLButtonElement>(".st-gfx .st-view-card").forEach((b) =>
     b.addEventListener("click", () => {
       s.graphics = b.dataset.g as Settings["graphics"];

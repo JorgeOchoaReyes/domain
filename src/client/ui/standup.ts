@@ -9,8 +9,7 @@ import {
   type GoalKind,
   type LoopStage,
   type ProgressState,
-  type ToneId,
-} from "../../shared/progress.js";
+  type ToneId, sessionLength } from "../../shared/progress.js";
 import { AGENT_COLOR, STATUS_BULB } from "../scene/characters.js";
 import { esc, openModal } from "./modal.js";
 
@@ -156,7 +155,7 @@ export function openStandup(
       <input type="text" class="su-intent" maxlength="140" placeholder="e.g. Checkout works end to end and is deployed" />
 
       <div class="su-step"><span class="su-n">4</span><h3>How long?</h3></div>
-      <div class="seg su-len">${SESSION_LENGTHS.map((m) => `<button data-m="${m}" class="${m === minutes ? "on" : ""}">${m} min</button>`).join("")}</div>
+      <div class="seg su-len">${SESSION_LENGTHS.map((m) => `<button data-m="${m}" class="${m === minutes ? "on" : ""}">${sessionLength(m)}</button>`).join("")}</div>
     </section>`;
 
   const footer = document.createElement("div");

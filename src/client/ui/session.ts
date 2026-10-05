@@ -1,4 +1,4 @@
-import { SESSION_LENGTHS, XP, goalProgress, type ProgressState, type SessionSummary } from "../../shared/progress.js";
+import { SESSION_LENGTHS, XP, clock, goalProgress, sessionLength, type ProgressState, type SessionSummary } from "../../shared/progress.js";
 import { confetti, sound } from "./fx.js";
 import { esc, openModal } from "./modal.js";
 
@@ -16,7 +16,7 @@ export function openStartSession(progress: ProgressState, goalId: string | null,
   body.innerHTML = `
     <p class="setting-note" style="margin-top:0">A timed sprint for the whole office. Hire, assign and review as usual — when the timer runs out, everyone here earns <b>${XP.sessionMinute} XP a minute</b> and keeps their streak alive.</p>
     <label>How long?</label>
-    <div class="lengths">${SESSION_LENGTHS.map((m) => `<button class="len ${m === minutes ? "sel" : ""}" data-m="${m}"><b>${m}</b><span>min</span><i>+${m * XP.sessionMinute} XP</i></button>`).join("")}</div>
+    <div class="lengths">${SESSION_LENGTHS.map((m) => `<button class="len ${m === minutes ? "sel" : ""}" data-m="${m}"><b>${m / 60}</b><span>${m === 60 ? "hour" : "hours"}</span><i>+${m * XP.sessionMinute} XP</i></button>`).join("")}</div>
     <label>Focus on</label>
     <ul class="svc-list pick-goal">
       ${open
@@ -81,13 +81,12 @@ export class SessionPill {
       return;
     }
     const left = Math.max(0, s.endsAt - Date.now());
-    const mm = Math.floor(left / 60000);
-    const ss = Math.floor((left % 60000) / 1000);
+    const time = clock(left);
     const goal = s.goalId ? progress!.goals.find((g) => g.id === s.goalId) : null;
     const pr = goal ? goalProgress(goal) : null;
     const pct = 1 - left / (s.minutes * 60000);
     const armed = Date.now() - this.stopArmed < 3000;
-    const key = `${mm}:${ss}|${goal?.title}|${pr?.done}|${s.tasksDone}|${s.xp}|${armed}`;
+    const key = `${time}|${goal?.title}|${pr?.done}|${s.tasksDone}|${s.xp}|${armed}`;
     if (key === this.last) return;
     this.last = key;
     this.el.classList.remove("hidden");
@@ -95,7 +94,7 @@ export class SessionPill {
     this.el.innerHTML = `
       <span class="ring" style="--p:${(pct * 100).toFixed(1)}%"><span>🔥</span></span>
       <span class="sp-main">
-        <span class="sp-time">${mm}:${String(ss).padStart(2, "0")}</span>
+        <span class="sp-time">${time}</span>
         <span class="sp-goal">${goal ? `🎯 ${esc(goal.title)} · ${pr!.done}/${pr!.total}` : "Focus session"}</span>
       </span>
       <span class="sp-stat" title="Tasks done this session">✅ ${s.tasksDone}</span>
@@ -117,7 +116,7 @@ export function showSessionSummary(s: SessionSummary): void {
     body: `
       <div class="summary">
         <div class="big">${s.completed ? "🎉" : "👋"}</div>
-        <p class="lead">${s.completed ? `You stayed in the zone for <b>${s.minutes} minutes</b>${s.goalTitle ? ` on <b>${esc(s.goalTitle)}</b>` : ""}.` : "Stopped early — no session bonus this time, but your progress counts."}</p>
+        <p class="lead">${s.completed ? `You stayed in the zone for <b>${sessionLength(s.minutes)}</b>${s.goalTitle ? ` on <b>${esc(s.goalTitle)}</b>` : ""}.` : "Stopped early — no session bonus this time, but your progress counts."}</p>
         <div class="stats">
           <div><b>${s.tasksDone}</b><span>tasks done</span></div>
           <div><b>${s.reviews}</b><span>reviews</span></div>

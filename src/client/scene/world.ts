@@ -189,6 +189,8 @@ export class World {
     this.prompt = keySprite("E");
     this.prompt.visible = false;
     this.scene.add(this.prompt);
+    this.board.visible = false;
+    this.scene.add(this.board);
     this.hand = new Hand(look);
     this.camera.add(this.hand.group);
     this.scene.add(this.camera);
@@ -548,6 +550,13 @@ export class World {
     return false;
   }
 
+  /** Hop on or off the skateboard. */
+  setBoard(on: boolean): void {
+    this.board.visible = on;
+    this.me.riding = on;
+  }
+  private board = skateboard();
+
   /** Your own avatar fades out when the camera is pulled in tight behind it. */
   setSelfHidden(hidden: boolean): void {
     if (this.selfHidden === hidden) return;
@@ -629,6 +638,12 @@ export class World {
     const moved = this.player.position.distanceTo(this.lastMe) / Math.max(dt, 1e-3);
     this.lastMe.copy(this.player.position);
     this.me.update(dt, moved);
+    if (this.board.visible) {
+      this.board.position.set(this.player.position.x, this.player.position.y, this.player.position.z);
+      this.board.rotation.y = this.player.rotation.y;
+      // The wheels roll with how fast you're going.
+      for (const w of this.board.userData.wheels as THREE.Mesh[]) w.rotation.x += moved * dt * 9;
+    }
 
     for (const view of this.peers.values()) {
       const root = view.person.root;
@@ -950,3 +965,37 @@ function keySprite(key: string): THREE.Sprite {
 }
 
 export type Quality = "high" | "balanced" | "fast";
+
+/** A skateboard: a deck with kicked-up ends, trucks and four wheels. */
+function skateboard(): THREE.Group {
+  const g = new THREE.Group();
+  const deckMat = new THREE.MeshToonMaterial({ color: "#ff8a5b" });
+  const deck = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.03, 0.62), deckMat);
+  deck.position.y = 0.11;
+  g.add(deck);
+  for (const sz of [-1, 1]) {
+    const kick = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.03, 0.12), deckMat);
+    kick.position.set(0, 0.135, sz * 0.36);
+    kick.rotation.x = sz * -0.45;
+    g.add(kick);
+  }
+  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.005, 0.58), new THREE.MeshToonMaterial({ color: "#2b2d42" }));
+  grip.position.y = 0.128;
+  g.add(grip);
+  const wheels: THREE.Mesh[] = [];
+  const wheelMat = new THREE.MeshToonMaterial({ color: "#ffd166" });
+  for (const z of [-0.2, 0.2]) {
+    const truck = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.03, 0.04), new THREE.MeshToonMaterial({ color: "#c9ced8" }));
+    truck.position.set(0, 0.075, z);
+    g.add(truck);
+    for (const x of [-0.12, 0.12]) {
+      const w = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.03, 12), wheelMat);
+      w.rotation.z = Math.PI / 2;
+      w.position.set(x, 0.04, z);
+      g.add(w);
+      wheels.push(w);
+    }
+  }
+  g.userData.wheels = wheels;
+  return g;
+}
