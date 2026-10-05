@@ -145,7 +145,25 @@ function buildMenu(project: string): void {
   );
 }
 
+/**
+ * On macOS and Linux an app opened from the Dock or a launcher doesn't get
+ * your shell's PATH (Homebrew, npm's global folder, nvm…), so the agent CLIs
+ * would look missing. Take PATH from your login shell, as a terminal would.
+ */
+function loadShellPath(): void {
+  if (process.platform === "win32") return;
+  const shell = process.env.SHELL || (process.platform === "darwin" ? "/bin/zsh" : "/bin/bash");
+  try {
+    const out = execFileSync(shell, ["-ilc", 'printf "__PATH__%s__PATH__" "$PATH"'], { encoding: "utf8", timeout: 5000, stdio: ["ignore", "pipe", "ignore"] });
+    const path = /__PATH__(.*)__PATH__/s.exec(out)?.[1]?.trim();
+    if (path) process.env.PATH = [...new Set([...path.split(":"), ...(process.env.PATH ?? "").split(":")])].filter(Boolean).join(":");
+  } catch {
+    /* keep the PATH we have */
+  }
+}
+
 async function createWindow(): Promise<void> {
+  loadShellPath();
   // Workers need a folder to work in before the server starts.
   const project = resolveProject();
   process.env.DOMAIN_CWD = project;
