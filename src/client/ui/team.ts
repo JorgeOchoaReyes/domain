@@ -529,7 +529,7 @@ function openEditor(
     const voices = listVoices();
     voiceIn.innerHTML =
       `<option value="">Auto — picked for its agent</option>` +
-      voices.map((v) => `<option value="${esc(v.name)}" ${v.name === c.voice ? "selected" : ""}>${esc(v.name)} (${esc(v.lang)})</option>`).join("");
+      voices.map((v) => `<option value="${esc(v.name)}" ${v.name === c.voice ? "selected" : ""}>${esc(v.label ?? v.name)} (${esc(v.lang)})</option>`).join("");
   };
   fillVoices();
   if (typeof speechSynthesis !== "undefined" && !listVoices().length) setTimeout(fillVoices, 600);

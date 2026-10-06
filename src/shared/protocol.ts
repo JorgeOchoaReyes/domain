@@ -277,6 +277,10 @@ export type ClientMessage =
   | { t: "eodSync" }
   /** A lesson you teach the team yourself; or take one back (a lesson by its line, a note by its time). */
   | { t: "lessonTeach"; text: string }
+  /** ElevenLabs voices: what's there, your API key (host only; "" removes it), and speech in one of them. */
+  | { t: "voicesGet" }
+  | { t: "voicesKey"; key: string }
+  | { t: "tts"; id: string; text: string; voice: string }
   | { t: "lessonForget"; lesson?: string; noteAt?: number }
   | { t: "goalDelete"; goalId: string }
   | { t: "taskAdd"; goalId: string; title: string }
@@ -438,6 +442,9 @@ export type ServerMessage =
   | { t: "history"; events: HistoryEvent[] }
   | { t: "skills"; seen: SkillSeen[] }
   | { t: "lessons"; state: LessonsState; syncing: boolean }
+  | { t: "voices"; state: VoicesState }
+  /** Speech for a "tts" request: MP3 as base64, or why not. */
+  | { t: "ttsAudio"; id: string; audio?: string; error?: string }
   | { t: "alumni"; list: Alumnus[] }
   | { t: "historyEvent"; event: HistoryEvent }
   /** Every chat thread, with its history. */
@@ -466,6 +473,21 @@ export type ServerMessage =
  * or exited non-zero; shipped: a goal shipped or was delivered.
  */
 export type LoopEvent = "planned" | "deck" | "deployStarted" | "deployFailed" | "shipped" | "timeUp" | "checkFailed" | "merged" | "mergeFailed" | "warn";
+
+/** An ElevenLabs voice, for the voice pickers. */
+export interface VoiceInfo {
+  id: string;
+  name: string;
+  /** e.g. "female, british, calm". */
+  about: string;
+}
+
+/** Whether ElevenLabs is set up (a working API key), and its voices. */
+export interface VoicesState {
+  on: boolean;
+  voices: VoiceInfo[];
+  error?: string;
+}
 
 /** Something a worker says back during its review, dropped as a reply file. */
 export function coerceReply(raw: unknown): { say: string; at: number } | null {

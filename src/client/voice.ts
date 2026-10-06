@@ -1,11 +1,90 @@
-import type { AgentKind } from "../shared/protocol.js";
+import type { AgentKind, ClientMessage, ServerMessage, VoicesState } from "../shared/protocol.js";
 
 /**
  * Browser-native voice: text-to-speech for an agent's presentation, and
  * speech-to-text (dictation) for your spoken feedback. Both use the Web Speech
  * API, which is free and built into Chromium (so it Just Works in the Electron
  * app). Everything degrades gracefully when the API is missing.
+ *
+ * With an ElevenLabs API key (Office → Voices), workers can speak in
+ * ElevenLabs voices instead: a character's voice "el:<id>", or every worker
+ * with no voice of its own. The server makes the speech (it holds the key);
+ * if that fails for any reason, the browser's voice says it instead.
  */
+
+// --- ElevenLabs ---------------------------------------------------------------
+
+let eleven: VoicesState = { on: false, voices: [] };
+let sendMsg: ((m: ClientMessage) => void) | null = null;
+const waiting = new Map<string, (audio: string | null) => void>();
+let onVoices: (() => void) | null = null;
+const AUTO_KEY = "domain.elevenAuto";
+
+/** Plug voices into the connection: ask what's there now. */
+export function useVoices(send: (m: ClientMessage) => void): void {
+  sendMsg = send;
+  send({ t: "voicesGet" });
+}
+
+/** Feed every server message through here. */
+export function ingestVoices(msg: ServerMessage): void {
+  if (msg.t === "voices") {
+    eleven = msg.state;
+    onVoices?.();
+  } else if (msg.t === "ttsAudio") {
+    waiting.get(msg.id)?.(msg.audio ?? null);
+    waiting.delete(msg.id);
+  }
+}
+
+export function elevenState(): VoicesState {
+  return eleven;
+}
+
+/** Run when the ElevenLabs state changes (one listener: the open Voices window). */
+export function watchVoices(fn: (() => void) | null): void {
+  onVoices = fn;
+}
+
+/** Whether workers without a voice of their own use ElevenLabs (when it's set up). */
+export function elevenAuto(): boolean {
+  try {
+    return localStorage.getItem(AUTO_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+export function setElevenAuto(on: boolean): void {
+  try {
+    localStorage.setItem(AUTO_KEY, on ? "1" : "0");
+  } catch {
+    /* storage blocked */
+  }
+}
+
+/** The ElevenLabs voice to use, if any: the one chosen, else one per agent when auto is on. */
+function elevenVoice(agent: AgentKind, voiceName: string): string | null {
+  if (!eleven.on || !eleven.voices.length) return null;
+  if (voiceName.startsWith("el:")) return eleven.voices.some((v) => `el:${v.id}` === voiceName) ? voiceName.slice(3) : null;
+  if (voiceName || !elevenAuto()) return null;
+  const order: AgentKind[] = ["claude", "codex", "opencode", "gemini"];
+  return eleven.voices[Math.max(0, order.indexOf(agent)) % eleven.voices.length].id;
+}
+
+let audio: HTMLAudioElement | null = null;
+let ttsSeq = 0;
+
+function elevenAudio(text: string, voice: string): Promise<string | null> {
+  if (!sendMsg) return Promise.resolve(null);
+  const id = `tts-${Date.now()}-${++ttsSeq}`;
+  return new Promise((resolve) => {
+    waiting.set(id, resolve);
+    setTimeout(() => {
+      if (waiting.delete(id)) resolve(null);
+    }, 15_000);
+    sendMsg!({ t: "tts", id, text: text.slice(0, 1200), voice });
+  });
+}
 
 // --- text to speech ---------------------------------------------------------
 
@@ -37,10 +116,16 @@ function voiceFor(agent: AgentKind): SpeechSynthesisVoice | null {
 }
 
 /** The voices this browser can speak with (English first), for picking a character's voice. */
-export function listVoices(): { name: string; lang: string }[] {
+export function listVoices(): { name: string; lang: string; label?: string }[] {
   if (ttsSupported() && !voiceList.length) loadVoices();
   const en = (v: SpeechSynthesisVoice) => (v.lang.toLowerCase().startsWith("en") ? 0 : 1);
-  return [...voiceList].sort((a, b) => en(a) - en(b) || a.name.localeCompare(b.name)).map((v) => ({ name: v.name, lang: v.lang }));
+  const el = eleven.on ? eleven.voices.map((v) => ({ name: `el:${v.id}`, lang: v.about ? `ElevenLabs · ${v.about}` : "ElevenLabs", label: v.name })) : [];
+  return [...el, ...[...voiceList].sort((a, b) => en(a) - en(b) || a.name.localeCompare(b.name)).map((v) => ({ name: v.name, lang: v.lang }))];
+}
+
+/** A voice's name to show (ElevenLabs voices are kept as "el:<id>"). */
+export function voiceLabel(name: string): string {
+  return name.startsWith("el:") ? (eleven.voices.find((v) => `el:${v.id}` === name)?.name ?? "ElevenLabs voice") : name;
 }
 
 export function ttsSupported(): boolean {
@@ -53,6 +138,38 @@ export function ttsSupported(): boolean {
  * when it is cancelled).
  */
 export function speak(text: string, agent: AgentKind, onEnd?: () => void, voiceName = ""): void {
+  const el = text.trim() ? elevenVoice(agent, voiceName) : null;
+  if (el) {
+    stopSpeaking();
+    const token = {};
+    elToken = token;
+    void elevenAudio(text, el).then((mp3) => {
+      if (elToken !== token) return; // cancelled meanwhile
+      if (!mp3) return speakBrowser(text, agent, onEnd, voiceName.startsWith("el:") ? "" : voiceName);
+      const a = new Audio(`data:audio/mpeg;base64,${mp3}`);
+      audio = a;
+      a.onended = () => {
+        if (audio === a) {
+          audio = null;
+          onEnd?.();
+        }
+      };
+      a.play().catch(() => {
+        if (audio === a) {
+          audio = null;
+          speakBrowser(text, agent, onEnd, "");
+        }
+      });
+    });
+    return;
+  }
+  speakBrowser(text, agent, onEnd, voiceName.startsWith("el:") ? "" : voiceName);
+}
+
+/** The ElevenLabs request in flight (a newer speak or a stop cancels it). */
+let elToken: object | null = null;
+
+function speakBrowser(text: string, agent: AgentKind, onEnd?: () => void, voiceName = ""): void {
   if (!ttsSupported() || !text.trim()) {
     if (onEnd) setTimeout(onEnd, 1500);
     return;
@@ -90,6 +207,11 @@ export function speak(text: string, agent: AgentKind, onEnd?: () => void, voiceN
 }
 
 export function stopSpeaking(): void {
+  elToken = null;
+  if (audio) {
+    audio.pause();
+    audio = null;
+  }
   current = null;
   if (ttsSupported()) speechSynthesis.cancel();
 }

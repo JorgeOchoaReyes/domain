@@ -1,7 +1,8 @@
 import { ingestAlumni, openFire } from "./ui/fire.js";
 import { ingestLessons, openLessons } from "./ui/lessons.js";
 import { ingestSkills } from "./ui/skills.js";
-import { osDictationHint } from "./voice.js";
+import { ingestVoices, osDictationHint, useVoices } from "./voice.js";
+import { openVoices } from "./ui/voices.js";
 import type { AgentKind, ClientMessage, Desk, Look, OfficeState, Presentation } from "../shared/protocol.js";
 import { AGENT_LABELS, DEFAULT_LOOK, coerceLook } from "../shared/protocol.js";
 import {
@@ -223,6 +224,7 @@ hudRoot.querySelector('.dock [data-act="settings"]')?.before(officeBtn);
 const officeTiles: OfficeTile[] = [
   { key: "projects", icon: "github", title: "Projects & GitHub", text: "Which project your workers are on — switch, or clone one from GitHub", run: () => openProjects(projectActions()) },
   { key: "team", icon: "👥", title: "Your team", text: "Characters with names, looks, voices and personas you hire again and again", run: () => openTeam(teamCtx()) },
+  { key: "voices", icon: "🗣", title: "Voices", text: "Lifelike ElevenLabs voices for your workers, with your API key", run: () => openVoices((m) => net.send(m), !guestRole()) },
   { key: "lessons", icon: "📚", title: "Lessons", text: "What your team has learned from your feedback and each other — and the end-of-day sync", run: () => openLessons((m) => net.send(m)) },
   { key: "history", icon: "📜", title: "History", text: "Everything you and your workers have done — by day, or by worker", run: () => openHistory((m) => net.send(m)) },
   { key: "chat", icon: "💬", title: "Team chat", text: "Message any worker, or everyone — see what each is doing and what it has done", run: () => openChat() },
@@ -349,6 +351,7 @@ net.onMessage = (msg) => {
   ingestHistory(msg);
   ingestSkills(msg);
   ingestLessons(msg);
+  ingestVoices(msg);
   ingestAlumni(msg);
   ingestGithub(msg);
   if (msg.t === "project") showProject();
@@ -375,6 +378,7 @@ net.onMessage = (msg) => {
       net.send({ t: "ideasGet" });
       net.send({ t: "agentsGet" });
       net.send({ t: "chatGet" });
+      useVoices((m) => net.send(m));
       net.send({ t: "historyGet" });
       break;
     case "office":
