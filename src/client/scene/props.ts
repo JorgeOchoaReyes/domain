@@ -138,12 +138,20 @@ export interface ModelOpts {
 /** Told about each model as it loads (set by buildProps, which passes it on). */
 let modelLoaded: (m: THREE.Object3D) => void = () => {};
 
+/** Every model placed so far, in when it's in (or failed): the warm-up waits for them. */
+const placing: Promise<unknown>[] = [];
+
+/** Settles when every model placed so far is in the scene (or isn't coming). */
+export function modelsPlaced(): Promise<unknown> {
+  return Promise.allSettled(placing);
+}
+
 /** A Kenney model, placed: an empty group now, filled in when it has loaded. */
 export function model(name: string, o: ModelOpts): THREE.Group {
   const g = new THREE.Group();
   g.position.set(o.x, o.y ?? 0, o.z);
   g.rotation.y = o.rotY ?? 0;
-  load(name)
+  const placed = load(name)
     .then((src) => {
       const m = src.clone(true);
       const own = new Map<string, THREE.MeshToonMaterial>();
@@ -182,6 +190,7 @@ export function model(name: string, o: ModelOpts): THREE.Group {
     .catch(() => {
       /* a missing model just isn't there */
     });
+  placing.push(placed);
   return g;
 }
 
