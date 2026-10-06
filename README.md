@@ -222,7 +222,11 @@ building:
   speed boost), catch the news on the lobby **radio**, click the **floor lamp**,
   squeeze the **teddy** on the couch, pet **Pixel the lobby cat** as she makes
   her rounds, and play **paper toss** at the bin in your office (farther is
-  worth more). Furniture from Kenney's CC0 kit — see `docs/ASSETS.md`.
+  worth more). Grab a snack from the **vending machine** by the lounge, play a
+  match of **air hockey** or a ball of **pinball** in the game room, take a
+  **donut** at the stand-up (while they last), and play **fetch with Biscuit**,
+  the dog on the lawn out front. Models from Kenney's CC0 kits — see
+  `docs/ASSETS.md`.
 - **Out back**, behind the building: a **running track** (run a lap through the
   start arch and it's timed, best kept), a **campfire** with logs to sit and
   work on (and marshmallows to roast), a **garden** that blooms as you water it
@@ -781,7 +785,7 @@ Environment variables:
 | `B`           | Skateboard on / off — twice as fast, and you glide |
 | `C`           | Team chat |
 | `Q`           | Put your coffee down |
-| `E`           | Use whatever the floating **E** marks: hire, terminal, office hours, the idea boards, the jukeboxes, coffee, arcades, hoops, the ball, the elevator, your laptop where you left it, darts, the piano, the vending machine, treadmills, the breathing mats, the bookshelf, the telescope, fishing, the garden, the campfire, the microwave, the radio, the lamp, the teddy, the cat, paper toss |
+| `E`           | Use whatever the floating **E** marks: hire, terminal, office hours, the idea boards, the jukeboxes, coffee, arcades, hoops, the ball, the elevator, your laptop where you left it, darts, the piano, the vending machine, treadmills, the breathing mats, the bookshelf, the telescope, fishing, the garden, the campfire, the microwave, the radio, the lamp, the teddy, the cat, paper toss, the office vending machine, air hockey, pinball, the donuts, Biscuit the dog |
 | `T`           | Fast travel |
 | `U`           | Stand-up |
 | `G`           | Goals |

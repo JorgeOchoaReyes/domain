@@ -31,6 +31,7 @@ import { buildOffice, type Collider, type LiveBoard, type Office } from "./offic
 import { buildRooms, type Rooms } from "./rooms.js";
 import { buildGameRoom, type GameRoom } from "./gameroom.js";
 import { buildProps, type Props } from "./props.js";
+import { addExtras, type Extras } from "./extras.js";
 import { Hoops, SoccerBall } from "./minigames.js";
 import { Hand } from "./hand.js";
 import {
@@ -126,6 +127,8 @@ export class World {
   readonly park: Parkland;
   /** Kenney's furniture and things to use: popcorn, the radio, the lamp, the cat, paper toss. */
   readonly props: Props;
+  /** The second batch's props out on the grounds and on floor 2 (the office's are in props.group). */
+  private extras: Extras;
   private laptops = new Map<string, Laptop>();
   private workers = new Map<string, WorkerView>();
   private peers = new Map<string, PeerView>();
@@ -190,6 +193,9 @@ export class World {
     this.scene.add(this.park.group);
     this.props = buildProps();
     this.scene.add(this.props.group);
+    this.extras = addExtras(this.props);
+    this.scene.add(this.extras.grounds, this.extras.upstairs);
+    this.extras.upstairs.visible = false;
     this.colliders = [...this.office.colliders, ...this.rooms.colliders, ...this.gameRoom.colliders, ...this.upstairs.colliders, ...this.park.colliders, ...this.props.colliders];
     this.collectOccludable([this.office.group, this.rooms.group, this.gameRoom.group]);
     // Props' models load after this: each joins the camera's see-through pass as it arrives.
@@ -975,6 +981,8 @@ export class World {
     this.upstairs.group.visible = up;
     this.rooms.group.visible = !up;
     this.park.group.visible = !up && seeGrounds;
+    this.extras.grounds.visible = !up && seeGrounds;
+    this.extras.upstairs.visible = up;
     this.office.group.visible = !outside && !up;
     this.gameRoom.group.visible = !outside && !up;
     this.props.group.visible = !outside && !up;
