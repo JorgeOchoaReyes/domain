@@ -1534,6 +1534,16 @@ const activities = new Activities({
   busy: () => modalOpen(),
 });
 
+// Popcorn, the radio, the lamp, the teddy, the cat, paper toss: what they make happen.
+world.props.onEvent = (e) => {
+  if (e.boostMs) player.boostFor(e.boostMs);
+  if (e.toast) hud.toast(e.toast);
+  if (e.sound === "squeak") {
+    sound.note(1320);
+    sound.note(1760, 0.08);
+  } else if (e.sound) sound[e.sound]();
+};
+
 /** E in the game room, kitchen, stand-up room, outside… Returns true if it did something. */
 // --- your laptop, put down somewhere --------------------------------------------------------
 
@@ -1593,6 +1603,7 @@ function sitAndWork(spot: WorkSpot): void {
 function interactFun(): boolean {
   const { x, z } = player.position;
   if (activities.use()) return true;
+  if (world.props.use(x, z)) return true;
   const spot = nearWorkSpot();
   if (spot && spot.id === laptopSpot?.id) {
     sitAndWork(spot);
@@ -1667,6 +1678,8 @@ function promptTarget(): { x: number; y: number; z: number } | null {
   const { x, z } = player.position;
   const act = activities.near();
   if (act) return act.key;
+  const prop = world.props.near(x, z);
+  if (prop) return prop.key;
   if (atUpElevator()) return { x: UP_ELEVATOR.x, y: 3.0, z: UPSTAIRS.minZ + 0.4 };
   const arcade = nearArcade();
   if (arcade) return { x: arcade.x, y: 2.35, z: arcade.z };
@@ -1696,6 +1709,8 @@ function promptTarget(): { x: number; y: number; z: number } | null {
 function hintFun(): string | null {
   const act = activities.near();
   if (act) return `<span class="title">${act.title}</span> ${act.id === "tread" ? "" : '<span class="key">E</span> '}${act.hint}`;
+  const prop = world.props.near(player.position.x, player.position.z);
+  if (prop) return `<span class="title">${prop.title}</span> <span class="key">E</span> ${prop.hint}`;
   if (atUpElevator()) return `<span class="title">🛗 Elevator · Floor 2</span> <span class="key">E</span> Down to the office, or anywhere`;
   const arcade = nearArcade();
   if (arcade) {

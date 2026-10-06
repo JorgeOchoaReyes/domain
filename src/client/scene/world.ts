@@ -30,6 +30,7 @@ import { Laptop } from "./laptop.js";
 import { buildOffice, type Collider, type LiveBoard, type Office } from "./office.js";
 import { buildRooms, type Rooms } from "./rooms.js";
 import { buildGameRoom, type GameRoom } from "./gameroom.js";
+import { buildProps, type Props } from "./props.js";
 import { Hoops, SoccerBall } from "./minigames.js";
 import { Hand } from "./hand.js";
 import {
@@ -123,6 +124,8 @@ export class World {
   readonly upstairs: Upstairs;
   /** Out back: the track, the campfire, the garden, the pond. */
   readonly park: Parkland;
+  /** Kenney's furniture and things to use: popcorn, the radio, the lamp, the cat, paper toss. */
+  readonly props: Props;
   private laptops = new Map<string, Laptop>();
   private workers = new Map<string, WorkerView>();
   private peers = new Map<string, PeerView>();
@@ -185,7 +188,9 @@ export class World {
     this.upstairs.group.visible = false;
     this.park = buildParkland();
     this.scene.add(this.park.group);
-    this.colliders = [...this.office.colliders, ...this.rooms.colliders, ...this.gameRoom.colliders, ...this.upstairs.colliders, ...this.park.colliders];
+    this.props = buildProps();
+    this.scene.add(this.props.group);
+    this.colliders = [...this.office.colliders, ...this.rooms.colliders, ...this.gameRoom.colliders, ...this.upstairs.colliders, ...this.park.colliders, ...this.props.colliders];
     this.collectOccludable([this.office.group, this.rooms.group, this.gameRoom.group]);
     this.occluders = [...cameraOccluders(), ...this.upstairs.occluders];
     this.occluders.push({
@@ -701,6 +706,7 @@ export class World {
     this.rooms.update(dt, now, { x: pp.x, z: pp.z });
     this.cullAreas();
     this.gameRoom.update(dt, now);
+    if (this.props.group.visible) this.props.update(dt, now);
     // Breaks start (and move on) with time, not just when the office changes.
     if (now - this.lastBreakLook > 3000 && this.desks.length) {
       this.lastBreakLook = now;
@@ -966,6 +972,7 @@ export class World {
     this.park.group.visible = !up && seeGrounds;
     this.office.group.visible = !outside && !up;
     this.gameRoom.group.visible = !outside && !up;
+    this.props.group.visible = !outside && !up;
     a.kitchen.visible = !outside;
     a.standup.visible = !outside;
     a.grounds.visible = seeGrounds;
