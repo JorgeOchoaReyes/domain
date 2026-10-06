@@ -1229,7 +1229,12 @@ for (const make of MODULES) {
 }
 
 /** Resolves to the base URL once the server is accepting connections. */
-export const serverReady: Promise<string> = new Promise((resolve) => {
+export const serverReady: Promise<string> = new Promise((resolve, reject) => {
+  // Can't listen (the port's taken): say so, rather than wait forever for a ready that won't come.
+  httpServer.once("error", (e) => {
+    console.error(`domain server couldn't listen on ${HOST}:${PORT}: ${e.message}`);
+    reject(e);
+  });
   httpServer.listen(PORT, HOST, () => {
     const url = `http://${HOST}:${PORT}`;
     console.log(`domain server listening on ${url}`);

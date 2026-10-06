@@ -20,7 +20,7 @@
     "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.client.json --noEmit && tsc -p tsconfig.electron.json --noEmit",
     "start": "node bin/domain.js",
     "electron": "npm run build && npm run build:electron && electron dist/electron/main.js",
-    "electron:dev": "npm run build:server && npm run build:electron && concurrently -k -n server,vite,electron \"tsx watch src/server/index.ts\" \"vite\" \"cross-env DOMAIN_ELECTRON_URL=http://localhost:5173 electron dist/electron/main.js\"",
+    "electron:dev": "npm run build:server && npm run build:electron && concurrently -k -n server,vite,electron \"tsx watch src/server/index.ts\" \"vite\" \"cross-env DOMAIN_ELECTRON_URL=http://localhost:5173 DOMAIN_EXTERNAL_SERVER=1 electron dist/electron/main.js\"",
     "test": "node --import tsx --test tests/*.test.ts",
     "dist": "npm run build && npm run build:electron && electron-builder",
     "dist:dir": "npm run build && npm run build:electron && electron-builder --dir"

@@ -172,7 +172,19 @@ async function createWindow(): Promise<void> {
   // The usual port, or any free one if something else has it (another app, a dev server).
   if (!process.env.PORT) process.env.PORT = String(await freePort(8787));
 
-  const serverUrl = await startServer();
+  // In development the office's server is already running (npm run electron:dev starts it):
+  // a second one here would race it for the port. Otherwise start ours — and whatever
+  // happens, the window opens (with the reason, if the office couldn't start).
+  let serverUrl = "";
+  let failed = "";
+  if (!process.env.DOMAIN_EXTERNAL_SERVER) {
+    try {
+      serverUrl = await startServer();
+    } catch (e) {
+      failed = e instanceof Error ? e.message : String(e);
+      console.error("The office's server couldn't start:", failed);
+    }
+  }
   const target = process.env.DOMAIN_ELECTRON_URL || serverUrl;
 
   const win = new BrowserWindow({
@@ -208,6 +220,11 @@ async function createWindow(): Promise<void> {
     callback(permission === "media" || permission === "pointerLock");
   });
 
+  if (!target) {
+    dialog.showErrorBox("domain couldn't open the office", `${failed || "The office's server didn't start."}\n\nTry quitting and opening domain again. If it keeps happening, another program may be using its port.`);
+    await win.loadURL(WAITING_PAGE).catch(() => {});
+    return;
+  }
   await openOffice(win, target);
 }
 
