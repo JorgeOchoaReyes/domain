@@ -218,6 +218,11 @@ building:
   and fountain, a five-a-side pitch with a ball you can dribble and kick, picnic
   tables, a street. Walk all the way round the building; the sky follows your
   real time of day.
+- **Little things to use**: pop popcorn in the kitchen **microwave** (a minute's
+  speed boost), catch the news on the lobby **radio**, click the **floor lamp**,
+  squeeze the **teddy** on the couch, pet **Pixel the lobby cat** as she makes
+  her rounds, and play **paper toss** at the bin in your office (farther is
+  worth more). Furniture from Kenney's CC0 kit — see `docs/ASSETS.md`.
 - **Out back**, behind the building: a **running track** (run a lap through the
   start arch and it's timed, best kept), a **campfire** with logs to sit and
   work on (and marshmallows to roast), a **garden** that blooms as you water it
@@ -776,7 +781,7 @@ Environment variables:
 | `B`           | Skateboard on / off — twice as fast, and you glide |
 | `C`           | Team chat |
 | `Q`           | Put your coffee down |
-| `E`           | Use whatever the floating **E** marks: hire, terminal, office hours, the idea boards, the jukeboxes, coffee, arcades, hoops, the ball, the elevator, your laptop where you left it, darts, the piano, the vending machine, treadmills, the breathing mats, the bookshelf, the telescope, fishing, the garden, the campfire |
+| `E`           | Use whatever the floating **E** marks: hire, terminal, office hours, the idea boards, the jukeboxes, coffee, arcades, hoops, the ball, the elevator, your laptop where you left it, darts, the piano, the vending machine, treadmills, the breathing mats, the bookshelf, the telescope, fishing, the garden, the campfire, the microwave, the radio, the lamp, the teddy, the cat, paper toss |
 | `T`           | Fast travel |
 | `U`           | Stand-up |
 | `G`           | Goals |
