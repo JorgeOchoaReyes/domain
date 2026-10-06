@@ -38,8 +38,14 @@ export interface Props {
   near(x: number, z: number): PropSpot | null;
   /** E: use the prop you're at. True if something happened. */
   use(x: number, z: number): boolean;
-  /** Fans spin, the cat wanders, paper flies. */
-  update(dt: number, now: number): void;
+  /**
+   * Fans spin, the cat wanders, paper flies. While you can't see them
+   * (`visible` false: you're outside or upstairs) only what you'd notice
+   * keeps going — the popcorn still dings, a throw still lands.
+   */
+  update(dt: number, now: number, visible?: boolean): void;
+  /** Each model as it finishes loading (after the office is built), already in the group. */
+  onModel: ((model: THREE.Object3D) => void) | null;
   /** Set by the game: plays sounds, shows toasts, boosts you. */
   onEvent: ((e: PropEvent) => void) | null;
 }
@@ -92,6 +98,9 @@ interface ModelOpts {
   ready?: (mats: Map<string, THREE.MeshToonMaterial>, model: THREE.Object3D) => void;
 }
 
+/** Told about each model as it loads (set by buildProps, which passes it on). */
+let modelLoaded: (m: THREE.Object3D) => void = () => {};
+
 /** A Kenney model, placed: an empty group now, filled in when it has loaded. */
 function model(name: string, o: ModelOpts): THREE.Group {
   const g = new THREE.Group();
@@ -130,6 +139,7 @@ function model(name: string, o: ModelOpts): THREE.Group {
       m.position.set(-c.x * k, -bb.min.y * k, -c.z * k);
       g.add(m);
       o.ready?.(own, m);
+      modelLoaded(m);
     })
     .catch(() => {
       /* a missing model just isn't there */
@@ -203,7 +213,8 @@ export function buildProps(): Props {
   const colliders: Collider[] = [];
   const add = (o: THREE.Object3D) => group.add(o);
   const solid = (x: number, z: number, hw: number, hd: number) => colliders.push({ minX: x - hw, maxX: x + hw, minZ: z - hd, maxZ: z + hd });
-  const props: Props = { group, colliders, near, use, update, onEvent: null };
+  const props: Props = { group, colliders, near, use, update, onEvent: null, onModel: null };
+  modelLoaded = (m) => props.onModel?.(m);
   const emit = (e: PropEvent) => props.onEvent?.(e);
 
   // --- just there ------------------------------------------------------------------
@@ -396,7 +407,9 @@ export function buildProps(): Props {
     const make = Math.random() < Math.max(0.15, 1.1 - d * 0.25);
     const points = Math.max(1, Math.round(d));
     const m = new THREE.Mesh(paper, paperMat);
-    const from = new THREE.Vector3(x, 1.4, z);
+    // From your hand, a little in front of you — not from your eyes, where it would fill the view.
+    const lead = Math.min(0.5, d * 0.3) / Math.max(d, 1e-3);
+    const from = new THREE.Vector3(x + (bn.x - x) * lead, 1.15, z + (bn.z - z) * lead);
     // A miss lands beside the bin.
     const a = Math.random() * Math.PI * 2;
     const to = make ? new THREE.Vector3(bn.x, 0.45, bn.z) : new THREE.Vector3(bn.x + Math.cos(a) * 0.45, 0.07, bn.z + Math.sin(a) * 0.45);
@@ -420,7 +433,20 @@ export function buildProps(): Props {
     }
   }
 
-  function update(dt: number, now: number): void {
+  function update(dt: number, now: number, visible = true): void {
+    if (!visible) {
+      // Out of sight: no need to animate, but the popcorn's timer and a throw in the air carry on.
+      if (popping && now >= popping) {
+        popping = 0;
+        if (mwGlass) mwGlass.emissive.set("#000000");
+        emit({ sound: "bell", boostMs: 60_000, toast: "🍿 Ding! Your popcorn's ready — you're a little quicker for a minute" });
+      }
+      for (const f of flying.splice(0)) {
+        f.m.position.copy(f.to);
+        landed(f);
+      }
+      return;
+    }
     for (const f of fans) f.blades.rotation.y += dt * 2.2;
 
     // Popcorn: the glass glows while it hums, kernels hop, then — ding.
@@ -495,7 +521,7 @@ export function buildProps(): Props {
       const f = flying[i];
       f.t = Math.min(1, f.t + dt / 0.7);
       f.m.position.lerpVectors(f.from, f.to, f.t);
-      f.m.position.y += Math.sin(f.t * Math.PI) * (0.6 + f.from.distanceTo(f.to) * 0.15);
+      f.m.position.y += Math.sin(f.t * Math.PI) * (0.3 + f.from.distanceTo(f.to) * 0.12);
       f.m.rotation.x += dt * 10;
       if (f.t >= 1) {
         flying.splice(i, 1);

@@ -192,6 +192,11 @@ export class World {
     this.scene.add(this.props.group);
     this.colliders = [...this.office.colliders, ...this.rooms.colliders, ...this.gameRoom.colliders, ...this.upstairs.colliders, ...this.park.colliders, ...this.props.colliders];
     this.collectOccludable([this.office.group, this.rooms.group, this.gameRoom.group]);
+    // Props' models load after this: each joins the camera's see-through pass as it arrives.
+    this.props.onModel = (m) => {
+      m.updateWorldMatrix(true, true);
+      this.collectOccludable([m]);
+    };
     this.occluders = [...cameraOccluders(), ...this.upstairs.occluders];
     this.occluders.push({
       minX: ELEVATOR.x - ELEVATOR.width / 2,
@@ -706,7 +711,7 @@ export class World {
     this.rooms.update(dt, now, { x: pp.x, z: pp.z });
     this.cullAreas();
     this.gameRoom.update(dt, now);
-    if (this.props.group.visible) this.props.update(dt, now);
+    this.props.update(dt, now, this.props.group.visible);
     // Breaks start (and move on) with time, not just when the office changes.
     if (now - this.lastBreakLook > 3000 && this.desks.length) {
       this.lastBreakLook = now;
