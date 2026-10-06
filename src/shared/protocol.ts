@@ -275,11 +275,18 @@ export type ClientMessage =
   /** The team's lessons (answered with "lessons"), and the end-of-day sync. */
   | { t: "lessonsGet" }
   | { t: "eodSync" }
+  /** A lesson you teach the team yourself; or take one back (a lesson by its line, a note by its time). */
+  | { t: "lessonTeach"; text: string }
+  /** ElevenLabs voices: what's there, your API key (host only; "" removes it), and speech in one of them. */
+  | { t: "voicesGet" }
+  | { t: "voicesKey"; key: string }
+  | { t: "tts"; id: string; text: string; voice: string }
+  | { t: "lessonForget"; lesson?: string; noteAt?: number }
   | { t: "goalDelete"; goalId: string }
   | { t: "taskAdd"; goalId: string; title: string }
   /** Put the worker at a desk on a task (it's briefed in its terminal). */
   | { t: "taskAssign"; goalId: string; taskId: string; deskId: string; brief?: TaskBrief }
-  /** Hand a worker something to do, straight from the chat: tracked as a task (on the session's goal, or "Quick tasks"). */
+  /** Hand a worker something to do, straight from the chat: tracked as a task (on the session's goal, or "Quick tasks"). deskId "any": whoever's free. */
   | { t: "quickTask"; deskId: string; text: string; goalId?: string }
   /** Change the team's defaults for hiring and handing out tasks. */
   | { t: "policySet"; policy: TeamPolicy }
@@ -361,6 +368,8 @@ export type ClientMessage =
   | { t: "chatGet" }
   /** A message to a worker (its desk id) or everyone ("team"); `raw` types it straight into the terminal. */
   | { t: "chatSend"; to: string; text: string; raw?: boolean }
+  /** To the people in the office (#people): never to the workers. */
+  | { t: "peopleSend"; text: string }
   /** What a worker's screen says right now. */
   | { t: "chatPeek"; deskId: string }
   /** A worker's record: its tasks, commits and changed files. */
@@ -435,6 +444,9 @@ export type ServerMessage =
   | { t: "history"; events: HistoryEvent[] }
   | { t: "skills"; seen: SkillSeen[] }
   | { t: "lessons"; state: LessonsState; syncing: boolean }
+  | { t: "voices"; state: VoicesState }
+  /** Speech for a "tts" request: MP3 as base64, or why not. */
+  | { t: "ttsAudio"; id: string; audio?: string; error?: string }
   | { t: "alumni"; list: Alumnus[] }
   | { t: "historyEvent"; event: HistoryEvent }
   /** Every chat thread, with its history. */
@@ -463,6 +475,21 @@ export type ServerMessage =
  * or exited non-zero; shipped: a goal shipped or was delivered.
  */
 export type LoopEvent = "planned" | "deck" | "deployStarted" | "deployFailed" | "shipped" | "timeUp" | "checkFailed" | "merged" | "mergeFailed" | "warn";
+
+/** An ElevenLabs voice, for the voice pickers. */
+export interface VoiceInfo {
+  id: string;
+  name: string;
+  /** e.g. "female, british, calm". */
+  about: string;
+}
+
+/** Whether ElevenLabs is set up (a working API key), and its voices. */
+export interface VoicesState {
+  on: boolean;
+  voices: VoiceInfo[];
+  error?: string;
+}
 
 /** Something a worker says back during its review, dropped as a reply file. */
 export function coerceReply(raw: unknown): { say: string; at: number } | null {

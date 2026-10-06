@@ -4,7 +4,7 @@ import { esc, openModal } from "./modal.js";
 /**
  * Your settings, kept in this browser: how fast you walk and run, mouse
  * sensitivity, field of view, the first-person hand and head bob, the
- * minimap, and sound. Opened from the ⚙ button or with Esc when nothing
+ * minimap, and sound (effects, the background sound, music). Opened from the ⚙ button or with Esc when nothing
  * else is open (a pause menu). Changes apply live.
  */
 
@@ -31,6 +31,11 @@ export interface Settings {
   music: boolean;
   musicVolume: number;
   track: TrackId;
+  /** The sound of the place (hum, murmur, keyboards, wind and birds), and how loud. */
+  ambience: boolean;
+  ambienceVolume: number;
+  /** How loud the sound effects are (footsteps, doors, chimes…; the 🔊 switch mutes them). */
+  fxVolume: number;
   /** Office hours in a window, or on the projector (you in your chair, the slides on the big screen). */
   reviewStyle: "window" | "projector";
 }
@@ -50,6 +55,9 @@ export const DEFAULT_SETTINGS: Settings = {
   music: true,
   musicVolume: 0.35,
   track: "lofi",
+  ambience: true,
+  ambienceVolume: 0.5,
+  fxVolume: 0.8,
   reviewStyle: "window",
 };
 
@@ -68,6 +76,8 @@ export function loadSettings(): Settings {
     s.fov = clamp(s.fov, 50, 100);
     if (!["high", "balanced", "fast"].includes(s.graphics)) s.graphics = "balanced";
     s.musicVolume = clamp(s.musicVolume, 0, 1);
+    s.ambienceVolume = clamp(s.ambienceVolume, 0, 1);
+    s.fxVolume = clamp(s.fxVolume, 0, 1);
     if (s.reviewStyle !== "projector") s.reviewStyle = "window";
     if (!TRACKS.some((t) => t.id === s.track)) s.track = DEFAULT_SETTINGS.track;
     return s;
@@ -161,9 +171,19 @@ export function openSettings(current: Settings, onChange: (s: Settings) => void,
       <label class="st-check"><input type="checkbox" class="st-autogfx" ${s.autoGraphics ? "checked" : ""} /> 🩺 Lower it by itself if the game runs slow</label>
     </section>
     <section>
-      <h3>Display & sound</h3>
+      <h3>Display</h3>
       ${TOGGLES.map((t) => `<label class="st-check"><input type="checkbox" data-t="${t.key}" ${s[t.key] ? "checked" : ""} /> ${t.label}</label>`).join("")}
-      <label class="st-check"><input type="checkbox" class="st-sound" ${extras.muted ? "" : "checked"} /> 🔊 Sound effects</label>
+    </section>
+    <section>
+      <h3>Sound</h3>
+      <label class="st-check"><input type="checkbox" class="st-sound" ${extras.muted ? "" : "checked"} /> 🔊 Sound effects — footsteps, doors, chimes</label>
+      <label class="st-row"><span class="st-label">🔉 Effects volume</span>
+        <input type="range" class="st-fx-vol" min="0" max="1" step="0.05" value="${s.fxVolume}" />
+        <output class="st-fx-out">${Math.round(s.fxVolume * 100)}%</output></label>
+      <label class="st-check"><input type="checkbox" class="st-amb" ${s.ambience ? "checked" : ""} /> 🏢 Background sound — the office's hum, keyboards, a phone down the hall; wind and birds outside</label>
+      <label class="st-row"><span class="st-label">🔉 Background volume</span>
+        <input type="range" class="st-amb-vol" min="0" max="1" step="0.05" value="${s.ambienceVolume}" />
+        <output class="st-amb-out">${Math.round(s.ambienceVolume * 100)}%</output></label>
     </section>
     <section>
       <h3>Office hours</h3>
@@ -190,7 +210,7 @@ export function openSettings(current: Settings, onChange: (s: Settings) => void,
     saveSettings(s);
     onChange({ ...s });
   };
-  body.querySelectorAll<HTMLInputElement>("input[type=range]").forEach((r) =>
+  body.querySelectorAll<HTMLInputElement>("input[type=range][data-k]").forEach((r) =>
     r.addEventListener("input", () => {
       const sl = SLIDERS.find((x) => x.key === r.dataset.k)!;
       s[sl.key] = Number(r.value);
@@ -212,6 +232,20 @@ export function openSettings(current: Settings, onChange: (s: Settings) => void,
       emit();
     }),
   );
+  body.querySelector<HTMLInputElement>(".st-fx-vol")!.addEventListener("input", (e) => {
+    s.fxVolume = Number((e.target as HTMLInputElement).value);
+    body.querySelector(".st-fx-out")!.textContent = `${Math.round(s.fxVolume * 100)}%`;
+    emit();
+  });
+  body.querySelector<HTMLInputElement>(".st-amb")!.addEventListener("change", (e) => {
+    s.ambience = (e.target as HTMLInputElement).checked;
+    emit();
+  });
+  body.querySelector<HTMLInputElement>(".st-amb-vol")!.addEventListener("input", (e) => {
+    s.ambienceVolume = Number((e.target as HTMLInputElement).value);
+    body.querySelector(".st-amb-out")!.textContent = `${Math.round(s.ambienceVolume * 100)}%`;
+    emit();
+  });
   body.querySelector<HTMLInputElement>(".st-music")!.addEventListener("change", (e) => {
     s.music = (e.target as HTMLInputElement).checked;
     emit();

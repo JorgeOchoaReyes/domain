@@ -307,6 +307,17 @@ const eod = new EodSync({
   },
   office: { staffed: activeDesks, workdir: (d) => office.workdir(d), instruct: (d, t) => office.instruct(d, t), nameOf: nameAt },
 });
+/**
+ * Something you said to a worker (or, with no desk, to everyone). When it is
+ * feedback — a rule, a correction, praise — it goes into the team lessons, so
+ * every worker learns from it, not just the one you told.
+ */
+function heard(text: string, deskId: string | undefined, client: ClientRec): void {
+  const about = deskId ? progress.taskAt(deskId)?.title : undefined;
+  // You (the host) are "your manager" in the lessons; a teammate on your network is credited by name.
+  const from = client.role === "host" ? "you" : client.name;
+  if (lessons.heard(text, about, from)) broadcast({ t: "loop", goalId: "", event: "warn", text: `📚 Noted for the team${from === "you" ? "" : ` (from ${from})`}: every worker will learn from that` });
+}
 // Workers hired since the last write get the lessons in their own folder too.
 setInterval(() => lessons.write(), 60_000).unref();
 
@@ -564,7 +575,11 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
     const client = clients.get(ws);
     if (!client) return;
     // Guests from the local network only get what their role allows.
-    if (!allowed(client.role, msg.t)) return;
+    if (!allowed(client.role, msg.t)) {
+      // Speech they can't have: say so now, so their browser's own voice speaks instead of waiting.
+      if (msg.t === "tts" && typeof msg.id === "string") send(ws, { t: "ttsAudio", id: msg.id.slice(0, 40), error: "not allowed" });
+      return;
+    }
 
     // Every message but join and roundup names a desk.
     const deskId = "deskId" in msg ? str(msg.deskId, 64) : null;
@@ -694,6 +709,15 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
         send(ws, { t: "lessons", state: lessons.snapshot, syncing: eod.isRunning });
         break;
       }
+      case "lessonTeach": {
+        const text = str(msg.text, 240);
+        if (text) lessons.teach(text);
+        break;
+      }
+      case "lessonForget": {
+        lessons.forget({ lesson: str(msg.lesson, 240) ?? undefined, noteAt: typeof msg.noteAt === "number" ? msg.noteAt : undefined });
+        break;
+      }
       case "eodSync": {
         void eod.run();
         broadcast({ t: "lessons", state: lessons.snapshot, syncing: true });
@@ -725,17 +749,31 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
       }
       case "quickTask": {
         // "Work on this" from the chat, the laptop or the phone: a real task, tracked and reviewed like any other.
-        const text = str(msg.text, 300)?.trim();
-        if (!text || !office.isStaffed(msg.deskId)) break;
+        // deskId "any": the first free worker takes it — or, with nobody free, it waits on the goal for the next one.
+        const said = str(msg.text, 4000)?.trim();
+        if (!said) break;
+        const toAny = msg.deskId === "any";
+        if (!toAny && !office.isStaffed(msg.deskId)) break;
         const snap = progress.snapshot();
         const open = (id: string | null | undefined) => snap.goals.find((g) => g.id === id && !g.shippedAt && !g.doneAt);
         let goal = open(str(msg.goalId, 64)) ?? open(snap.session?.goalId) ?? snap.goals.find((g) => g.title === "Quick tasks" && !g.shippedAt && !g.doneAt);
         goal ??= progress.createGoal(client.name, "Quick tasks", "Small things handed out from the chat", [], "build") ?? undefined;
         if (!goal) break;
-        const taskId = progress.addTask(goal.id, text);
+        const deskId = toAny ? freeWorker() : msg.deskId;
+        // A long one, handed out now: its first line (or the start) is the title, and all of it goes in the brief.
+        // Waiting for someone, it keeps as much as a title holds.
+        const firstLine = said.split("\n")[0].trim();
+        const max = deskId ? 120 : 300;
+        const title = deskId && firstLine.length <= max ? firstLine : said.length <= max ? said : `${(deskId ? firstLine : said).slice(0, max - 3).trimEnd()}…`;
+        const brief = title === said ? {} : { notes: said };
+        const taskId = progress.addTask(goal.id, title);
         if (!taskId) break;
-        office.onSaid?.(msg.deskId, "you", `🎯 New task: ${text}`);
-        assignTask(client.name, goal.id, taskId, msg.deskId, {});
+        if (!deskId) {
+          send(ws, { t: "loop", goalId: goal.id, event: "warn", text: `🎯 Nobody's free right now — “${title}” is waiting on “${goal.title}” for the next one` });
+          break;
+        }
+        office.onSaid?.(deskId, "you", `🎯 New task: ${said}`);
+        if (assignTask(client.name, goal.id, taskId, deskId, brief)) send(ws, { t: "loop", goalId: goal.id, event: "warn", text: `🎯 ${nameAt(deskId)} is on “${title}”` });
         break;
       }
       case "policySet": {
@@ -815,7 +853,7 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
         break;
       }
       case "say": {
-        if (str(msg.text, 4000) !== null) office.say(msg.deskId, msg.text);
+        if (str(msg.text, 4000) !== null && office.say(msg.deskId, msg.text)) heard(msg.text, msg.deskId, client);
         break;
       }
       default: {
@@ -844,6 +882,18 @@ function warnIfTooBig(model: string): void {
   if (!warning) return;
   log.start("agent", `⚠ ${warning}`).done(false);
   broadcast({ t: "loop", goalId: "", event: "warn", text: `🧠 ${warning}` });
+}
+
+/**
+ * A worker free to take something new: at work today (not asleep), nothing
+ * open on its plate (not mid-task, not presenting one) — idle ones first.
+ */
+function freeWorker(): string | null {
+  const busy = new Set(progress.snapshot().goals.flatMap((g) => g.tasks.filter((t) => t.deskId && t.status !== "done").map((t) => t.deskId!)));
+  const free = office
+    .snapshot()
+    .desks.filter((d) => d.worker && office.isStaffed(d.id) && !busy.has(d.id) && (d.worker.status === "idle" || d.worker.status === "done"));
+  return (free.find((d) => d.worker!.status === "idle") ?? free[0])?.id ?? null;
 }
 
 /** Extra lines for task briefs, from feature modules (e.g. the idea a task came from). */
@@ -1013,6 +1063,7 @@ const ctx: ServerCtx = {
   },
   assignTask,
   briefNotes,
+  heard,
 };
 // Per-session MCP configs from a previous run (e.g. after a crash) can hold tokens: clear them.
 mcpCleanup(CWD);
@@ -1178,7 +1229,12 @@ for (const make of MODULES) {
 }
 
 /** Resolves to the base URL once the server is accepting connections. */
-export const serverReady: Promise<string> = new Promise((resolve) => {
+export const serverReady: Promise<string> = new Promise((resolve, reject) => {
+  // Can't listen (the port's taken): say so, rather than wait forever for a ready that won't come.
+  httpServer.once("error", (e) => {
+    console.error(`domain server couldn't listen on ${HOST}:${PORT}: ${e.message}`);
+    reject(e);
+  });
   httpServer.listen(PORT, HOST, () => {
     const url = `http://${HOST}:${PORT}`;
     console.log(`domain server listening on ${url}`);

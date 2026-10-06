@@ -1,7 +1,9 @@
 import { buildUpstairs, type Upstairs } from "./upstairs.js";
 import { buildParkland, type Parkland } from "./parkland.js";
-import { UPSTAIRS, UP_HEIGHT, inUpstairs, BREAK_SPOTS } from "../../shared/layout.js";
+import { UPSTAIRS, UP_HEIGHT, inUpstairs, BREAK_SPOTS, waitSpot } from "../../shared/layout.js";
 import * as THREE from "three";
+// Only what moved gets its matrices recomputed (see there).
+import "./fastMatrices.js";
 import { OutlineEffect } from "three/examples/jsm/effects/OutlineEffect.js";
 import type { Desk, Look, Peer, Presentation } from "../../shared/protocol.js";
 import type { Idea } from "../../shared/ideas.js";
@@ -30,6 +32,9 @@ import { Laptop } from "./laptop.js";
 import { buildOffice, type Collider, type LiveBoard, type Office } from "./office.js";
 import { buildRooms, type Rooms } from "./rooms.js";
 import { buildGameRoom, type GameRoom } from "./gameroom.js";
+import { buildProps, modelsPlaced, type Props } from "./props.js";
+import { buildCars, drive, type Car, type DriveInput } from "./cars.js";
+import { addExtras, type Extras } from "./extras.js";
 import { Hoops, SoccerBall } from "./minigames.js";
 import { Hand } from "./hand.js";
 import {
@@ -123,6 +128,12 @@ export class World {
   readonly upstairs: Upstairs;
   /** Out back: the track, the campfire, the garden, the pond. */
   readonly park: Parkland;
+  /** Kenney's furniture and things to use: popcorn, the radio, the lamp, the cat, paper toss. */
+  readonly props: Props;
+  /** The cars on the street (you can drive them). */
+  readonly cars: Car[];
+  /** The second batch's props out on the grounds and on floor 2 (the office's are in props.group). */
+  private extras: Extras;
   private laptops = new Map<string, Laptop>();
   private workers = new Map<string, WorkerView>();
   private peers = new Map<string, PeerView>();
@@ -140,6 +151,8 @@ export class World {
   private tmp = new THREE.Vector3();
   /** When each worker last ran out of things to do (for its breaks). */
   private idleSince = new Map<string, number>();
+  /** Workers standing at the stand-up waiting for a task, and where. */
+  private waitingAt = new Map<string, Pt>();
   private lastBreakLook = 0;
   private camAt = new THREE.Vector3();
 
@@ -148,8 +161,11 @@ export class World {
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // Shadows are redrawn when render() says so (see there).
+    this.renderer.shadowMap.autoUpdate = false;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-    this.effect = new OutlineEffect(this.renderer, { defaultThickness: 0.0032, defaultColor: [0.17, 0.18, 0.26] });
+    // keepAlive: an outline material is kept once made — otherwise one unused for a second is thrown away and remade (a hitch) when you come back to that room.
+    this.effect = new OutlineEffect(this.renderer, { defaultThickness: 0.0032, defaultColor: [0.17, 0.18, 0.26], defaultKeepAlive: true });
 
     this.scene.background = new THREE.Color("#bfe3ff");
     this.scene.fog = new THREE.Fog("#bfe3ff", 40, 90);
@@ -183,8 +199,39 @@ export class World {
     this.upstairs.group.visible = false;
     this.park = buildParkland();
     this.scene.add(this.park.group);
-    this.colliders = [...this.office.colliders, ...this.rooms.colliders, ...this.gameRoom.colliders, ...this.upstairs.colliders, ...this.park.colliders];
+    this.props = buildProps();
+    this.scene.add(this.props.group);
+    this.extras = addExtras(this.props);
+    this.scene.add(this.extras.grounds, this.extras.upstairs);
+    this.extras.upstairs.visible = false;
+    const street = buildCars();
+    this.cars = street.cars;
+    // The cars' footprints move with them (they're kept up to date in place).
+    this.colliders = [...this.office.colliders, ...this.rooms.colliders, ...this.gameRoom.colliders, ...this.upstairs.colliders, ...this.park.colliders, ...this.props.colliders, ...street.colliders];
     this.collectOccludable([this.office.group, this.rooms.group, this.gameRoom.group]);
+    // Lights in rooms that get hidden (the game room's neon, the pinball's flash) live in the
+    // scene itself and are only dimmed while their room is hidden: three.js builds its shaders
+    // for an exact number of lights, so a light coming and going recompiled every material on
+    // screen — a fifth of a second's freeze each time you stepped outside or went upstairs.
+    for (const root of [this.office.group, this.rooms.group, this.gameRoom.group, this.props.group, this.upstairs.group, this.park.group, this.extras.grounds, this.extras.upstairs]) {
+      const lights: THREE.Light[] = [];
+      root.traverse((o) => {
+        if ((o as THREE.Light).isLight) lights.push(o as THREE.Light);
+      });
+      for (const light of lights) {
+        const home = light.parent!;
+        this.scene.attach(light);
+        this.areaLights.push({ light, home });
+      }
+    }
+    // The cars go in after: they move, so the see-through pass (fixed boxes) must never hide bits of them — their roofs vanished as you got in.
+    this.rooms.areas.grounds.add(street.group);
+    // Props' models load after this: each joins the camera's see-through pass as it arrives.
+    this.props.onModel = (m) => {
+      m.updateWorldMatrix(true, true);
+      this.collectOccludable([m]);
+      this.warm(m);
+    };
     this.occluders = [...cameraOccluders(), ...this.upstairs.occluders];
     this.occluders.push({
       minX: ELEVATOR.x - ELEVATOR.width / 2,
@@ -278,7 +325,7 @@ export class World {
   /** First person: hide your own avatar so it doesn't fill the view. */
   setFirstPerson(on: boolean): void {
     this.firstPerson = on;
-    this.me.root.visible = !on && !this.selfHidden && !this.xr;
+    this.me.root.visible = !on && !this.selfHidden && !this.xr && !this.inCar;
     this.hand.group.visible = on && this.showHand && !this.xr;
   }
 
@@ -315,10 +362,6 @@ export class World {
   /** Goals and the focus session changed: repaint the Goals board (and the TV). */
   setProgress(p: ProgressState): void {
     this.progress = p;
-    paintGoalsBoard(this.office.boards.goals.canvas, p);
-    this.office.boards.goals.texture.needsUpdate = true;
-    paintGoalsBoard(this.gameRoom.monitors.goals.canvas, p);
-    this.gameRoom.monitors.goals.texture.needsUpdate = true;
     this.setTone(p.session?.tone ?? null);
     this.boardsDirty = true;
   }
@@ -459,6 +502,10 @@ export class World {
     }
 
     const seen = new Set<string>();
+    // Who's free (idle, no task, not in line): they wait at the stand-up for a task, in a ring.
+    const hasTask = (id: string) => this.progress?.goals.some((g) => g.tasks.some((t) => t.deskId === id && t.status !== "done")) ?? false;
+    const freeIds = desks.filter((d) => d.worker?.status === "idle" && !hasTask(d.id) && !spots.has(d.id)).map((d) => d.id);
+    this.waitingAt.clear();
     for (const desk of desks) {
       const w = desk.worker;
       if (!w) continue;
@@ -467,17 +514,25 @@ export class World {
       if (!def) continue;
       const seat = deskSeat(def, 0.93);
       const atDesk = { x: seat.x, z: seat.z, facing: def.rotY + Math.PI, seated: true, key: "desk" };
-      // Nothing to do for a while: off for a break round the lounge (back the moment there's work).
-      const hasTask = this.progress?.goals.some((g) => g.tasks.some((t) => t.deskId === desk.id && t.status !== "done")) ?? false;
-      const free = w.status === "idle" && !hasTask && !spots.has(desk.id);
+      // Nothing to do: off to the stand-up to wait for a task (back to its desk the moment
+      // there's work), with a short break round the lounge now and then.
+      const free = freeIds.includes(desk.id);
       const now = performance.now();
       if (!free) this.idleSince.delete(desk.id);
       else if (!this.idleSince.has(desk.id)) this.idleSince.set(desk.id, now);
       let dest = spots.get(desk.id) ?? atDesk;
-      if (free && now - this.idleSince.get(desk.id)! > 20_000) {
+      if (free && now - this.idleSince.get(desk.id)! > 6_000) {
         const n = Number(desk.id.replace(/\D/g, "")) || 0;
-        const i = (n + Math.floor(now / 45_000)) % BREAK_SPOTS.length;
-        dest = { ...BREAK_SPOTS[i], seated: false, key: `break-${i}` };
+        const onBreak = (now + n * 37_000) % WAIT_CYCLE_MS > WAIT_CYCLE_MS - BREAK_MS;
+        if (onBreak) {
+          const i = (n + Math.floor(now / 45_000)) % BREAK_SPOTS.length;
+          dest = { ...BREAK_SPOTS[i], seated: false, key: `break-${i}` };
+        } else {
+          const at = freeIds.indexOf(desk.id);
+          const s = waitSpot(at);
+          dest = { ...s, seated: false, key: `wait-${at}` };
+          this.waitingAt.set(desk.id, s);
+        }
       }
 
       // One of your characters looks like itself; rebuild the bot if that changed.
@@ -514,7 +569,8 @@ export class World {
       const terms = task ? briefLine(task) : "";
       const mentor = w.internOf ? this.desks.find((x) => x.id === w.internOf)?.worker : null;
       view.bot.name = w.identity?.name ?? (w.internOf ? `Intern of ${mentor?.identity?.name ?? w.internOf.replace("desk-", "desk ")}` : null);
-      view.bot.setCard(w.status, w.hiredBy, terms ? `${w.activity} · ${terms}` : w.activity, desk.id === this.presenting, w.doing ?? "");
+      const activity = this.waitingAt.has(desk.id) ? "🙋 At the stand-up, waiting for a task" : w.activity;
+      view.bot.setCard(w.status, w.hiredBy, terms ? `${activity} · ${terms}` : activity, desk.id === this.presenting, w.doing ?? "");
     }
     for (const id of [...this.workers.keys()]) if (!seen.has(id)) this.removeWorker(id);
   }
@@ -555,6 +611,23 @@ export class World {
   }
 
   // --- queries ------------------------------------------------------------------
+
+  /** A worker waiting at the stand-up for a task, near you (within radius), if any. */
+  waitingWorkerNear(x: number, z: number, radius = 1.6): string | null {
+    let best: string | null = null;
+    let bestD = radius;
+    for (const [id, s] of this.waitingAt) {
+      const view = this.workers.get(id);
+      // Only once it's there, not while it's still walking over.
+      if (!view || Math.hypot(view.pos.x - s.x, view.pos.z - s.z) > 0.6) continue;
+      const d = Math.hypot(view.pos.x - x, view.pos.z - z);
+      if (d < bestD) {
+        best = id;
+        bestD = d;
+      }
+    }
+    return best;
+  }
 
   /** The desk whose chair you're nearest, if any. */
   nearestDesk(x: number, z: number): { id: string; dist: number } | null {
@@ -597,9 +670,16 @@ export class World {
   setSelfHidden(hidden: boolean): void {
     if (this.selfHidden === hidden) return;
     this.selfHidden = hidden;
-    if (!this.firstPerson && !this.xr) this.me.root.visible = !hidden;
+    if (!this.firstPerson && !this.xr) this.me.root.visible = !hidden && !this.inCar;
   }
   private selfHidden = false;
+
+  /** You're in a car: your avatar is inside it (out of sight). */
+  setInCar(on: boolean): void {
+    this.inCar = on;
+    this.me.root.visible = !on && !this.selfHidden && !this.xr && !this.firstPerson;
+  }
+  private inCar = false;
 
   /** How high the camera may go at (x, z): under the ceiling indoors. */
   ceilingAt(x: number, z: number): number {
@@ -616,6 +696,11 @@ export class World {
     }));
   }
 
+  /** Daylight outside right now: 0 night … 1 day (the ambience's birds keep its hours). */
+  get dayLevel(): number {
+    return this.daylight;
+  }
+
   /** Where the other people are, for the minimap. */
   peerSpots(): { x: number; z: number }[] {
     return [...this.peers.values()].map((v) => ({ x: v.person.root.position.x, z: v.person.root.position.z }));
@@ -623,6 +708,11 @@ export class World {
 
   nearReviewDesk(x: number, z: number): boolean {
     return Math.hypot(x - REVIEW_SPOT.x, z - REVIEW_SPOT.z) < 2.2;
+  }
+
+  /** Drive a car one frame; how hard it hit something (0 if it didn't). */
+  driveCar(car: Car, input: DriveInput, dt: number): number {
+    return drive(car, input, dt, this.colliders.filter((c) => c !== car.collider));
   }
 
   resolveCollision(x: number, z: number): [number, number] {
@@ -664,6 +754,7 @@ export class World {
     this.rooms.update(dt, now, { x: pp.x, z: pp.z });
     this.cullAreas();
     this.gameRoom.update(dt, now);
+    this.props.update(dt, now, this.props.group.visible);
     // Breaks start (and move on) with time, not just when the office changes.
     if (now - this.lastBreakLook > 3000 && this.desks.length) {
       this.lastBreakLook = now;
@@ -764,28 +855,86 @@ export class World {
       const sec = Math.floor(Date.now() / 1000);
       if (sec !== this.lastTvSecond) {
         this.lastTvSecond = sec;
-        this.boardsDirty = true;
+        // The clock is only on these two.
+        this.markBoards("tv", "standup");
       }
     }
-
     if (this.boardsDirty) {
       this.boardsDirty = false;
-      const b = this.office.boards;
-      paintWorkersBoard(b.workers.canvas, this.desks);
-      b.workers.texture.needsUpdate = true;
-      const gm = this.gameRoom.monitors.workers;
-      paintWorkersBoard(gm.canvas, this.desks);
-      gm.texture.needsUpdate = true;
-      paintStandupBoard(this.rooms.standupScreen.canvas, this.progress, this.desks);
-      this.rooms.standupScreen.texture.needsUpdate = true;
-      paintLineBoard(b.line.canvas, this.line);
-      b.line.texture.needsUpdate = true;
-      const current = this.line.find((l) => l.deskId === this.presenting) ?? null;
-      const goalTitle = session?.goalId ? (this.progress!.goals.find((g) => g.id === session.goalId)?.title ?? null) : null;
-      paintTv(this.office.tv.canvas, this.line, current, session ?? null, goalTitle);
-      this.office.tv.texture.needsUpdate = true;
-      paintSlide(this.office.screen.canvas, current, this.slide, this.line.length);
-      this.office.screen.texture.needsUpdate = true;
+      this.markBoards();
+    }
+    this.paintABoard(now);
+  }
+
+  // --- the live boards ---------------------------------------------------------------
+  //
+  // Repainting a board means redrawing a big canvas and uploading it to the
+  // GPU — a few milliseconds each. Doing all of them whenever anything in the
+  // office changed (several times a second with busy workers, and every second
+  // in a focus session) made the game hitch. Now a board is repainted only
+  // when what it shows has changed, only while you can see it, and at most one
+  // a frame.
+
+  private boardList: { name: string; tex: THREE.Texture; visible: () => boolean; key: () => string; paint: () => void; dirty: boolean; lastKey: string; lastAt: number }[] | null = null;
+
+  private boards() {
+    if (this.boardList) return this.boardList;
+    const b = this.office.boards;
+    const gm = this.gameRoom.monitors;
+    const here = () => roomAt(this.player.position.x, this.player.position.z).id;
+    const onFloor = () => this.office.group.visible;
+    const inGameRoom = () => this.gameRoom.group.visible && here() === "game";
+    const session = () => this.progress?.session ?? null;
+    const current = () => this.line.find((l) => l.deskId === this.presenting) ?? null;
+    const desksKey = () => JSON.stringify(this.desks);
+    const goalsKey = () => JSON.stringify(this.progress?.goals ?? null) + JSON.stringify(session());
+    const list = [
+      { name: "workers", tex: b.workers.texture, visible: onFloor, key: desksKey, paint: () => paintWorkersBoard(b.workers.canvas, this.desks) },
+      { name: "line", tex: b.line.texture, visible: onFloor, key: () => JSON.stringify(this.line), paint: () => paintLineBoard(b.line.canvas, this.line) },
+      { name: "goals", tex: b.goals.texture, visible: onFloor, key: goalsKey, paint: () => this.progress && paintGoalsBoard(b.goals.canvas, this.progress) },
+      {
+        name: "tv",
+        tex: this.office.tv.texture,
+        visible: onFloor,
+        key: () => `${JSON.stringify(this.line)}|${this.presenting}|${JSON.stringify(session())}|${session() ? Math.floor(Date.now() / 1000) : 0}`,
+        paint: () => {
+          const s = session();
+          const goalTitle = s?.goalId ? (this.progress!.goals.find((g) => g.id === s.goalId)?.title ?? null) : null;
+          paintTv(this.office.tv.canvas, this.line, current(), s, goalTitle);
+        },
+      },
+      { name: "slide", tex: this.office.screen.texture, visible: onFloor, key: () => `${JSON.stringify(current())}|${this.slide}|${this.line.length}`, paint: () => paintSlide(this.office.screen.canvas, current(), this.slide, this.line.length) },
+      { name: "gameWorkers", tex: gm.workers.texture, visible: inGameRoom, key: desksKey, paint: () => paintWorkersBoard(gm.workers.canvas, this.desks) },
+      { name: "gameGoals", tex: gm.goals.texture, visible: inGameRoom, key: goalsKey, paint: () => this.progress && paintGoalsBoard(gm.goals.canvas, this.progress) },
+      {
+        name: "standup",
+        tex: this.rooms.standupScreen.texture,
+        visible: () => this.rooms.areas.standup.visible && (here() === "standup" || here() === "hall"),
+        key: () => `${goalsKey()}|${desksKey()}|${session() ? Math.floor(Date.now() / 1000) : new Date().toDateString()}`,
+        paint: () => paintStandupBoard(this.rooms.standupScreen.canvas, this.progress, this.desks),
+      },
+    ];
+    this.boardList = list.map((x) => ({ ...x, dirty: true, lastKey: "", lastAt: 0 }));
+    return this.boardList;
+  }
+
+  /** These boards (or all of them) may show something new. */
+  private markBoards(...names: string[]): void {
+    for (const b of this.boards()) if (!names.length || names.includes(b.name)) b.dirty = true;
+  }
+
+  /** Repaint one board that changed and that you can see (the rest wait their turn). */
+  private paintABoard(now: number): void {
+    for (const b of this.boards()) {
+      if (!b.dirty || now - b.lastAt < 250 || !b.visible()) continue;
+      b.dirty = false;
+      const key = b.key();
+      if (key === b.lastKey) continue;
+      b.lastKey = key;
+      b.lastAt = now;
+      b.paint();
+      b.tex.needsUpdate = true;
+      return;
     }
   }
 
@@ -806,9 +955,45 @@ export class World {
       return;
     }
     this.updateOcclusion();
-    if (this.outlines) this.effect.render(this.scene, this.camera);
-    else this.renderer.render(this.scene, this.camera);
+    const relight = this.dimHiddenLights();
+    // Shadows: every frame on High; every other frame otherwise (they mostly
+    // follow you and the workers — at 30 a second nobody can tell, and it
+    // halves the shadow pass).
+    this.shadowTick = (this.shadowTick + 1) % 2;
+    this.renderer.shadowMap.needsUpdate = this.quality === "high" || this.shadowTick === 0;
+    if (this.outlines) {
+      // The outline pass walks the scene twice to swap materials: only what's visible
+      // (whole floors and areas are hidden at a time — no need to walk them).
+      const traverse = this.scene.traverse;
+      this.scene.traverse = this.scene.traverseVisible;
+      try {
+        this.effect.render(this.scene, this.camera);
+      } finally {
+        this.scene.traverse = traverse;
+      }
+    } else this.renderer.render(this.scene, this.camera);
+    relight();
     this.trackFrame();
+  }
+  private shadowTick = 0;
+
+  /** Lights moved out of their rooms (see the constructor), and the room each belongs to. */
+  private areaLights: { light: THREE.Light; home: THREE.Object3D }[] = [];
+
+  /** Dim the lights whose room is hidden, for this frame's render; returns how to put them back. */
+  private dimHiddenLights(): () => void {
+    const saved: [THREE.Light, number][] = [];
+    for (const { light, home } of this.areaLights) {
+      let shown = true;
+      for (let o: THREE.Object3D | null = home; o; o = o.parent) if (!o.visible) shown = false;
+      if (!shown && light.intensity !== 0) {
+        saved.push([light, light.intensity]);
+        light.intensity = 0;
+      }
+    }
+    return () => {
+      for (const [l, i] of saved) l.intensity = i;
+    };
   }
 
   /**
@@ -817,22 +1002,53 @@ export class World {
    * the game hitches. Hidden areas are shown for the one off-screen frame.
    */
   async precompile(): Promise<void> {
+    // The model files first (they're small and local), so they're warmed up too — but never wait long.
+    await Promise.race([modelsPlaced(), new Promise((r) => setTimeout(r, 4000))]);
+    // Every board painted once now, seen or not, so the first look at one is just a look.
+    for (const b of this.boards()) {
+      b.paint();
+      b.tex.needsUpdate = true;
+      b.lastKey = b.key();
+      b.dirty = false;
+    }
     const hidden: THREE.Object3D[] = [];
+    // Everything is drawn once, wherever it is: three.js uploads an object's
+    // geometry and textures the first time it's drawn, and doing that the
+    // first time you looked at the lobby or stepped outside froze the game for
+    // up to a quarter of a second. Behind the loading screen, nobody notices.
+    const culled: THREE.Object3D[] = [];
     this.scene.traverse((o) => {
       if (!o.visible) {
         hidden.push(o);
         o.visible = true;
       }
+      if (o.frustumCulled) {
+        culled.push(o);
+        o.frustumCulled = false;
+      }
     });
     try {
       await this.renderer.compileAsync(this.scene, this.camera);
-      // The outline pass makes its own materials the first time it draws each one.
+      // The outline pass makes its own materials the first time it draws each one (and the shadow pass its own).
+      this.renderer.shadowMap.needsUpdate = true;
       if (this.outlines) this.effect.render(this.scene, this.camera);
+      else this.renderer.render(this.scene, this.camera);
     } catch {
       /* compiling ahead is only an optimization */
     } finally {
       for (const o of hidden) o.visible = false;
+      for (const o of culled) o.frustumCulled = true;
     }
+  }
+
+  /** A model that arrived after the warm-up: its textures go up to the GPU now, not the first time you see it. */
+  private warm(model: THREE.Object3D): void {
+    model.traverse((o) => {
+      const mats = (o as THREE.Mesh).material;
+      for (const m of Array.isArray(mats) ? mats : mats ? [mats] : []) {
+        for (const v of Object.values(m)) if (v instanceof THREE.Texture) this.renderer.initTexture(v);
+      }
+    });
   }
 
   /** Run `frame` every frame — in the window or, in VR, at the headset's rate. */
@@ -927,8 +1143,11 @@ export class World {
     this.upstairs.group.visible = up;
     this.rooms.group.visible = !up;
     this.park.group.visible = !up && seeGrounds;
+    this.extras.grounds.visible = !up && seeGrounds;
+    this.extras.upstairs.visible = up;
     this.office.group.visible = !outside && !up;
     this.gameRoom.group.visible = !outside && !up;
+    this.props.group.visible = !outside && !up;
     a.kitchen.visible = !outside;
     a.standup.visible = !outside;
     a.grounds.visible = seeGrounds;
@@ -1073,3 +1292,8 @@ function skateboard(): THREE.Group {
   g.userData.wheels = wheels;
   return g;
 }
+
+/** Free workers wait at the stand-up most of the time, and take a break for part of each cycle. */
+const WAIT_CYCLE_MS = 6 * 60_000;
+const BREAK_MS = 90_000;
+

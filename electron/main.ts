@@ -172,7 +172,19 @@ async function createWindow(): Promise<void> {
   // The usual port, or any free one if something else has it (another app, a dev server).
   if (!process.env.PORT) process.env.PORT = String(await freePort(8787));
 
-  const serverUrl = await startServer();
+  // In development the office's server is already running (npm run electron:dev starts it):
+  // a second one here would race it for the port. Otherwise start ours — and whatever
+  // happens, the window opens (with the reason, if the office couldn't start).
+  let serverUrl = "";
+  let failed = "";
+  if (!process.env.DOMAIN_EXTERNAL_SERVER) {
+    try {
+      serverUrl = await startServer();
+    } catch (e) {
+      failed = e instanceof Error ? e.message : String(e);
+      console.error("The office's server couldn't start:", failed);
+    }
+  }
   const target = process.env.DOMAIN_ELECTRON_URL || serverUrl;
 
   const win = new BrowserWindow({
@@ -208,7 +220,59 @@ async function createWindow(): Promise<void> {
     callback(permission === "media" || permission === "pointerLock");
   });
 
-  await win.loadURL(target);
+  if (!target) {
+    dialog.showErrorBox("domain couldn't open the office", `${failed || "The office's server didn't start."}\n\nTry quitting and opening domain again. If it keeps happening, another program may be using its port.`);
+    await win.loadURL(WAITING_PAGE).catch(() => {});
+    return;
+  }
+  await openOffice(win, target);
+}
+
+/** What the window shows until the office answers: the same card as the page's own loading screen. */
+const WAITING_PAGE = `data:text/html;charset=utf-8,${encodeURIComponent(`<!doctype html><meta charset="utf-8"><title>domain</title>
+<style>html,body{margin:0;height:100%;font-family:Nunito,ui-rounded,"Segoe UI",system-ui,sans-serif;color:#1b1d2e}
+body{display:grid;place-items:center;background:linear-gradient(#bfe3ff,#fff1de)}
+.c{text-align:center}.l{font-size:64px;animation:b 1.4s ease-in-out infinite}h1{margin:6px 0 2px;font-size:40px;font-weight:900}
+p{margin:0 0 16px;font-weight:800;color:#6b6f86}.bar{width:220px;height:14px;margin:0 auto;border:3px solid #1b1d2e;border-radius:999px;background:#fff;overflow:hidden}
+.bar span{display:block;width:40%;height:100%;background:#ff8a5b;border-radius:999px;animation:s 1.1s ease-in-out infinite}
+@keyframes b{50%{transform:translateY(-8px)}}@keyframes s{0%{transform:translateX(-100%)}100%{transform:translateX(250%)}}</style>
+<div class="c"><div class="l">🏢</div><h1>domain</h1><p>Opening the office…</p><div class="bar"><span></span></div></div>`)}`;
+
+/**
+ * Load the office into the window — and never leave it blank. The waiting
+ * card shows at once; the office loads as soon as it answers (in development
+ * the page comes from Vite, which may still be starting, or busy re-bundling
+ * after an install). A load that fails later is retried too.
+ */
+async function openOffice(win: BrowserWindow, target: string): Promise<void> {
+  let waiting = false;
+  const loadWhenUp = async () => {
+    if (waiting) return;
+    waiting = true;
+    await win.loadURL(WAITING_PAGE).catch(() => {});
+    for (let i = 0; i < 240 && !win.isDestroyed(); i++) {
+      if (await reachable(target)) break;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    waiting = false;
+    if (!win.isDestroyed()) await win.loadURL(target).catch(() => {});
+  };
+  win.webContents.on("did-fail-load", (_e, code, _desc, url, isMainFrame) => {
+    // -3 is a navigation that was superseded (e.g. a reload): nothing to retry.
+    if (!isMainFrame || code === -3 || url.startsWith("data:") || win.isDestroyed()) return;
+    setTimeout(() => void loadWhenUp(), 1000);
+  });
+  await loadWhenUp();
+}
+
+/** Whether the page's server answers yet. */
+async function reachable(url: string): Promise<boolean> {
+  try {
+    const r = await fetch(url, { signal: AbortSignal.timeout(2000) });
+    return r.ok;
+  } catch {
+    return false;
+  }
 }
 
 // --- the office's server -------------------------------------------------------------------

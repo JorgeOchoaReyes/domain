@@ -37,8 +37,18 @@ export function escapeModal(): boolean {
   return true;
 }
 
+let onModal: ((open: boolean) => void) | null = null;
+/** Hear windows open and close (one swapped for another counts as an open). */
+export function listenToModals(cb: (open: boolean) => void): void {
+  onModal = cb;
+}
+let swapping = false;
+
 export function openModal(opts: ModalOptions): Modal {
+  swapping = true;
   current?.close();
+  swapping = false;
+  onModal?.(true);
   const backdrop = document.createElement("div");
   backdrop.className = "backdrop";
   const card = document.createElement("div");
@@ -74,6 +84,7 @@ export function openModal(opts: ModalOptions): Modal {
       closed = true;
       backdrop.remove();
       if (current === modal) current = null;
+      if (!swapping) onModal?.(false);
       opts.onClose?.();
     },
     tryClose: () => {

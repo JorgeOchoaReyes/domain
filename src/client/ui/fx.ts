@@ -1,7 +1,8 @@
 /**
  * Celebration: confetti over the screen, and little synthesized sounds (no
- * audio files) for XP, level-ups, a task shipping and a session's bell. All of
- * it respects "reduce motion" and a mute switch remembered in the browser.
+ * audio files) for XP, level-ups, a task shipping and a session's bell, plus
+ * footsteps, doors and windows. All of it respects "reduce motion", a mute
+ * switch remembered in the browser, and the effects volume in Settings.
  */
 
 let muted = (() => {
@@ -29,8 +30,12 @@ const reduceMotion = () => window.matchMedia?.("(prefers-reduced-motion: reduce)
 // --- sound -----------------------------------------------------------------------
 
 let ctx: AudioContext | null = null;
-function audio(): AudioContext | null {
-  if (muted) return null;
+/** Every effect goes through here, so one slider sets how loud they all are. */
+let bus: GainNode | null = null;
+let fxVolume = 0.8;
+
+/** The one AudioContext the effects and the ambience share (null where there's no Web Audio). */
+export function sharedAudio(): AudioContext | null {
   try {
     ctx ??= new AudioContext();
     if (ctx.state === "suspended") void ctx.resume();
@@ -38,6 +43,23 @@ function audio(): AudioContext | null {
   } catch {
     return null;
   }
+}
+
+/** How loud the effects are, 0..1 (Settings → Sound). */
+export function setFxVolume(v: number): void {
+  fxVolume = Math.max(0, Math.min(1, v));
+  if (bus && ctx) bus.gain.setTargetAtTime(fxVolume * 1.25, ctx.currentTime, 0.05);
+}
+
+function audio(): AudioContext | null {
+  if (muted || fxVolume <= 0) return null;
+  const a = sharedAudio();
+  if (a && !bus) {
+    bus = a.createGain();
+    bus.gain.value = fxVolume * 1.25;
+    bus.connect(a.destination);
+  }
+  return a;
 }
 
 function tone(freq: number, at: number, dur: number, type: OscillatorType = "sine", gain = 0.12): void {
@@ -51,14 +73,14 @@ function tone(freq: number, at: number, dur: number, type: OscillatorType = "sin
   g.gain.setValueAtTime(0.0001, t);
   g.gain.exponentialRampToValueAtTime(gain, t + 0.015);
   g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  o.connect(g).connect(a.destination);
+  o.connect(g).connect(bus!);
   o.start(t);
   o.stop(t + dur + 0.05);
 }
 
 let noise: AudioBuffer | null = null;
-/** A short soft burst of filtered noise: a footstep or a landing. */
-function thud(freq: number, dur: number, gain: number): void {
+/** A short soft burst of filtered noise: a footstep, a landing, a door. */
+function thud(freq: number, dur: number, gain: number, at = 0, type: BiquadFilterType = "lowpass"): void {
   const a = audio();
   if (!a) return;
   if (!noise) {
@@ -66,21 +88,72 @@ function thud(freq: number, dur: number, gain: number): void {
     const d = noise.getChannelData(0);
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
   }
-  const t = a.currentTime;
+  const t = a.currentTime + at;
   const src = a.createBufferSource();
   src.buffer = noise;
   const f = a.createBiquadFilter();
-  f.type = "lowpass";
+  f.type = type;
   f.frequency.value = freq * (0.85 + Math.random() * 0.3);
   const g = a.createGain();
   g.gain.setValueAtTime(gain, t);
   g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  src.connect(f).connect(g).connect(a.destination);
+  src.connect(f).connect(g).connect(bus!);
   src.start(t);
   src.stop(t + dur + 0.02);
 }
 
+/**
+ * A car's engine while you drive: a low buzz that rises with your speed.
+ * engine(speed) each frame you're at the wheel; engine(null) when you get out.
+ */
+let motor: { osc: OscillatorNode; sub: OscillatorNode; gain: GainNode; filter: BiquadFilterNode } | null = null;
+export function engine(speed: number | null): void {
+  const a = speed === null ? ctx : audio();
+  if (speed === null || !a) {
+    if (motor && ctx) {
+      const m = motor;
+      m.gain.gain.setTargetAtTime(0, ctx.currentTime, 0.08);
+      setTimeout(() => {
+        m.osc.stop();
+        m.sub.stop();
+        m.gain.disconnect();
+      }, 400);
+    }
+    motor = null;
+    return;
+  }
+  if (!motor) {
+    const osc = a.createOscillator();
+    const sub = a.createOscillator();
+    const filter = a.createBiquadFilter();
+    const gain = a.createGain();
+    osc.type = "sawtooth";
+    sub.type = "square";
+    filter.type = "lowpass";
+    filter.frequency.value = 420;
+    gain.gain.value = 0;
+    osc.connect(filter);
+    sub.connect(filter);
+    filter.connect(gain).connect(bus!);
+    osc.start();
+    sub.start();
+    motor = { osc, sub, gain, filter };
+  }
+  const s = Math.min(1, Math.abs(speed) / 15);
+  const t = a.currentTime;
+  motor.osc.frequency.setTargetAtTime(48 + s * 95, t, 0.1);
+  motor.sub.frequency.setTargetAtTime(24 + s * 47, t, 0.1);
+  motor.filter.frequency.setTargetAtTime(300 + s * 900, t, 0.1);
+  motor.gain.gain.setTargetAtTime(0.035 + s * 0.035, t, 0.1);
+}
+
 export const sound = {
+  /** A car bumping into something: a crunch, louder the harder it hit. */
+  crash(speed: number): void {
+    const k = Math.min(1, speed / 12);
+    thud(180, 0.25 + k * 0.2, 0.08 + k * 0.18);
+    tone(70, 0, 0.2, "square", 0.04 + k * 0.05);
+  },
   /** A soft footstep. */
   step(): void {
     thud(520, 0.07, 0.05);
@@ -134,6 +207,27 @@ export const sound = {
   },
   click(): void {
     tone(660, 0, 0.05, "square", 0.03);
+  },
+  /** A window opening: a soft rising pop. */
+  open(): void {
+    tone(440, 0, 0.07, "sine", 0.025);
+    tone(740, 0.035, 0.08, "sine", 0.02);
+  },
+  /** A window closing: the same, falling and quieter. */
+  close(): void {
+    tone(620, 0, 0.06, "sine", 0.015);
+    tone(410, 0.03, 0.07, "sine", 0.012);
+  },
+  /** The sliding front doors: a pneumatic sigh, then a soft clunk as they stop. */
+  door(opening: boolean): void {
+    thud(opening ? 2400 : 1700, 0.18, 0.03, 0, "bandpass");
+    thud(opening ? 2000 : 1400, 0.22, 0.02, 0.15, "bandpass");
+    thud(200, 0.12, 0.05, opening ? 0.4 : 0.32);
+  },
+  /** The elevator arriving: a two-note ding. */
+  elevator(): void {
+    tone(1047, 0, 0.9, "sine", 0.06);
+    tone(831, 0.32, 1.1, "sine", 0.05);
   },
   /** A piano note (Hz): a plucked triangle with a soft octave over it. */
   note(freq: number, at = 0): void {

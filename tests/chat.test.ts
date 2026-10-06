@@ -76,3 +76,14 @@ test("history is kept: a character's thread follows it, and the store survives a
   const b = new ChatStore(file);
   assert.equal(b.get("char:ada")[0].text, "hi");
 });
+
+test("#people: the people here talk among themselves — everyone sees it, no worker hears it", () => {
+  const { routes, said, threads } = setup();
+  const guest = { id: "c2", name: "Sam", alive: true, joined: true, role: "visitor" as const };
+  routes.peopleSend!({ t: "peopleSend", text: "Want to grab lunch after this?" } as never, guest, ws);
+  const people = threads().find((t) => t.id === "people");
+  assert.ok(people, "the channel shows once someone's said something");
+  assert.deepEqual(people!.messages.map((m) => [m.who, m.text]), [["Sam", "Want to grab lunch after this?"]]);
+  assert.equal(said.length, 0, "no worker was told");
+  assert.equal(threads().find((t) => t.id === "team")!.messages.length, 0, "and it's not in #team");
+});

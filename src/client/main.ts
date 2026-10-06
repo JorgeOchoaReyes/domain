@@ -1,7 +1,9 @@
 import { ingestAlumni, openFire } from "./ui/fire.js";
 import { ingestLessons, openLessons } from "./ui/lessons.js";
 import { ingestSkills } from "./ui/skills.js";
-import { osDictationHint } from "./voice.js";
+import { ingestVoices, osDictationHint, useVoices } from "./voice.js";
+import { openVoices } from "./ui/voices.js";
+import { openGiveTask } from "./ui/waiting.js";
 import type { AgentKind, ClientMessage, Desk, Look, OfficeState, Presentation } from "../shared/protocol.js";
 import { AGENT_LABELS, DEFAULT_LOOK, coerceLook } from "../shared/protocol.js";
 import {
@@ -73,7 +75,12 @@ import { esc, escapeModal, modalOpen } from "./ui/modal.js";
 import { GoalsWindow } from "./ui/goals.js";
 import { SessionPill, openStartSession, showSessionSummary } from "./ui/session.js";
 import { PlayerCard, blankStats, openProfile } from "./ui/profile.js";
-import { confetti, floatXp, isMuted, setMuted, sound } from "./ui/fx.js";
+import { confetti, engine, floatXp, isMuted, setFxVolume, setMuted, sound } from "./ui/fx.js";
+import { carNear, exitSpot } from "./scene/cars.js";
+import { Ambience } from "./ambience.js";
+import { listenToFrontDoors } from "./scene/rooms.js";
+import { listenToModals } from "./ui/modal.js";
+import { isIndoors } from "../shared/layout.js";
 import { ACHIEVEMENTS, EMPTY_PROGRESS, sessionLength, type Goal, type ProgressState } from "../shared/progress.js";
 import * as THREE from "three";
 import "./styles/main.css";
@@ -117,6 +124,9 @@ document.body.classList.toggle("fp", player.view === "first");
 /** When the mouse capture last ended, so the Esc that ended it doesn't also open settings. */
 let unlockedAt = 0;
 player.onStep = (kind) => (kind === "land" ? sound.land() : sound.step());
+player.onCrash = (speed) => sound.crash(speed);
+// A hidden window stops the game loop: the engine mustn't drone on meanwhile (it picks up again when you are back).
+document.addEventListener("visibilitychange", () => document.hidden && engine(null));
 player.onLock = (locked) => {
   document.body.classList.toggle("mouse-captured", locked);
   if (!locked) unlockedAt = performance.now();
@@ -125,7 +135,14 @@ let settings: Settings = loadSettings();
 /** The background music (composed live); the jukeboxes and Settings pick it. */
 const music = new Music();
 // Browsers only let sound start after you click or press a key: start it then.
-const startMusic = () => music.set({ on: settings.music, track: settings.track, volume: settings.musicVolume });
+/** The sound of the place: hum and keyboards indoors, wind and birds out; Settings has its volume. */
+const ambience = new Ambience();
+const startMusic = () => {
+  music.set({ on: settings.music, track: settings.track, volume: settings.musicVolume });
+  ambience.set({ on: settings.ambience, volume: settings.ambienceVolume });
+};
+listenToFrontDoors((opening) => sound.door(opening));
+listenToModals((open) => (open ? sound.open() : sound.close()));
 window.addEventListener("pointerdown", startMusic, { once: true });
 window.addEventListener("keydown", startMusic, { once: true });
 let lastQuality: Settings["graphics"] | null = null;
@@ -148,6 +165,8 @@ function applySettings(s: Settings): void {
   minimap?.el.classList.toggle("hidden", !s.minimap);
   // Before your first click the music waits (see startMusic); after it, changes apply at once.
   if (music.playing || !s.music) music.set({ on: s.music, track: s.track, volume: s.musicVolume });
+  if (ambience.playing || !s.ambience) ambience.set({ on: s.ambience, volume: s.ambienceVolume });
+  setFxVolume(s.fxVolume);
 }
 const terminal = new TerminalOverlay();
 const review = new ReviewPanel();
@@ -223,7 +242,8 @@ hudRoot.querySelector('.dock [data-act="settings"]')?.before(officeBtn);
 const officeTiles: OfficeTile[] = [
   { key: "projects", icon: "github", title: "Projects & GitHub", text: "Which project your workers are on — switch, or clone one from GitHub", run: () => openProjects(projectActions()) },
   { key: "team", icon: "👥", title: "Your team", text: "Characters with names, looks, voices and personas you hire again and again", run: () => openTeam(teamCtx()) },
-  { key: "lessons", icon: "📚", title: "Lessons", text: "What your team has learned from your feedback and each other — and the end-of-day sync", run: () => openLessons((m) => net.send(m)) },
+  { key: "voices", icon: "🗣", title: "Voices", text: "Lifelike ElevenLabs voices for your workers, with your API key", run: () => openVoices((m) => net.send(m), !guestRole()) },
+  { key: "lessons", icon: "📚", title: "Lessons", text: "What your team has learned from your feedback and each other — and the end-of-day sync", run: () => openLessons((m) => net.send(m), guestRole() !== "visitor") },
   { key: "history", icon: "📜", title: "History", text: "Everything you and your workers have done — by day, or by worker", run: () => openHistory((m) => net.send(m)) },
   { key: "chat", icon: "💬", title: "Team chat", text: "Message any worker, or everyone — see what each is doing and what it has done", run: () => openChat() },
   { key: "ideas", icon: "💡", title: "Idea board", text: "Sketch an idea and hand it to a worker, or make it a goal — also at the whiteboards", run: () => openIdeas(null) },
@@ -349,6 +369,7 @@ net.onMessage = (msg) => {
   ingestHistory(msg);
   ingestSkills(msg);
   ingestLessons(msg);
+  ingestVoices(msg);
   ingestAlumni(msg);
   ingestGithub(msg);
   if (msg.t === "project") showProject();
@@ -375,6 +396,7 @@ net.onMessage = (msg) => {
       net.send({ t: "ideasGet" });
       net.send({ t: "agentsGet" });
       net.send({ t: "chatGet" });
+      useVoices((m) => net.send(m));
       net.send({ t: "historyGet" });
       break;
     case "office":
@@ -870,6 +892,8 @@ const teamChat = new TeamChat({
   desks: () => office.desks,
   openTerminal: (deskId) => openTerminal(deskId),
   onVoiceError: warnVoice,
+  me: () => myName,
+  onPeople: (who, text) => hud.toast(`💬 ${who}: ${text.length > 80 ? text.slice(0, 78) + "…" : text}`),
 });
 const chatBtn = document.createElement("button");
 chatBtn.className = "btn dock-btn";
@@ -988,6 +1012,7 @@ const phone = new Phone({
     applySettings(next);
     music.set({ on: next.music, track: next.track, volume: next.musicVolume });
   },
+  giveTask: (text) => net.send({ t: "quickTask", deskId: "any", text }),
   sendTeam: (text) => {
     net.send({ t: "chatSend", to: TEAM_THREAD, text });
     hud.toast("💬 Sent to #team");
@@ -1000,7 +1025,7 @@ const phone = new Phone({
   roundup: () => openRoundup(),
   standup: () => openStandupNow(),
   focus: () => openFocus(),
-  lessons: () => openLessons((m) => net.send(m)),
+  lessons: () => openLessons((m) => net.send(m), guestRole() !== "visitor"),
   autopilot: () => progress.policy.autopilot?.on ?? false,
   setAutopilot: (on) => {
     net.send({ t: "policySet", policy: { ...progress.policy, autopilot: { ...progress.policy.autopilot, on } } });
@@ -1438,6 +1463,7 @@ function nearArcade(): (typeof ARCADES)[number] | null {
 }
 /** Hop on or off the skateboard. */
 function toggleBoard(): void {
+  if (player.driving) return;
   player.board = !player.board;
   world.setBoard(player.board);
   sound.click();
@@ -1516,6 +1542,16 @@ const activities = new Activities({
   busy: () => modalOpen(),
 });
 
+// Popcorn, the radio, the lamp, the teddy, the cat, paper toss: what they make happen.
+world.props.onEvent = (e) => {
+  if (e.boostMs) player.boostFor(e.boostMs);
+  if (e.toast) hud.toast(e.toast);
+  if (e.sound === "squeak") {
+    sound.note(1320);
+    sound.note(1760, 0.08);
+  } else if (e.sound) sound[e.sound]();
+};
+
 /** E in the game room, kitchen, stand-up room, outside… Returns true if it did something. */
 // --- your laptop, put down somewhere --------------------------------------------------------
 
@@ -1575,6 +1611,7 @@ function sitAndWork(spot: WorkSpot): void {
 function interactFun(): boolean {
   const { x, z } = player.position;
   if (activities.use()) return true;
+  if (world.props.use(x, z)) return true;
   const spot = nearWorkSpot();
   if (spot && spot.id === laptopSpot?.id) {
     sitAndWork(spot);
@@ -1649,6 +1686,8 @@ function promptTarget(): { x: number; y: number; z: number } | null {
   const { x, z } = player.position;
   const act = activities.near();
   if (act) return act.key;
+  const prop = world.props.near(x, z);
+  if (prop) return prop.key;
   if (atUpElevator()) return { x: UP_ELEVATOR.x, y: 3.0, z: UPSTAIRS.minZ + 0.4 };
   const arcade = nearArcade();
   if (arcade) return { x: arcade.x, y: 2.35, z: arcade.z };
@@ -1678,6 +1717,8 @@ function promptTarget(): { x: number; y: number; z: number } | null {
 function hintFun(): string | null {
   const act = activities.near();
   if (act) return `<span class="title">${act.title}</span> ${act.id === "tread" ? "" : '<span class="key">E</span> '}${act.hint}`;
+  const prop = world.props.near(player.position.x, player.position.z);
+  if (prop) return `<span class="title">${prop.title}</span> <span class="key">E</span> ${prop.hint}`;
   if (atUpElevator()) return `<span class="title">🛗 Elevator · Floor 2</span> <span class="key">E</span> Down to the office, or anywhere`;
   const arcade = nearArcade();
   if (arcade) {
@@ -1729,7 +1770,21 @@ function hintFun(): string | null {
 
 function interact(): void {
   if (modalOpen()) return;
+  if (player.driving) return getOutOfCar();
   world.hand.swing();
+  const car = player.position.y < 0.01 ? carNear(world.cars, player.position.x, player.position.z) : null;
+  if (car) {
+    player.startDriving(car);
+    sound.door(true);
+    hud.toast("🚗 W/S gas and brake · A/D steer · Space handbrake · E to get out");
+    return;
+  }
+  // A worker waiting at the stand-up comes before the stand-up itself (they wait round its circle).
+  const free = waitingNear();
+  if (free) {
+    openGiveTask(free, progress, (m) => net.send(m));
+    return;
+  }
   if (interactFun()) return;
   const { x, z } = player.position;
   if (world.inMyOffice(x, z) && world.nearReviewDesk(x, z)) {
@@ -1747,8 +1802,36 @@ function interact(): void {
   else hire(desk);
 }
 
+/** A worker waiting at the stand-up right by you (not for visitors: they can't hand out work). */
+function waitingNear(): Desk | null {
+  if (guestRole() === "visitor") return null;
+  const id = world.waitingWorkerNear(player.position.x, player.position.z);
+  const desk = id ? deskById(id) : null;
+  return desk?.worker ? desk : null;
+}
+
+/** Out of the car, on whichever side's clear; it stays where you parked it. */
+function getOutOfCar(): void {
+  const car = player.driving;
+  if (!car) return;
+  if (Math.abs(car.v) > 4) {
+    hud.toast("🚗 Slow down first — Space is the handbrake");
+    return;
+  }
+  const spot = exitSpot(car).find((s) => {
+    const [x, z] = world.resolveCollision(s.x, s.z);
+    return Math.hypot(x - s.x, z - s.z) < 0.05;
+  });
+  player.stopDriving(spot ?? exitSpot(car)[0]);
+  sound.door(false);
+}
+
 function hintFor(): string | null {
   if (modalOpen()) return null;
+  if (player.driving) return `<span class="title">🚗 Driving</span> <span class="key">W</span><span class="key">S</span> gas · brake <span class="key">A</span><span class="key">D</span> steer <span class="key">Space</span> handbrake <span class="key">E</span> get out`;
+  if (player.position.y < 0.01 && carNear(world.cars, player.position.x, player.position.z)) return `<span class="title">🚗 A car</span> <span class="key">E</span> Drive it`;
+  const free = waitingNear()?.worker;
+  if (free) return `<span class="title">🙋 ${esc(free.identity?.name ?? AGENT_LABELS[free.agent])}</span> <span class="cost">waiting for a task</span> <span class="key">E</span> Give it one`;
   const fun = hintFun();
   if (fun) return fun;
   const work = hintWork();
@@ -1857,6 +1940,8 @@ let last = performance.now();
 let sentX = NaN;
 let sentZ = NaN;
 let sentFacing = NaN;
+/** Which floor you were on last frame (null before the first). */
+let wasUpstairs: boolean | null = null;
 
 function frame(now: number): void {
   const dt = Math.min((now - last) / 1000, 0.05);
@@ -1880,13 +1965,23 @@ function frame(now: number): void {
     if (!vr.presenting) player.lock();
   }
   player.update(dt);
+  engine(player.driving ? player.driving.v : null);
   world.update(dt, player.velocity);
   onMinigames();
   shotMeter.update(dt);
   activities.update(now);
   world.gameRoom.setDisco(music.playing && music.current.id === "disco", music.pulse());
   world.hand.update(dt, player.speed, player.yawAngle, player.boosted > 0, settings.headBob);
-  here = minimap.update({ x: player.position.x, z: player.position.z, facing: player.facing }, world.workerSpots(), world.peerSpots()).id;
+  const workers = world.workerSpots();
+  here = minimap.update({ x: player.position.x, z: player.position.z, facing: player.facing }, workers, world.peerSpots()).id;
+  const { x: px, z: pz } = player.position;
+  ambience.update({ x: px, z: pz, look: player.lookDir, indoors: isIndoors(px, pz), daylight: world.dayLevel, workers });
+  // Changing floors: the elevator's ding.
+  const upNow = inUpstairs(px, pz);
+  if (upNow !== wasUpstairs) {
+    if (wasUpstairs !== null) sound.elevator();
+    wasUpstairs = upNow;
+  }
   hud.setHint(hintFor());
   // In VR an open panel is what you're using: no E key floating over it.
   world.setPrompt((vr.presenting && vr.panel.open) || reviewing() ? null : promptTarget());

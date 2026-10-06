@@ -54,6 +54,12 @@ export interface Rooms {
 
 type Add = (o: THREE.Object3D) => void;
 
+let onFrontDoors: ((opening: boolean) => void) | null = null;
+/** Hear the front doors: called as they start to open (true) or close (false). */
+export function listenToFrontDoors(cb: (opening: boolean) => void): void {
+  onFrontDoors = cb;
+}
+
 const H = WALL_HEIGHT;
 const T = WALL_T;
 const DOOR_H = DOOR_HEIGHT;
@@ -761,8 +767,13 @@ function buildLobby(add: Add, solid: (x: number, z: number, hw: number, hd: numb
     right.position.x = cx + half / 2 + open * (half - 0.08);
   };
   place();
+  let wasNear = false;
   return (dt, p) => {
     const near = Math.hypot(p.x - cx, p.z - FRONT_DOOR.z) < 3.2;
+    if (near !== wasNear) {
+      wasNear = near;
+      onFrontDoors?.(near);
+    }
     open += ((near ? 1 : 0) - open) * Math.min(1, dt * 6);
     place();
   };
@@ -854,30 +865,7 @@ function buildGrounds(add: Add, solid: (x: number, z: number, hw: number, hd: nu
   }
   add(dashes);
 
-  // Parked cars.
-  const cars: [number, number, string][] = [
-    [-30, STREET.minZ + 1.5, "#ef476f"],
-    [-15, STREET.minZ + 1.5, "#ffd166"],
-    [16, STREET.minZ + 1.5, "#5bc0eb"],
-    [31, STREET.minZ + 1.5, "#9bc53d"],
-    [-22, STREET.maxZ - 1.5, "#b388eb"],
-    [9, STREET.maxZ - 1.5, "#ff8a5b"],
-  ];
-  const wheelGeo = new THREE.CylinderGeometry(0.36, 0.36, 0.26, 14).rotateX(Math.PI / 2);
-  const wheelMat = toon("#1b1d2e");
-  const glassMat = toon("#bfe3ff");
-  for (const [x, z, color] of cars) {
-    const car = new THREE.Group();
-    car.position.set(x, 0, z);
-    car.add(mesh(roundedBox(3.6, 0.75, 1.7, 0.3), toon(color), 0, 0.72, 0));
-    car.add(mesh(roundedBox(2.0, 0.62, 1.5, 0.28), toon(color), -0.2, 1.36, 0));
-    car.add(mesh(box(1.7, 0.42, 1.54), glassMat, -0.2, 1.38, 0, false));
-    for (const sx of [-1.15, 1.15]) for (const sz of [-0.82, 0.82]) car.add(mesh(wheelGeo, wheelMat, sx, 0.36, sz));
-    car.add(mesh(box(0.06, 0.16, 0.36), toon("#fff7d6", { emissive: "#ffe08a" }), 1.8, 0.8, 0.5, false));
-    car.add(mesh(box(0.06, 0.16, 0.36), toon("#fff7d6", { emissive: "#ffe08a" }), 1.8, 0.8, -0.5, false));
-    add(car);
-    solid(x, z, 1.85, 0.9);
-  }
+  // The parked cars are in cars.ts (you can drive them).
 
   // The pitch: lighter grass, lines, and a goal at each end.
   const pw = PITCH.maxX - PITCH.minX;

@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { MAX_CHAT_MESSAGES, TEAM_THREAD, type ChatMessage, type ChatThread, type ChatWork } from "../shared/chat.js";
+import { MAX_CHAT_MESSAGES, PEOPLE_THREAD, TEAM_THREAD, type ChatMessage, type ChatThread, type ChatWork } from "../shared/chat.js";
 import { AGENT_LABELS } from "../shared/protocol.js";
 import type { Routes, ServerCtx } from "./ctx.js";
 import { plain } from "./ptyWorker.js";
@@ -100,8 +100,11 @@ export function chatModule(ctx: ServerCtx, store = new ChatStore(join(ctx.cwd, "
     const name = w.identity ? `${w.identity.name} (${AGENT_LABELS[w.agent]})` : `${AGENT_LABELS[w.agent]} · ${d.label}`;
     return { key: w.identity ? `char:${w.identity.characterId}` : `desk:${d.id}:${ctx.office.sessionId(d.id)}`, name };
   };
+  /** #people shows once there's someone to talk to (or something was said there). */
+  const others = () => [...(ctx.clients?.() ?? new Map()).values()].filter((c) => c.joined).length > 1;
   const threads = (): ChatThread[] => [
     { id: TEAM_THREAD, title: "#team", messages: store.get(TEAM_THREAD) },
+    ...(others() || store.get(PEOPLE_THREAD).length ? [{ id: PEOPLE_THREAD, title: "#people", messages: store.get(PEOPLE_THREAD) }] : []),
     ...desks()
       .filter((d) => d.worker)
       .map((d) => {
@@ -125,6 +128,13 @@ export function chatModule(ctx: ServerCtx, store = new ChatStore(join(ctx.cwd, "
 
   return {
     chatGet: (_msg, _client, ws) => ctx.send(ws, { t: "chat", threads: threads() }),
+    // The people here, among themselves: everyone sees it, no worker hears it, and it's not feedback to learn from.
+    peopleSend: (msg, client) => {
+      const text = typeof msg.text === "string" ? msg.text.trim().slice(0, 1000) : "";
+      if (!text) return;
+      store.add(PEOPLE_THREAD, { from: "you", who: client.name, text, at: Date.now() });
+      push();
+    },
     chatSend: (msg, client) => {
       const text = typeof msg.text === "string" ? msg.text.trim().slice(0, 4000) : "";
       const to = typeof msg.to === "string" ? msg.to : "";
@@ -134,6 +144,7 @@ export function chatModule(ctx: ServerCtx, store = new ChatStore(join(ctx.cwd, "
         const staffed = desks().filter((d) => d.worker);
         store.add(TEAM_THREAD, { from: "you", who: client.name, text, at: Date.now() });
         for (const d of staffed) ctx.office.say(d.id, text, "chat", true);
+        ctx.heard?.(text, undefined, client);
         push();
         return;
       }
@@ -143,7 +154,7 @@ export function chatModule(ctx: ServerCtx, store = new ChatStore(join(ctx.cwd, "
         store.add(who(to)!.key, { from: "you", who: client.name, text, at: Date.now(), raw: true });
         ctx.office.input(to, text + "\r");
         push();
-      } else ctx.office.say(to, text, "chat");
+      } else if (ctx.office.say(to, text, "chat")) ctx.heard?.(text, to, client);
     },
     chatWork: (msg, _client, ws) => {
       const deskId = typeof msg.deskId === "string" ? msg.deskId : "";

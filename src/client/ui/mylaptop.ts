@@ -240,13 +240,8 @@ export class MyLaptop {
     this.content.querySelector(".tm-say")!.addEventListener("click", say);
     this.content.querySelector(".tm-task")!.addEventListener("click", () => {
       if (!text()) return box.focus();
-      const to = this.teamTo === TEAM_THREAD ? this.office.desks.filter((d) => d.worker && d.worker.status === "idle").map((d) => d.id) : [this.teamTo];
-      if (!to.length) {
-        box.placeholder = "Nobody's free right now — pick someone above to give it to";
-        return;
-      }
-      // To everyone: the first one who's free takes it.
-      this.actions.send({ t: "quickTask", deskId: to[0], text: text() });
+      // To everyone: the first one who's free takes it (the office says who — or that it's waiting for the next).
+      this.actions.send({ t: "quickTask", deskId: this.teamTo === TEAM_THREAD ? "any" : this.teamTo, text: text() });
       box.value = "";
     });
     this.content.querySelector(".tm-update")!.addEventListener("click", () => this.actions.send({ t: "chatSend", to: this.teamTo, text: UPDATE_ASK }));
