@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import type { World } from "./world.js";
+import type { Car } from "./cars.js";
 import { DEFAULT_SETTINGS, type Settings } from "../ui/settings.js";
 
 /**
@@ -69,6 +70,12 @@ export class Player {
   xr = false;
   /** On the skateboard (B): about twice as fast, and you glide. */
   board = false;
+  /** The car you're driving: the keys drive it, the camera follows. */
+  driving: Car | null = null;
+  /** The view you had before you got in (you drive in third person). */
+  private viewBeforeCar: ViewMode | null = null;
+  /** Called when the car you're driving hits something, with how hard (m/s). */
+  onCrash: ((speed: number) => void) | null = null;
   /** Sitting (your chair in office hours): you don't move until you stand up. */
   private seated = false;
   /** Called when you stand up from a chair (any move key). */
@@ -92,6 +99,8 @@ export class Player {
   }
 
   setView(mode: ViewMode): void {
+    // You drive in third person (from inside, the car's roof is all you'd see).
+    if (this.driving && mode === "first") return;
     this.mode = mode;
     if (mode === "first") this.lookPitch = 0;
     else this.distance = Math.max(this.distance, 5.5);
@@ -228,12 +237,13 @@ export class Player {
   }
 
   private jump(): void {
-    if (this.world.player.position.y > 0.01) return;
+    if (this.driving || this.world.player.position.y > 0.01) return;
     this.vy = JUMP_V;
   }
 
   /** Advance one frame. dt is in seconds. Returns true if the transform moved. */
   update(dt: number): boolean {
+    if (this.driving) return this.updateDriving(this.driving, dt);
     const group = this.world.player;
     let moved = false;
 
@@ -335,6 +345,33 @@ export class Player {
     return moved;
   }
 
+  /** At the wheel: the keys drive the car, you ride in it, and the camera swings round behind it. */
+  private updateDriving(car: Car, dt: number): boolean {
+    const on = this.enabled;
+    const throttle = on ? (this.has("KeyW") || this.has("ArrowUp") ? 1 : 0) - (this.has("KeyS") || this.has("ArrowDown") ? 1 : 0) || this.stick.y : 0;
+    const steer = on ? (this.has("KeyA") || this.has("ArrowLeft") ? 1 : 0) - (this.has("KeyD") || this.has("ArrowRight") ? 1 : 0) || -this.stick.x : 0;
+    const before = { x: car.x, z: car.z, h: car.heading };
+    const hit = this.world.driveCar(car, { throttle, steer, handbrake: on && this.has("Space") }, dt);
+    if (hit > 2) this.onCrash?.(hit);
+    const group = this.world.player;
+    group.position.set(car.x, 0, car.z);
+    group.rotation.y = car.heading + Math.PI / 2;
+    this.vel.x = this.velocity.x = Math.cos(car.heading) * car.v;
+    this.vel.z = this.velocity.z = -Math.sin(car.heading) * car.v;
+    this.speed = Math.abs(car.v);
+    // The camera eases round behind the car (behind is yaw = heading - 90°), unless you're dragging it.
+    if (!this.dragging) {
+      const want = car.heading - Math.PI / 2;
+      const d = Math.atan2(Math.sin(want - this.yaw), Math.cos(want - this.yaw));
+      this.yaw += d * (1 - Math.exp(-(1.5 + this.speed * 0.25) * dt));
+      this.pitch += (0.32 - this.pitch) * (1 - Math.exp(-2 * dt));
+    }
+    this.distance += (9 - this.distance) * (1 - Math.exp(-3 * dt));
+    this.bob = 0;
+    this.updateCamera(dt);
+    return car.x !== before.x || car.z !== before.z || car.heading !== before.h;
+  }
+
   private updateCamera(dt = 0): void {
     // In VR the headset is the camera.
     if (this.xr) return;
@@ -381,8 +418,35 @@ export class Player {
     this.world.setSelfHidden(dist < 1.1);
   }
 
+  /** Get in a car and take the wheel (in third person, the camera behind it). */
+  startDriving(car: Car): void {
+    if (this.seated) this.standUp();
+    this.board = false;
+    this.world.setBoard(false);
+    this.driving = car;
+    this.vy = 0;
+    this.world.player.position.y = 0;
+    this.viewBeforeCar = this.mode;
+    if (this.mode !== "third") this.setView("third");
+    this.world.setInCar(true);
+  }
+
+  /** Get out of the car, at (x, z) beside it (or just leave it, when you're being moved anyway). */
+  stopDriving(at?: { x: number; z: number }): void {
+    const car = this.driving;
+    if (!car) return;
+    car.v = 0;
+    this.driving = null;
+    this.world.setInCar(false);
+    this.vel.x = this.vel.z = 0;
+    if (at) this.world.player.position.set(at.x, 0, at.z);
+    if (this.viewBeforeCar && this.viewBeforeCar !== this.mode) this.setView(this.viewBeforeCar);
+    this.viewBeforeCar = null;
+  }
+
   /** Put the avatar at (x, z) facing `facing`, looking the same way. */
   placeAt(x: number, z: number, facing: number): void {
+    this.stopDriving();
     this.world.player.position.set(x, 0, z);
     this.world.player.rotation.y = facing;
     this.vy = 0;

@@ -102,7 +102,58 @@ function thud(freq: number, dur: number, gain: number, at = 0, type: BiquadFilte
   src.stop(t + dur + 0.02);
 }
 
+/**
+ * A car's engine while you drive: a low buzz that rises with your speed.
+ * engine(speed) each frame you're at the wheel; engine(null) when you get out.
+ */
+let motor: { osc: OscillatorNode; sub: OscillatorNode; gain: GainNode; filter: BiquadFilterNode } | null = null;
+export function engine(speed: number | null): void {
+  const a = speed === null ? ctx : audio();
+  if (speed === null || !a) {
+    if (motor && ctx) {
+      const m = motor;
+      m.gain.gain.setTargetAtTime(0, ctx.currentTime, 0.08);
+      setTimeout(() => {
+        m.osc.stop();
+        m.sub.stop();
+        m.gain.disconnect();
+      }, 400);
+    }
+    motor = null;
+    return;
+  }
+  if (!motor) {
+    const osc = a.createOscillator();
+    const sub = a.createOscillator();
+    const filter = a.createBiquadFilter();
+    const gain = a.createGain();
+    osc.type = "sawtooth";
+    sub.type = "square";
+    filter.type = "lowpass";
+    filter.frequency.value = 420;
+    gain.gain.value = 0;
+    osc.connect(filter);
+    sub.connect(filter);
+    filter.connect(gain).connect(bus!);
+    osc.start();
+    sub.start();
+    motor = { osc, sub, gain, filter };
+  }
+  const s = Math.min(1, Math.abs(speed) / 15);
+  const t = a.currentTime;
+  motor.osc.frequency.setTargetAtTime(48 + s * 95, t, 0.1);
+  motor.sub.frequency.setTargetAtTime(24 + s * 47, t, 0.1);
+  motor.filter.frequency.setTargetAtTime(300 + s * 900, t, 0.1);
+  motor.gain.gain.setTargetAtTime(0.035 + s * 0.035, t, 0.1);
+}
+
 export const sound = {
+  /** A car bumping into something: a crunch, louder the harder it hit. */
+  crash(speed: number): void {
+    const k = Math.min(1, speed / 12);
+    thud(180, 0.25 + k * 0.2, 0.08 + k * 0.18);
+    tone(70, 0, 0.2, "square", 0.04 + k * 0.05);
+  },
   /** A soft footstep. */
   step(): void {
     thud(520, 0.07, 0.05);

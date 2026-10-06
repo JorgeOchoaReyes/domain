@@ -31,6 +31,7 @@ import { buildOffice, type Collider, type LiveBoard, type Office } from "./offic
 import { buildRooms, type Rooms } from "./rooms.js";
 import { buildGameRoom, type GameRoom } from "./gameroom.js";
 import { buildProps, type Props } from "./props.js";
+import { buildCars, drive, type Car, type DriveInput } from "./cars.js";
 import { Hoops, SoccerBall } from "./minigames.js";
 import { Hand } from "./hand.js";
 import {
@@ -126,6 +127,8 @@ export class World {
   readonly park: Parkland;
   /** Kenney's furniture and things to use: popcorn, the radio, the lamp, the cat, paper toss. */
   readonly props: Props;
+  /** The cars on the street (you can drive them). */
+  readonly cars: Car[];
   private laptops = new Map<string, Laptop>();
   private workers = new Map<string, WorkerView>();
   private peers = new Map<string, PeerView>();
@@ -190,7 +193,11 @@ export class World {
     this.scene.add(this.park.group);
     this.props = buildProps();
     this.scene.add(this.props.group);
-    this.colliders = [...this.office.colliders, ...this.rooms.colliders, ...this.gameRoom.colliders, ...this.upstairs.colliders, ...this.park.colliders, ...this.props.colliders];
+    const street = buildCars();
+    this.cars = street.cars;
+    this.rooms.areas.grounds.add(street.group);
+    // The cars' footprints move with them (they're kept up to date in place).
+    this.colliders = [...this.office.colliders, ...this.rooms.colliders, ...this.gameRoom.colliders, ...this.upstairs.colliders, ...this.park.colliders, ...this.props.colliders, ...street.colliders];
     this.collectOccludable([this.office.group, this.rooms.group, this.gameRoom.group]);
     // Props' models load after this: each joins the camera's see-through pass as it arrives.
     this.props.onModel = (m) => {
@@ -290,7 +297,7 @@ export class World {
   /** First person: hide your own avatar so it doesn't fill the view. */
   setFirstPerson(on: boolean): void {
     this.firstPerson = on;
-    this.me.root.visible = !on && !this.selfHidden && !this.xr;
+    this.me.root.visible = !on && !this.selfHidden && !this.xr && !this.inCar;
     this.hand.group.visible = on && this.showHand && !this.xr;
   }
 
@@ -639,9 +646,16 @@ export class World {
   setSelfHidden(hidden: boolean): void {
     if (this.selfHidden === hidden) return;
     this.selfHidden = hidden;
-    if (!this.firstPerson && !this.xr) this.me.root.visible = !hidden;
+    if (!this.firstPerson && !this.xr) this.me.root.visible = !hidden && !this.inCar;
   }
   private selfHidden = false;
+
+  /** You're in a car: your avatar is inside it (out of sight). */
+  setInCar(on: boolean): void {
+    this.inCar = on;
+    this.me.root.visible = !on && !this.selfHidden && !this.xr && !this.firstPerson;
+  }
+  private inCar = false;
 
   /** How high the camera may go at (x, z): under the ceiling indoors. */
   ceilingAt(x: number, z: number): number {
@@ -670,6 +684,11 @@ export class World {
 
   nearReviewDesk(x: number, z: number): boolean {
     return Math.hypot(x - REVIEW_SPOT.x, z - REVIEW_SPOT.z) < 2.2;
+  }
+
+  /** Drive a car one frame; how hard it hit something (0 if it didn't). */
+  driveCar(car: Car, input: DriveInput, dt: number): number {
+    return drive(car, input, dt, this.colliders.filter((c) => c !== car.collider));
   }
 
   resolveCollision(x: number, z: number): [number, number] {

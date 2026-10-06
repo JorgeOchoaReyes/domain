@@ -75,7 +75,8 @@ import { esc, escapeModal, modalOpen } from "./ui/modal.js";
 import { GoalsWindow } from "./ui/goals.js";
 import { SessionPill, openStartSession, showSessionSummary } from "./ui/session.js";
 import { PlayerCard, blankStats, openProfile } from "./ui/profile.js";
-import { confetti, floatXp, isMuted, setFxVolume, setMuted, sound } from "./ui/fx.js";
+import { confetti, engine, floatXp, isMuted, setFxVolume, setMuted, sound } from "./ui/fx.js";
+import { carNear, exitSpot } from "./scene/cars.js";
 import { Ambience } from "./ambience.js";
 import { listenToFrontDoors } from "./scene/rooms.js";
 import { listenToModals } from "./ui/modal.js";
@@ -123,6 +124,7 @@ document.body.classList.toggle("fp", player.view === "first");
 /** When the mouse capture last ended, so the Esc that ended it doesn't also open settings. */
 let unlockedAt = 0;
 player.onStep = (kind) => (kind === "land" ? sound.land() : sound.step());
+player.onCrash = (speed) => sound.crash(speed);
 player.onLock = (locked) => {
   document.body.classList.toggle("mouse-captured", locked);
   if (!locked) unlockedAt = performance.now();
@@ -1456,6 +1458,7 @@ function nearArcade(): (typeof ARCADES)[number] | null {
 }
 /** Hop on or off the skateboard. */
 function toggleBoard(): void {
+  if (player.driving) return;
   player.board = !player.board;
   world.setBoard(player.board);
   sound.click();
@@ -1762,7 +1765,15 @@ function hintFun(): string | null {
 
 function interact(): void {
   if (modalOpen()) return;
+  if (player.driving) return getOutOfCar();
   world.hand.swing();
+  const car = player.position.y < 0.01 ? carNear(world.cars, player.position.x, player.position.z) : null;
+  if (car) {
+    player.startDriving(car);
+    sound.door(true);
+    hud.toast("🚗 W/S gas and brake · A/D steer · Space handbrake · E to get out");
+    return;
+  }
   if (interactFun()) return;
   const { x, z } = player.position;
   if (world.inMyOffice(x, z) && world.nearReviewDesk(x, z)) {
@@ -1786,8 +1797,26 @@ function interact(): void {
   else hire(desk);
 }
 
+/** Out of the car, on whichever side's clear; it stays where you parked it. */
+function getOutOfCar(): void {
+  const car = player.driving;
+  if (!car) return;
+  if (Math.abs(car.v) > 4) {
+    hud.toast("🚗 Slow down first — Space is the handbrake");
+    return;
+  }
+  const spot = exitSpot(car).find((s) => {
+    const [x, z] = world.resolveCollision(s.x, s.z);
+    return Math.hypot(x - s.x, z - s.z) < 0.05;
+  });
+  player.stopDriving(spot ?? exitSpot(car)[0]);
+  sound.door(false);
+}
+
 function hintFor(): string | null {
   if (modalOpen()) return null;
+  if (player.driving) return `<span class="title">🚗 Driving</span> <span class="key">W</span><span class="key">S</span> gas · brake <span class="key">A</span><span class="key">D</span> steer <span class="key">Space</span> handbrake <span class="key">E</span> get out`;
+  if (player.position.y < 0.01 && carNear(world.cars, player.position.x, player.position.z)) return `<span class="title">🚗 A car</span> <span class="key">E</span> Drive it`;
   const fun = hintFun();
   if (fun) return fun;
   const work = hintWork();
@@ -1924,6 +1953,7 @@ function frame(now: number): void {
     if (!vr.presenting) player.lock();
   }
   player.update(dt);
+  engine(player.driving ? player.driving.v : null);
   world.update(dt, player.velocity);
   onMinigames();
   shotMeter.update(dt);
