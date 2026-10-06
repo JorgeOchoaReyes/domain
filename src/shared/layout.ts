@@ -236,6 +236,8 @@ function outOfPod(seat: Pt): Pt[] {
  */
 export function route(from: Pt, to: Pt): Pt[] {
   const pts: Pt[] = [];
+  // Out of the stand-up room first (through its door, the hallway and the office's door).
+  if (inStandupRoom(from) && !inStandupRoom(to)) pts.push(...TO_STANDUP.slice().reverse());
   if (atBay(from)) pts.push(...outOfBay(from), HUB);
   else if (atDesks(from)) pts.push(...outOfPod(from), HUB);
   else if (inMyOffice(from)) pts.push(DOOR_IN, DOOR_OUT);
@@ -253,9 +255,24 @@ export function route(from: Pt, to: Pt): Pt[] {
     }
   } else if (inLine(to) && !inLine(from)) {
     pts.push({ x: 8.6, z: to.z });
+  } else if (inStandupRoom(to) && !inStandupRoom(from)) {
+    pts.push(...TO_STANDUP);
   }
   pts.push(to);
   return pts;
+}
+
+/** From the open office to the stand-up room: its east door, along the hallway, in at the room's door. */
+const TO_STANDUP: readonly Pt[] = [
+  { x: 3, z: 11.6 },
+  { x: 3, z: 14.7 },
+  { x: -4.5, z: 14.7 },
+  { x: -4.5, z: 17.6 },
+];
+
+/** In the stand-up room (south of the hallway, between its partitions). */
+function inStandupRoom(p: Pt): boolean {
+  return p.z > 16.6 && p.z < 29 && p.x > -9 && p.x < 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -613,3 +630,18 @@ export const WORK_SPOTS: readonly WorkSpot[] = [
   { id: "sofa2", label: "the floor 2 sofa", sit: { x: UP.sofa.x, z: UP.sofa.z - 0.15, facing: Math.PI }, laptop: { x: UP.coffeeTable.x, y: 0.46, z: UP.coffeeTable.z, rotY: 0 } },
   { id: "campfire", label: "a log by the campfire", sit: { x: CAMPFIRE.x, z: CAMPFIRE.z + CAMPFIRE.logR, facing: Math.PI }, laptop: { x: CAMPFIRE.x, y: 0.55, z: CAMPFIRE.z + CAMPFIRE.logR - 0.42, rotY: 0 } },
 ];
+
+/**
+ * The i-th place to wait at the stand-up: a ring round the circle, away from
+ * the screen (so they don't block it), facing the middle. More than fit go
+ * round again a step further out.
+ */
+export function waitSpot(i: number): { x: number; z: number; facing: number } {
+  const PER_RING = 8;
+  const ring = Math.floor(i / PER_RING);
+  const k = i % PER_RING;
+  // 0 is towards the screen (+z); spread from 60 to 300 degrees.
+  const theta = ((60 + (k * 240) / (PER_RING - 1) + ring * 15) * Math.PI) / 180;
+  const r = STANDUP.circle.r + ring * 0.9;
+  return { x: STANDUP.circle.x + Math.sin(theta) * r, z: STANDUP.circle.z + Math.cos(theta) * r, facing: theta + Math.PI };
+}

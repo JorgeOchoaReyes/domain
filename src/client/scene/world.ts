@@ -1,6 +1,6 @@
 import { buildUpstairs, type Upstairs } from "./upstairs.js";
 import { buildParkland, type Parkland } from "./parkland.js";
-import { UPSTAIRS, UP_HEIGHT, inUpstairs, BREAK_SPOTS } from "../../shared/layout.js";
+import { UPSTAIRS, UP_HEIGHT, inUpstairs, BREAK_SPOTS, waitSpot } from "../../shared/layout.js";
 import * as THREE from "three";
 import { OutlineEffect } from "three/examples/jsm/effects/OutlineEffect.js";
 import type { Desk, Look, Peer, Presentation } from "../../shared/protocol.js";
@@ -140,6 +140,8 @@ export class World {
   private tmp = new THREE.Vector3();
   /** When each worker last ran out of things to do (for its breaks). */
   private idleSince = new Map<string, number>();
+  /** Workers standing at the stand-up waiting for a task, and where. */
+  private waitingAt = new Map<string, Pt>();
   private lastBreakLook = 0;
   private camAt = new THREE.Vector3();
 
@@ -459,6 +461,10 @@ export class World {
     }
 
     const seen = new Set<string>();
+    // Who's free (idle, no task, not in line): they wait at the stand-up for a task, in a ring.
+    const hasTask = (id: string) => this.progress?.goals.some((g) => g.tasks.some((t) => t.deskId === id && t.status !== "done")) ?? false;
+    const freeIds = desks.filter((d) => d.worker?.status === "idle" && !hasTask(d.id) && !spots.has(d.id)).map((d) => d.id);
+    this.waitingAt.clear();
     for (const desk of desks) {
       const w = desk.worker;
       if (!w) continue;
@@ -467,17 +473,25 @@ export class World {
       if (!def) continue;
       const seat = deskSeat(def, 0.93);
       const atDesk = { x: seat.x, z: seat.z, facing: def.rotY + Math.PI, seated: true, key: "desk" };
-      // Nothing to do for a while: off for a break round the lounge (back the moment there's work).
-      const hasTask = this.progress?.goals.some((g) => g.tasks.some((t) => t.deskId === desk.id && t.status !== "done")) ?? false;
-      const free = w.status === "idle" && !hasTask && !spots.has(desk.id);
+      // Nothing to do: off to the stand-up to wait for a task (back to its desk the moment
+      // there's work), with a short break round the lounge now and then.
+      const free = freeIds.includes(desk.id);
       const now = performance.now();
       if (!free) this.idleSince.delete(desk.id);
       else if (!this.idleSince.has(desk.id)) this.idleSince.set(desk.id, now);
       let dest = spots.get(desk.id) ?? atDesk;
-      if (free && now - this.idleSince.get(desk.id)! > 20_000) {
+      if (free && now - this.idleSince.get(desk.id)! > 6_000) {
         const n = Number(desk.id.replace(/\D/g, "")) || 0;
-        const i = (n + Math.floor(now / 45_000)) % BREAK_SPOTS.length;
-        dest = { ...BREAK_SPOTS[i], seated: false, key: `break-${i}` };
+        const onBreak = (now + n * 37_000) % WAIT_CYCLE_MS > WAIT_CYCLE_MS - BREAK_MS;
+        if (onBreak) {
+          const i = (n + Math.floor(now / 45_000)) % BREAK_SPOTS.length;
+          dest = { ...BREAK_SPOTS[i], seated: false, key: `break-${i}` };
+        } else {
+          const at = freeIds.indexOf(desk.id);
+          const s = waitSpot(at);
+          dest = { ...s, seated: false, key: `wait-${at}` };
+          this.waitingAt.set(desk.id, s);
+        }
       }
 
       // One of your characters looks like itself; rebuild the bot if that changed.
@@ -514,7 +528,8 @@ export class World {
       const terms = task ? briefLine(task) : "";
       const mentor = w.internOf ? this.desks.find((x) => x.id === w.internOf)?.worker : null;
       view.bot.name = w.identity?.name ?? (w.internOf ? `Intern of ${mentor?.identity?.name ?? w.internOf.replace("desk-", "desk ")}` : null);
-      view.bot.setCard(w.status, w.hiredBy, terms ? `${w.activity} · ${terms}` : w.activity, desk.id === this.presenting, w.doing ?? "");
+      const activity = this.waitingAt.has(desk.id) ? "🙋 At the stand-up, waiting for a task" : w.activity;
+      view.bot.setCard(w.status, w.hiredBy, terms ? `${activity} · ${terms}` : activity, desk.id === this.presenting, w.doing ?? "");
     }
     for (const id of [...this.workers.keys()]) if (!seen.has(id)) this.removeWorker(id);
   }
@@ -555,6 +570,23 @@ export class World {
   }
 
   // --- queries ------------------------------------------------------------------
+
+  /** A worker waiting at the stand-up for a task, near you (within radius), if any. */
+  waitingWorkerNear(x: number, z: number, radius = 1.6): string | null {
+    let best: string | null = null;
+    let bestD = radius;
+    for (const [id, s] of this.waitingAt) {
+      const view = this.workers.get(id);
+      // Only once it's there, not while it's still walking over.
+      if (!view || Math.hypot(view.pos.x - s.x, view.pos.z - s.z) > 0.6) continue;
+      const d = Math.hypot(view.pos.x - x, view.pos.z - z);
+      if (d < bestD) {
+        best = id;
+        bestD = d;
+      }
+    }
+    return best;
+  }
 
   /** The desk whose chair you're nearest, if any. */
   nearestDesk(x: number, z: number): { id: string; dist: number } | null {
@@ -1078,3 +1110,8 @@ function skateboard(): THREE.Group {
   g.userData.wheels = wheels;
   return g;
 }
+
+/** Free workers wait at the stand-up most of the time, and take a break for part of each cycle. */
+const WAIT_CYCLE_MS = 6 * 60_000;
+const BREAK_MS = 90_000;
+

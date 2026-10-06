@@ -3,6 +3,7 @@ import { ingestLessons, openLessons } from "./ui/lessons.js";
 import { ingestSkills } from "./ui/skills.js";
 import { ingestVoices, osDictationHint, useVoices } from "./voice.js";
 import { openVoices } from "./ui/voices.js";
+import { openGiveTask } from "./ui/waiting.js";
 import type { AgentKind, ClientMessage, Desk, Look, OfficeState, Presentation } from "../shared/protocol.js";
 import { AGENT_LABELS, DEFAULT_LOOK, coerceLook } from "../shared/protocol.js";
 import {
@@ -1753,6 +1754,12 @@ function interact(): void {
     startOfficeHours();
     return;
   }
+  const waiting = world.waitingWorkerNear(x, z);
+  const free = waiting ? deskById(waiting) : null;
+  if (free?.worker) {
+    openGiveTask(free, progress, (m) => net.send(m));
+    return;
+  }
   const near = world.nearestDesk(x, z);
   if (!near || near.dist > INTERACT_RADIUS) return;
   const desk = deskById(near.id);
@@ -1785,6 +1792,9 @@ function hintWork(): string | null {
     }
     return `<span class="title">⭐ Your office</span> Sit at your desk to hold reviews`;
   }
+  const waiting = world.waitingWorkerNear(x, z);
+  const free = waiting ? deskById(waiting)?.worker : null;
+  if (free) return `<span class="title">🙋 ${esc(free.identity?.name ?? AGENT_LABELS[free.agent])}</span> <span class="cost">waiting for a task</span> <span class="key">E</span> Give it one`;
   const near = world.nearestDesk(x, z);
   if (near && near.dist <= INTERACT_RADIUS) {
     const desk = deskById(near.id);

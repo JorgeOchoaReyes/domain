@@ -705,6 +705,12 @@ body[data-guest] .host-only { display: none !important; }
 .vc-key input { flex: 1; min-width: 0; font: inherit; font-size: 15px; border: 3px solid var(--ink); border-radius: 12px; padding: 8px 12px; background: #fff; color: var(--ink); }
 .vc-status { margin: 0; font-weight: 700; }
 .vc-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 300px; overflow-y: auto; }
+.modal.give-task-modal { width: min(620px, 100%); }
+.give-task { display: flex; flex-direction: column; gap: 10px; }
+.give-task h4 { margin: 4px 0 0; }
+.gt-new { display: flex; gap: 8px; align-items: center; }
+.gt-new input[type=text] { flex: 1; min-width: 0; }
+.gt-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 280px; overflow-y: auto; }
 .ls-teach { display: flex; gap: 8px; align-items: center; }
 .ls-teach input[type=text] { flex: 1; min-width: 0; }
 .ls-x { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 11px; padding: 0 4px; opacity: 0; }
