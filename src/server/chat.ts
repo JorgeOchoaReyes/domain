@@ -134,7 +134,7 @@ export function chatModule(ctx: ServerCtx, store = new ChatStore(join(ctx.cwd, "
         const staffed = desks().filter((d) => d.worker);
         store.add(TEAM_THREAD, { from: "you", who: client.name, text, at: Date.now() });
         for (const d of staffed) ctx.office.say(d.id, text, "chat", true);
-        ctx.heard?.(text);
+        ctx.heard?.(text, undefined, client);
         push();
         return;
       }
@@ -144,7 +144,7 @@ export function chatModule(ctx: ServerCtx, store = new ChatStore(join(ctx.cwd, "
         store.add(who(to)!.key, { from: "you", who: client.name, text, at: Date.now(), raw: true });
         ctx.office.input(to, text + "\r");
         push();
-      } else if (ctx.office.say(to, text, "chat")) ctx.heard?.(text, to);
+      } else if (ctx.office.say(to, text, "chat")) ctx.heard?.(text, to, client);
     },
     chatWork: (msg, _client, ws) => {
       const deskId = typeof msg.deskId === "string" ? msg.deskId : "";

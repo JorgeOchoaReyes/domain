@@ -20,7 +20,8 @@ export function ingestLessons(msg: ServerMessage): void {
   rerender?.();
 }
 
-export function openLessons(send: (m: ClientMessage) => void): void {
+/** `canEdit`: teach and forget (not for visitors, who only look). */
+export function openLessons(send: (m: ClientMessage) => void, canEdit = true): void {
   send({ t: "lessonsGet" });
   const body = document.createElement("div");
   body.className = "lessons";
@@ -30,7 +31,7 @@ export function openLessons(send: (m: ClientMessage) => void): void {
     const since = state.syncedAt ? `Last synced ${new Date(state.syncedAt).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}` : "Not synced yet";
     body.innerHTML = `
       <p class="ls-intro">Every worker reads these before it starts a task. Whatever you tell them is learned from — work you send back, and anything you say in chat or at a desk that's a rule (“from now on…”), a correction (“that's wrong”) or praise (“perfect”) lands here the moment you say it; the <b>end-of-day sync</b> has each worker add what it learned, and one of them merges it all into a short list.</p>
-      <form class="ls-teach"><input type="text" maxlength="240" placeholder="Teach the team something — e.g. “Always run the tests before presenting”" />${micButton()}<button class="btn primary" type="submit">📚 Teach</button></form>
+      ${canEdit ? `<form class="ls-teach"><input type="text" maxlength="240" placeholder="Teach the team something — e.g. “Always run the tests before presenting”" />${micButton()}<button class="btn primary" type="submit">📚 Teach</button></form>` : ""}
       <section><h4>📚 The team's lessons <span class="as-hint">${esc(since)}</span></h4>
         ${state.lessons.length ? `<ol class="ls-list">${state.lessons.map((l) => `<li>${esc(l)} <button class="ls-x" data-lesson="${esc(l)}" title="Forget this lesson">✕</button></li>`).join("")}</ol>` : `<p class="ls-none">None yet.</p>`}
       </section>
@@ -45,8 +46,10 @@ export function openLessons(send: (m: ClientMessage) => void): void {
             : `<p class="ls-none">Nothing new.</p>`
         }
       </section>`;
-    const form = body.querySelector<HTMLFormElement>(".ls-teach")!;
-    const field = form.querySelector<HTMLInputElement>("input")!;
+    if (!canEdit) body.querySelectorAll(".ls-x").forEach((b) => b.remove());
+    const form = body.querySelector<HTMLFormElement>(".ls-teach");
+    const field = form?.querySelector<HTMLInputElement>("input");
+    if (form && field) {
     field.value = draft;
     if (typing) field.focus();
     field.addEventListener("input", () => (draft = field.value));
@@ -59,6 +62,7 @@ export function openLessons(send: (m: ClientMessage) => void): void {
       draft = "";
       field.value = "";
     });
+    }
     body.querySelectorAll<HTMLButtonElement>(".ls-x").forEach((b) =>
       b.addEventListener("click", () => send(b.dataset.note ? { t: "lessonForget", noteAt: Number(b.dataset.note) } : { t: "lessonForget", lesson: b.dataset.lesson ?? "" })),
     );

@@ -125,6 +125,8 @@ document.body.classList.toggle("fp", player.view === "first");
 let unlockedAt = 0;
 player.onStep = (kind) => (kind === "land" ? sound.land() : sound.step());
 player.onCrash = (speed) => sound.crash(speed);
+// A hidden window stops the game loop: the engine mustn't drone on meanwhile (it picks up again when you are back).
+document.addEventListener("visibilitychange", () => document.hidden && engine(null));
 player.onLock = (locked) => {
   document.body.classList.toggle("mouse-captured", locked);
   if (!locked) unlockedAt = performance.now();
@@ -241,7 +243,7 @@ const officeTiles: OfficeTile[] = [
   { key: "projects", icon: "github", title: "Projects & GitHub", text: "Which project your workers are on — switch, or clone one from GitHub", run: () => openProjects(projectActions()) },
   { key: "team", icon: "👥", title: "Your team", text: "Characters with names, looks, voices and personas you hire again and again", run: () => openTeam(teamCtx()) },
   { key: "voices", icon: "🗣", title: "Voices", text: "Lifelike ElevenLabs voices for your workers, with your API key", run: () => openVoices((m) => net.send(m), !guestRole()) },
-  { key: "lessons", icon: "📚", title: "Lessons", text: "What your team has learned from your feedback and each other — and the end-of-day sync", run: () => openLessons((m) => net.send(m)) },
+  { key: "lessons", icon: "📚", title: "Lessons", text: "What your team has learned from your feedback and each other — and the end-of-day sync", run: () => openLessons((m) => net.send(m), guestRole() !== "visitor") },
   { key: "history", icon: "📜", title: "History", text: "Everything you and your workers have done — by day, or by worker", run: () => openHistory((m) => net.send(m)) },
   { key: "chat", icon: "💬", title: "Team chat", text: "Message any worker, or everyone — see what each is doing and what it has done", run: () => openChat() },
   { key: "ideas", icon: "💡", title: "Idea board", text: "Sketch an idea and hand it to a worker, or make it a goal — also at the whiteboards", run: () => openIdeas(null) },
@@ -1020,7 +1022,7 @@ const phone = new Phone({
   roundup: () => openRoundup(),
   standup: () => openStandupNow(),
   focus: () => openFocus(),
-  lessons: () => openLessons((m) => net.send(m)),
+  lessons: () => openLessons((m) => net.send(m), guestRole() !== "visitor"),
   autopilot: () => progress.policy.autopilot?.on ?? false,
   setAutopilot: (on) => {
     net.send({ t: "policySet", policy: { ...progress.policy, autopilot: { ...progress.policy.autopilot, on } } });
@@ -1774,16 +1776,16 @@ function interact(): void {
     hud.toast("🚗 W/S gas and brake · A/D steer · Space handbrake · E to get out");
     return;
   }
+  // A worker waiting at the stand-up comes before the stand-up itself (they wait round its circle).
+  const free = waitingNear();
+  if (free) {
+    openGiveTask(free, progress, (m) => net.send(m));
+    return;
+  }
   if (interactFun()) return;
   const { x, z } = player.position;
   if (world.inMyOffice(x, z) && world.nearReviewDesk(x, z)) {
     startOfficeHours();
-    return;
-  }
-  const waiting = world.waitingWorkerNear(x, z);
-  const free = waiting ? deskById(waiting) : null;
-  if (free?.worker) {
-    openGiveTask(free, progress, (m) => net.send(m));
     return;
   }
   const near = world.nearestDesk(x, z);
@@ -1795,6 +1797,14 @@ function interact(): void {
     hud.toast(`☀️ ${desk.worker.identity?.name ?? AGENT_LABELS[desk.worker.agent]} is waking up, back where it left off`);
   } else if (desk.worker) openTerminal(desk.id);
   else hire(desk);
+}
+
+/** A worker waiting at the stand-up right by you (not for visitors: they can't hand out work). */
+function waitingNear(): Desk | null {
+  if (guestRole() === "visitor") return null;
+  const id = world.waitingWorkerNear(player.position.x, player.position.z);
+  const desk = id ? deskById(id) : null;
+  return desk?.worker ? desk : null;
 }
 
 /** Out of the car, on whichever side's clear; it stays where you parked it. */
@@ -1817,6 +1827,8 @@ function hintFor(): string | null {
   if (modalOpen()) return null;
   if (player.driving) return `<span class="title">🚗 Driving</span> <span class="key">W</span><span class="key">S</span> gas · brake <span class="key">A</span><span class="key">D</span> steer <span class="key">Space</span> handbrake <span class="key">E</span> get out`;
   if (player.position.y < 0.01 && carNear(world.cars, player.position.x, player.position.z)) return `<span class="title">🚗 A car</span> <span class="key">E</span> Drive it`;
+  const free = waitingNear()?.worker;
+  if (free) return `<span class="title">🙋 ${esc(free.identity?.name ?? AGENT_LABELS[free.agent])}</span> <span class="cost">waiting for a task</span> <span class="key">E</span> Give it one`;
   const fun = hintFun();
   if (fun) return fun;
   const work = hintWork();
@@ -1836,9 +1848,6 @@ function hintWork(): string | null {
     }
     return `<span class="title">⭐ Your office</span> Sit at your desk to hold reviews`;
   }
-  const waiting = world.waitingWorkerNear(x, z);
-  const free = waiting ? deskById(waiting)?.worker : null;
-  if (free) return `<span class="title">🙋 ${esc(free.identity?.name ?? AGENT_LABELS[free.agent])}</span> <span class="cost">waiting for a task</span> <span class="key">E</span> Give it one`;
   const near = world.nearestDesk(x, z);
   if (near && near.dist <= INTERACT_RADIUS) {
     const desk = deskById(near.id);

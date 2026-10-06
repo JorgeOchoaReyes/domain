@@ -203,6 +203,9 @@ building:
 
 - **☀️ The stand-up room**, where every visit starts. Its big screen shows the
   session's tone and intention, where the goal is in the loop, and the team.
+  Workers with nothing to do **wait here for a task**, round the circle: walk
+  up to one and press **E** to give it something new, or a task waiting on a
+  goal.
 - **☕ The kitchen**: grab a coffee (**E** at the machine) and you move 35%
   faster for 90 seconds — you'll see the cup in your hand.
 - **🕹 The game room**, for while your workers grind: three arcade cabinets
@@ -217,7 +220,9 @@ building:
 - **🛎 The lobby**, whose sliding front doors open onto **the grounds**: a plaza
   and fountain, a five-a-side pitch with a ball you can dribble and kick, picnic
   tables, a street. Walk all the way round the building; the sky follows your
-  real time of day.
+  real time of day. **Drive the cars** parked on the street: **E** to get in,
+  **W/S** gas and brake, **A/D** steer, **Space** handbrake, **E** to get out —
+  they stay wherever you park them.
 - **Little things to use**: pop popcorn in the kitchen **microwave** (a minute's
   speed boost), catch the news on the lobby **radio**, click the **floor lamp**,
   squeeze the **teddy** on the couch, pet **Pixel the lobby cat** as she makes
@@ -364,6 +369,26 @@ task** — press **🎤** and say it instead of typing. In the desktop app it us
 your computer's own dictation (Windows: **Win + H**; macOS: **Fn** twice); in a
 browser, the browser's.
 
+### 🗣 Voices
+
+Workers read their presentations aloud in your computer's voices — or, with an
+**ElevenLabs** API key, in lifelike ElevenLabs voices. **Office → 🗣 Voices**:
+paste the key, hear each voice, and choose whether workers without a voice of
+their own use ElevenLabs; give a character its own in **Your team**. The key
+stays on your computer (`~/.domain/elevenlabs.json`, or `ELEVENLABS_API_KEY`)
+— never in a project or the browser — and only the host can set it. Speech is
+cached, so replaying a slide doesn't spend your credits again; if ElevenLabs
+fails, your computer's voice says it instead.
+
+### 🔊 Sound
+
+Besides the music, the office sounds like one: the air handling's hum and a
+far-off murmur indoors (a phone, the printer now and then), wind and daytime
+birds outside, the keyboards of busy workers near you, doors, the elevator,
+and a car's engine when you drive. **Settings → Sound** has the effects and
+the background, each with its own volume. It goes quiet while the window is
+hidden.
+
 ### 🔐 Permission levels
 
 How much a worker may do without asking you — set per hire, per character,
@@ -419,11 +444,13 @@ same mistake (or give them different work instead) — then a clear yes. They're
 kept among your **former workers**: hire at any free desk and **bring them
 back**, same agent, model, permissions and character.
 
-### ☕ Breaks
+### ☕ Waiting, and breaks
 
-A worker with nothing to do wanders off round the lounge — the poufs, the TV —
-and walks back to its desk the moment there's work. It's only them walking
-about: no agent is doing anything, so it costs nothing.
+A worker with nothing to do walks to the **stand-up room** and waits round the
+circle for a task (its card says so) — press **E** by it to hand it one. Now
+and then it takes a short break round the lounge, and it walks back to its
+desk the moment there's work. It's only them walking about: no agent is doing
+anything, so it costs nothing.
 
 ### 🎓 Interns
 
@@ -436,14 +463,18 @@ interns they are, and you can open their chat and terminal like anyone's.
 
 ### 📚 Lessons, and the end-of-day sync
 
-When you send work back with notes, or an audit finds something, it goes
+The team learns from **whatever you tell it**. Work you send back with notes,
+what an audit finds, and anything you say in chat, to #team or at a desk
+that's a rule ("from now on…", "never push to main"), a correction ("that's
+wrong", "this needs to change") or praise ("perfect, love it") goes
 straight into the team's **lessons** (`.domain/LESSONS.md`, in every worker's
 folder) — and every brief says to read them first, so the whole team learns
 from it at once. At the **end of the day** each worker writes up what it
 learned (its mistakes, what you sent back, what worked), and one of them
 merges it all into a short list — duplicates merged, stale ones dropped. Every
 step has a time limit, and if the merge never comes nothing's lost. See them
-in **Lessons** (Office menu, or the phone).
+in **Lessons** (Office menu, or the phone) — where you can also **teach** the
+team a lesson yourself, or drop one that was noted by mistake.
 
 ### 🎓 Skills
 
@@ -781,7 +812,8 @@ Environment variables:
 | `B`           | Skateboard on / off — twice as fast, and you glide |
 | `C`           | Team chat |
 | `Q`           | Put your coffee down |
-| `E`           | Use whatever the floating **E** marks: hire, terminal, office hours, the idea boards, the jukeboxes, coffee, arcades, hoops, the ball, the elevator, your laptop where you left it, darts, the piano, the vending machine, treadmills, the breathing mats, the bookshelf, the telescope, fishing, the garden, the campfire, the microwave, the radio, the lamp, the teddy, the cat, paper toss |
+| Driving       | `E` by a car gets in · `W`/`S` gas and brake (or reverse) · `A`/`D` steer · `Space` handbrake · `E` gets out |
+| `E`           | Use whatever the floating **E** marks: hire, a waiting worker (give it a task), a car, terminal, office hours, the idea boards, the jukeboxes, coffee, arcades, hoops, the ball, the elevator, your laptop where you left it, darts, the piano, the vending machine, treadmills, the breathing mats, the bookshelf, the telescope, fishing, the garden, the campfire, the microwave, the radio, the lamp, the teddy, the cat, paper toss |
 | `T`           | Fast travel |
 | `U`           | Stand-up |
 | `G`           | Goals |
@@ -794,7 +826,7 @@ Environment variables:
 | `← →`         | Flip slides in a presentation |
 | `H`           | Controls |
 | Terminal      | **Select to copy** — it's on your clipboard at once · drag the corner to resize, or **⤢ Enlarge** · **📋 Copy** all of it |
-| `Esc`         | Close a window · with nothing open, **Settings**: view, walk speed, sprint, mouse sensitivity, field of view, **graphics** (High / Balanced / Fast — it lowers itself if the game runs slow), hand, head bob, minimap, day and night, sound (`Ctrl+[` sends Esc to a terminal) |
+| `Esc`         | Close a window · with nothing open, **Settings**: view, walk speed, sprint, mouse sensitivity, field of view, **graphics** (High / Balanced / Fast — it lowers itself if the game runs slow), hand, head bob, minimap, day and night, sound — effects and background, each with a volume (`Ctrl+[` sends Esc to a terminal) |
 
 ## Layout
 

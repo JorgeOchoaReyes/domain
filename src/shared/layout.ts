@@ -638,10 +638,11 @@ export const WORK_SPOTS: readonly WorkSpot[] = [
  */
 export function waitSpot(i: number): { x: number; z: number; facing: number } {
   const PER_RING = 8;
-  const ring = Math.floor(i / PER_RING);
+  // At most three rings: any more and they would be out through the walls (beyond that they share).
+  const ring = Math.min(2, Math.floor(i / PER_RING));
   const k = i % PER_RING;
   // 0 is towards the screen (+z); spread from 60 to 300 degrees.
   const theta = ((60 + (k * 240) / (PER_RING - 1) + ring * 15) * Math.PI) / 180;
-  const r = STANDUP.circle.r + ring * 0.9;
+  const r = STANDUP.circle.r + ring * 0.75;
   return { x: STANDUP.circle.x + Math.sin(theta) * r, z: STANDUP.circle.z + Math.cos(theta) * r, facing: theta + Math.PI };
 }

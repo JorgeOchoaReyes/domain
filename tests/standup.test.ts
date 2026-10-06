@@ -33,3 +33,10 @@ test("the way to the stand-up and back goes through the doors and the hallway", 
   ]);
   assert.equal(route(waitSpot(0), waitSpot(1)).length, 1, "moving round the circle is just a step");
 });
+
+test("however many are waiting, they all stay inside the stand-up room", () => {
+  for (let i = 0; i < 60; i++) {
+    const s = waitSpot(i);
+    assert.ok(s.x > -8.6 && s.x < -0.4 && s.z > 17 && s.z < 28.6, `spot ${i} at ${s.x.toFixed(2)}, ${s.z.toFixed(2)}`);
+  }
+});

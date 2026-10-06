@@ -35,7 +35,21 @@ export class Ambience {
   private keys: GainNode | null = null;
   private noise: AudioBuffer | null = null;
   private on = false;
+  /** Whether you have it on in Settings (it still goes quiet while the window is hidden). */
+  private wanted = false;
   private volume = 0.5;
+  /** Every looping source and oscillator the beds run, to stop when it's off. */
+  private sources: AudioScheduledSourceNode[] = [];
+  private teardown: ReturnType<typeof setTimeout> | null = null;
+
+  constructor() {
+    // A hidden tab or a minimized window: no hum or wind in the background.
+    if (typeof document !== "undefined")
+      document.addEventListener("visibilitychange", () => {
+        if (document.hidden && this.on) this.stop();
+        else if (!document.hidden && this.wanted && !this.on) this.start();
+      });
+  }
   private nextEvent = 0;
   private nextBird = 0;
   private lastIndoors: boolean | null = null;
@@ -52,7 +66,8 @@ export class Ambience {
   set(opts: { on: boolean; volume: number }): void {
     this.volume = Math.max(0, Math.min(1, opts.volume));
     const on = opts.on && this.volume > 0;
-    if (on && !this.on) this.start();
+    this.wanted = on;
+    if (on && !this.on && !(typeof document !== "undefined" && document.hidden)) this.start();
     else if (!on && this.on) this.stop();
     else if (this.master && this.ctx) this.master.gain.setTargetAtTime(this.volume, this.ctx.currentTime, 0.2);
   }
@@ -61,6 +76,8 @@ export class Ambience {
     const ctx = sharedAudio();
     if (!ctx) return;
     this.ctx = ctx;
+    if (this.teardown) clearTimeout(this.teardown);
+    this.teardown = null;
     if (!this.master) this.build(ctx);
     this.master!.gain.setTargetAtTime(this.volume, ctx.currentTime, 1.2);
     this.on = true;
@@ -69,7 +86,27 @@ export class Ambience {
 
   private stop(): void {
     this.on = false;
-    if (this.master && this.ctx) this.master.gain.setTargetAtTime(0, this.ctx.currentTime, 0.3);
+    if (!this.master || !this.ctx) return;
+    this.master.gain.setTargetAtTime(0, this.ctx.currentTime, 0.3);
+    // Once it has faded, stop the beds for real (they're built again next time).
+    if (this.teardown) clearTimeout(this.teardown);
+    this.teardown = setTimeout(() => {
+      this.teardown = null;
+      if (this.on) return;
+      for (const s of this.sources) {
+        try {
+          s.stop();
+        } catch {
+          /* already stopped */
+        }
+      }
+      this.sources = [];
+      this.master?.disconnect();
+      this.master = this.inside = this.outside = this.keys = null;
+      this.lastIndoors = null;
+      this.typing.clear();
+      this.resting.clear();
+    }, 2000);
   }
 
   /** The beds that always run (silent until faded in): the building's hum and murmur, the wind. */
@@ -108,6 +145,7 @@ export class Ambience {
       g.gain.value = gain;
       src.connect(filter).connect(g).connect(into);
       src.start(0, Math.random() * 3);
+      this.sources.push(src);
       return { src, filter, gain: g };
     };
     const lfo = (rate: number, depth: number, param: AudioParam) => {
@@ -117,6 +155,7 @@ export class Ambience {
       g.gain.value = depth;
       o.connect(g).connect(param);
       o.start();
+      this.sources.push(o);
     };
 
     // Indoors: the air handling (a low rush and a faint mains hum)…
@@ -127,6 +166,7 @@ export class Ambience {
     humGain.gain.value = 0.006;
     hum.connect(humGain).connect(this.inside);
     hum.start();
+    this.sources.push(hum);
     // …and people talking somewhere else: a voice-band murmur that swells and fades.
     const murmur = loop(this.inside, "bandpass", 480, 1.1, 0.05);
     lfo(0.13, 0.025, murmur.gain.gain);

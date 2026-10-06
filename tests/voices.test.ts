@@ -62,3 +62,29 @@ test("the key is kept outside the project, speech comes back over the socket, an
   routes.tts!({ t: "tts", id: "3", text: "x", voice: "../../etc" } as never, client, ws);
   assert.equal((sent.pop() as { error?: string }).error, "nothing to say", "a bad voice id never reaches the API");
 });
+
+test("speech already made comes from the cache, and one person can't run up the bill", async () => {
+  const home = mkdtempSync(join(tmpdir(), "voices-"));
+  const env = { DOMAIN_PREFS: join(home, "prefs.json"), ELEVENLABS_API_KEY: "sk_good" };
+  let spoken = 0;
+  const fake = (async (url: string) => {
+    if (url.endsWith("/voices")) return Response.json(VOICES);
+    spoken++;
+    return new Response(new Uint8Array([7]));
+  }) as typeof fetch;
+  const sent: ServerMessage[] = [];
+  const ctx = { send: (_ws: unknown, m: ServerMessage) => sent.push(m), broadcast: () => {}, log: { start: () => ({ done: () => {} }) } } as unknown as ServerCtx;
+  const routes = voicesModule(ctx, env, fake);
+  const ws = {} as never;
+  const settle = () => new Promise((r) => setTimeout(r, 20));
+  routes.tts!({ t: "tts", id: "a", text: "Slide one", voice: "abc123" } as never, {} as never, ws);
+  await settle();
+  routes.tts!({ t: "tts", id: "b", text: "Slide one", voice: "abc123" } as never, {} as never, ws);
+  await settle();
+  assert.equal(spoken, 1, "the replay was free");
+  assert.deepEqual(sent.at(-1), { t: "ttsAudio", id: "b", audio: Buffer.from([7]).toString("base64") });
+  for (let i = 0; i < 40; i++) routes.tts!({ t: "tts", id: `n${i}`, text: `Line ${i}`, voice: "abc123" } as never, {} as never, ws);
+  await settle();
+  assert.ok(spoken <= 30, `capped (${spoken})`);
+  assert.ok(sent.some((m) => m.t === "ttsAudio" && /too many/.test(m.error ?? "")));
+});

@@ -312,9 +312,11 @@ const eod = new EodSync({
  * feedback — a rule, a correction, praise — it goes into the team lessons, so
  * every worker learns from it, not just the one you told.
  */
-function heard(text: string, deskId?: string): void {
+function heard(text: string, deskId: string | undefined, client: ClientRec): void {
   const about = deskId ? progress.taskAt(deskId)?.title : undefined;
-  if (lessons.heard(text, about)) broadcast({ t: "loop", goalId: "", event: "warn", text: "📚 Noted for the team: every worker will learn from that" });
+  // You (the host) are "your manager" in the lessons; a teammate on your network is credited by name.
+  const from = client.role === "host" ? "you" : client.name;
+  if (lessons.heard(text, about, from)) broadcast({ t: "loop", goalId: "", event: "warn", text: `📚 Noted for the team${from === "you" ? "" : ` (from ${from})`}: every worker will learn from that` });
 }
 // Workers hired since the last write get the lessons in their own folder too.
 setInterval(() => lessons.write(), 60_000).unref();
@@ -573,7 +575,11 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
     const client = clients.get(ws);
     if (!client) return;
     // Guests from the local network only get what their role allows.
-    if (!allowed(client.role, msg.t)) return;
+    if (!allowed(client.role, msg.t)) {
+      // Speech they can't have: say so now, so their browser's own voice speaks instead of waiting.
+      if (msg.t === "tts" && typeof msg.id === "string") send(ws, { t: "ttsAudio", id: msg.id.slice(0, 40), error: "not allowed" });
+      return;
+    }
 
     // Every message but join and roundup names a desk.
     const deskId = "deskId" in msg ? str(msg.deskId, 64) : null;
@@ -833,7 +839,7 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
         break;
       }
       case "say": {
-        if (str(msg.text, 4000) !== null && office.say(msg.deskId, msg.text)) heard(msg.text, msg.deskId);
+        if (str(msg.text, 4000) !== null && office.say(msg.deskId, msg.text)) heard(msg.text, msg.deskId, client);
         break;
       }
       default: {

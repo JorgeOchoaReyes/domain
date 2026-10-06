@@ -67,7 +67,13 @@ test("a sync whose lead never delivers loses nothing", async () => {
 test("what you say is learned from when it's a rule, a correction or praise — not a question or a hello", () => {
   assert.equal(feedbackKind("From now on, run the tests before you present"), "rule");
   assert.equal(feedbackKind("Never push straight to master"), "rule");
-  assert.equal(feedbackKind("That's wrong, the button should be on the left"), "rule");
+  assert.equal(feedbackKind("That's wrong, the button should be on the left"), "fix");
+  assert.equal(feedbackKind("Please don't touch the database schema"), "rule");
+  assert.equal(feedbackKind("I want you to run the linter before presenting"), "rule");
+  assert.equal(feedbackKind("Use pnpm instead of npm"), "rule");
+  // Not feedback: questions, asks, "don't worry", praise that leads into the next ask.
+  for (const said of ["can you check why the build failed?", "how's the bug hunt going?", "what do you prefer, A or B?", "do not worry about it", "next time we meet let's talk", "great, now add the login page", "Add a missing favicon", "Fix the bad link in the footer"])
+    assert.equal(feedbackKind(said), null, said);
   assert.equal(feedbackKind("The login page is broken"), "fix");
   assert.equal(feedbackKind("This needs to change, the colors are confusing"), "fix");
   assert.equal(feedbackKind("Perfect, love it"), "praise");

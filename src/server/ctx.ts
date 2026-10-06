@@ -56,7 +56,7 @@ export interface ServerCtx {
    */
   assignTask(who: string, goalId: string, taskId: string, deskId: string, brief?: unknown): boolean;
   /** Something you said to a worker (or everyone): the team learns from it if it is feedback. */
-  heard?(text: string, deskId?: string): void;
+  heard?(text: string, deskId: string | undefined, client: ClientRec): void;
   /** Extra lines for a task's brief (e.g. the idea it came from); modules add to this. */
   briefNotes: ((goalId: string, taskId: string, deskId: string) => string)[];
 }
