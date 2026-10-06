@@ -32,6 +32,7 @@ import { buildRooms, type Rooms } from "./rooms.js";
 import { buildGameRoom, type GameRoom } from "./gameroom.js";
 import { buildProps, type Props } from "./props.js";
 import { buildCars, drive, type Car, type DriveInput } from "./cars.js";
+import { addExtras, type Extras } from "./extras.js";
 import { Hoops, SoccerBall } from "./minigames.js";
 import { Hand } from "./hand.js";
 import {
@@ -129,6 +130,8 @@ export class World {
   readonly props: Props;
   /** The cars on the street (you can drive them). */
   readonly cars: Car[];
+  /** The second batch's props out on the grounds and on floor 2 (the office's are in props.group). */
+  private extras: Extras;
   private laptops = new Map<string, Laptop>();
   private workers = new Map<string, WorkerView>();
   private peers = new Map<string, PeerView>();
@@ -193,6 +196,9 @@ export class World {
     this.scene.add(this.park.group);
     this.props = buildProps();
     this.scene.add(this.props.group);
+    this.extras = addExtras(this.props);
+    this.scene.add(this.extras.grounds, this.extras.upstairs);
+    this.extras.upstairs.visible = false;
     const street = buildCars();
     this.cars = street.cars;
     this.rooms.areas.grounds.add(street.group);
@@ -994,6 +1000,8 @@ export class World {
     this.upstairs.group.visible = up;
     this.rooms.group.visible = !up;
     this.park.group.visible = !up && seeGrounds;
+    this.extras.grounds.visible = !up && seeGrounds;
+    this.extras.upstairs.visible = up;
     this.office.group.visible = !outside && !up;
     this.gameRoom.group.visible = !outside && !up;
     this.props.group.visible = !outside && !up;

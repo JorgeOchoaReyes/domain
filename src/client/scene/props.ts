@@ -54,7 +54,11 @@ export interface Props {
 // Loading Kenney's models
 // ---------------------------------------------------------------------------
 
-const URLS = import.meta.glob("../assets/kenney/*.glb", { eager: true, query: "?url", import: "default" }) as Record<string, string>;
+// Furniture Kit models sit in kenney/ itself; other kits in a folder each
+// ("arcade/pinball"). Those kits paint their models from one shared texture,
+// the folder's colormap.png.
+const URLS = import.meta.glob("../assets/kenney/**/*.glb", { eager: true, query: "?url", import: "default" }) as Record<string, string>;
+const COLORMAPS = import.meta.glob("../assets/kenney/*/colormap.png", { eager: true, query: "?url", import: "default" }) as Record<string, string>;
 const urlOf = (name: string) => URLS[`../assets/kenney/${name}.glb`];
 
 /** Kenney's flat colors, warmed up to the office's palette. */
@@ -69,22 +73,55 @@ const RECOLOR: Record<string, string> = {
   carpetWhite: "#f4f1ea",
 };
 
-const loader = new GLTFLoader();
+const loaders = new Map<string, GLTFLoader>();
 const loaded = new Map<string, Promise<THREE.Object3D>>();
+
+/** A loader for a kit's folder: its models ask for "Textures/colormap.png", which is the folder's colormap. */
+function loaderFor(folder: string): GLTFLoader {
+  let l = loaders.get(folder);
+  if (!l) {
+    const manager = new THREE.LoadingManager();
+    const colormap = COLORMAPS[`../assets/kenney/${folder}/colormap.png`];
+    manager.setURLModifier((url) => (colormap && /colormap\.png$/.test(url) ? colormap : url));
+    l = new GLTFLoader(manager);
+    loaders.set(folder, l);
+  }
+  return l;
+}
 
 function load(name: string): Promise<THREE.Object3D> {
   let p = loaded.get(name);
   if (!p) {
     const url = urlOf(name);
-    p = url ? loader.loadAsync(url).then((g) => g.scene) : Promise.reject(new Error(`no model ${name}`));
+    const folder = name.includes("/") ? name.slice(0, name.indexOf("/")) : "";
+    p = url ? loaderFor(folder).loadAsync(url).then((g) => g.scene) : Promise.reject(new Error(`no model ${name}`));
     loaded.set(name, p);
   }
   return p;
 }
 
-interface ModelOpts {
+/** Toon materials for textured models, one per texture (and opacity). */
+const textured = new Map<string, THREE.MeshToonMaterial>();
+function toonTextured(map: THREE.Texture, opacity = 1): THREE.MeshToonMaterial {
+  const key = `${map.uuid}|${opacity}`;
+  let m = textured.get(key);
+  if (!m) {
+    m = toonUnique("#ffffff");
+    m.map = map;
+    if (opacity < 1) {
+      m.transparent = true;
+      m.opacity = opacity;
+    }
+    textured.set(key, m);
+  }
+  return m;
+}
+
+export interface ModelOpts {
   /** How tall it stands, in meters (the model is scaled to fit). */
   height: number;
+  /** Or how wide (its longer side on the floor), for flat things like rugs. */
+  width?: number;
   x: number;
   y?: number;
   z: number;
@@ -102,7 +139,7 @@ interface ModelOpts {
 let modelLoaded: (m: THREE.Object3D) => void = () => {};
 
 /** A Kenney model, placed: an empty group now, filled in when it has loaded. */
-function model(name: string, o: ModelOpts): THREE.Group {
+export function model(name: string, o: ModelOpts): THREE.Group {
   const g = new THREE.Group();
   g.position.set(o.x, o.y ?? 0, o.z);
   g.rotation.y = o.rotY ?? 0;
@@ -117,6 +154,7 @@ function model(name: string, o: ModelOpts): THREE.Group {
         ms.receiveShadow = true;
         const swap = (mat: THREE.Material): THREE.Material => {
           const std = mat as THREE.MeshStandardMaterial;
+          if (std.map && !o.colors?.[mat.name]) return toonTextured(std.map, std.transparent ? Math.max(0.35, std.opacity) : 1);
           const color = o.colors?.[mat.name] ?? RECOLOR[mat.name] ?? `#${std.color?.getHexString() ?? "ffffff"}`;
           if (o.unique?.includes(mat.name)) {
             let u = own.get(mat.name);
@@ -133,7 +171,7 @@ function model(name: string, o: ModelOpts): THREE.Group {
       // Scale to height, center on x/z, stand it on y = 0.
       const bb = new THREE.Box3().setFromObject(m);
       const size = bb.getSize(new THREE.Vector3());
-      const k = o.height / Math.max(size.y, 1e-3);
+      const k = o.width ? o.width / Math.max(size.x, size.z, 1e-3) : o.height / Math.max(size.y, 1e-3);
       m.scale.setScalar(k);
       const c = bb.getCenter(new THREE.Vector3());
       m.position.set(-c.x * k, -bb.min.y * k, -c.z * k);
@@ -188,7 +226,7 @@ const HEADLINES = [
   "Breaking: someone finally read the README",
 ];
 
-const store = {
+export const store = {
   get<T>(k: string, d: T): T {
     try {
       const v = localStorage.getItem(`domain.props.${k}`);
@@ -206,7 +244,7 @@ const store = {
   },
 };
 
-const dist = (x: number, z: number, p: { x: number; z: number }) => Math.hypot(x - p.x, z - p.z);
+export const dist = (x: number, z: number, p: { x: number; z: number }) => Math.hypot(x - p.x, z - p.z);
 
 export function buildProps(): Props {
   const group = new THREE.Group();
@@ -579,7 +617,7 @@ export function buildProps(): Props {
 }
 
 /** The shortest turn from one heading to another. */
-function angleTo(from: number, to: number): number {
+export function angleTo(from: number, to: number): number {
   return ((((to - from + Math.PI) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2)) - Math.PI;
 }
 
