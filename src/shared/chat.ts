@@ -15,7 +15,7 @@ export interface ChatMessage {
 }
 
 export interface ChatThread {
-  /** "team", or the desk the worker sits at. */
+  /** "team", "people", or the desk the worker sits at. */
   id: string;
   /** What the thread is about: "#team", "Ada (Claude Code)". */
   title: string;
@@ -44,4 +44,6 @@ export interface ChatWork {
 }
 
 export const TEAM_THREAD = "team";
+/** The people in the office (you and anyone on your network) talking among yourselves — workers never see it. */
+export const PEOPLE_THREAD = "people";
 export const MAX_CHAT_MESSAGES = 200;

@@ -892,6 +892,8 @@ const teamChat = new TeamChat({
   desks: () => office.desks,
   openTerminal: (deskId) => openTerminal(deskId),
   onVoiceError: warnVoice,
+  me: () => myName,
+  onPeople: (who, text) => hud.toast(`💬 ${who}: ${text.length > 80 ? text.slice(0, 78) + "…" : text}`),
 });
 const chatBtn = document.createElement("button");
 chatBtn.className = "btn dock-btn";
@@ -1010,6 +1012,7 @@ const phone = new Phone({
     applySettings(next);
     music.set({ on: next.music, track: next.track, volume: next.musicVolume });
   },
+  giveTask: (text) => net.send({ t: "quickTask", deskId: "any", text }),
   sendTeam: (text) => {
     net.send({ t: "chatSend", to: TEAM_THREAD, text });
     hud.toast("💬 Sent to #team");

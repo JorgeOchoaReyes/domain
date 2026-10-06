@@ -286,7 +286,7 @@ export type ClientMessage =
   | { t: "taskAdd"; goalId: string; title: string }
   /** Put the worker at a desk on a task (it's briefed in its terminal). */
   | { t: "taskAssign"; goalId: string; taskId: string; deskId: string; brief?: TaskBrief }
-  /** Hand a worker something to do, straight from the chat: tracked as a task (on the session's goal, or "Quick tasks"). */
+  /** Hand a worker something to do, straight from the chat: tracked as a task (on the session's goal, or "Quick tasks"). deskId "any": whoever's free. */
   | { t: "quickTask"; deskId: string; text: string; goalId?: string }
   /** Change the team's defaults for hiring and handing out tasks. */
   | { t: "policySet"; policy: TeamPolicy }
@@ -368,6 +368,8 @@ export type ClientMessage =
   | { t: "chatGet" }
   /** A message to a worker (its desk id) or everyone ("team"); `raw` types it straight into the terminal. */
   | { t: "chatSend"; to: string; text: string; raw?: boolean }
+  /** To the people in the office (#people): never to the workers. */
+  | { t: "peopleSend"; text: string }
   /** What a worker's screen says right now. */
   | { t: "chatPeek"; deskId: string }
   /** A worker's record: its tasks, commits and changed files. */

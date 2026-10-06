@@ -201,10 +201,11 @@ export class World {
     this.extras.upstairs.visible = false;
     const street = buildCars();
     this.cars = street.cars;
-    this.rooms.areas.grounds.add(street.group);
     // The cars' footprints move with them (they're kept up to date in place).
     this.colliders = [...this.office.colliders, ...this.rooms.colliders, ...this.gameRoom.colliders, ...this.upstairs.colliders, ...this.park.colliders, ...this.props.colliders, ...street.colliders];
     this.collectOccludable([this.office.group, this.rooms.group, this.gameRoom.group]);
+    // The cars go in after: they move, so the see-through pass (fixed boxes) must never hide bits of them — their roofs vanished as you got in.
+    this.rooms.areas.grounds.add(street.group);
     // Props' models load after this: each joins the camera's see-through pass as it arrives.
     this.props.onModel = (m) => {
       m.updateWorldMatrix(true, true);

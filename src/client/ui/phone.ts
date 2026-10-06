@@ -28,6 +28,8 @@ export interface PhoneActions {
   music(): { on: boolean; track: TrackId; volume: number };
   setMusic(m: { on: boolean; track: TrackId; volume: number }): void;
   sendTeam(text: string): void;
+  /** Hand it to the first free worker (or, with nobody free, leave it waiting for the next). */
+  giveTask(text: string): void;
   openChat(threadId?: string): void;
   openTerminal(deskId: string): void;
   goToDesk(deskId: string): void;
@@ -221,7 +223,7 @@ export class Phone {
         const desks = office.desks.filter((d) => d.worker);
         return (
           this.head("💬 Team chat", `<button class="ph-link" data-do="chat">Open ›</button>`) +
-          `<div class="ph-send"><input type="text" maxlength="500" placeholder="Message everyone…" />${micButton("ph-mic")}<button class="ph-go">Send</button></div>
+          `<div class="ph-send"><input type="text" maxlength="2000" placeholder="Message everyone, or give a task…" />${micButton("ph-mic")}<button class="ph-go">Send</button><button class="ph-task" title="Give it as a task to whoever's free">🎯 Task</button></div>
           <button class="ph-row" data-chat="${TEAM_THREAD}"><span class="ph-av" style="background:#4cc9f0">#</span><span><b>team</b><small>Everyone at once</small></span></button>
           ${desks
             .map((d) => {
@@ -348,6 +350,12 @@ export class Phone {
     };
     input?.addEventListener("keydown", (e) => e.key === "Enter" && send());
     s.querySelector(".ph-go")?.addEventListener("click", send);
+    s.querySelector(".ph-task")?.addEventListener("click", () => {
+      const text = input!.value.trim();
+      if (!text) return input!.focus();
+      input!.value = "";
+      this.a.giveTask(text);
+    });
     if (input) wireMic(s.querySelector<HTMLButtonElement>(".ph-mic"), input);
   }
 }

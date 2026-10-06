@@ -749,17 +749,31 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
       }
       case "quickTask": {
         // "Work on this" from the chat, the laptop or the phone: a real task, tracked and reviewed like any other.
-        const text = str(msg.text, 300)?.trim();
-        if (!text || !office.isStaffed(msg.deskId)) break;
+        // deskId "any": the first free worker takes it — or, with nobody free, it waits on the goal for the next one.
+        const said = str(msg.text, 4000)?.trim();
+        if (!said) break;
+        const toAny = msg.deskId === "any";
+        if (!toAny && !office.isStaffed(msg.deskId)) break;
         const snap = progress.snapshot();
         const open = (id: string | null | undefined) => snap.goals.find((g) => g.id === id && !g.shippedAt && !g.doneAt);
         let goal = open(str(msg.goalId, 64)) ?? open(snap.session?.goalId) ?? snap.goals.find((g) => g.title === "Quick tasks" && !g.shippedAt && !g.doneAt);
         goal ??= progress.createGoal(client.name, "Quick tasks", "Small things handed out from the chat", [], "build") ?? undefined;
         if (!goal) break;
-        const taskId = progress.addTask(goal.id, text);
+        const deskId = toAny ? freeWorker() : msg.deskId;
+        // A long one, handed out now: its first line (or the start) is the title, and all of it goes in the brief.
+        // Waiting for someone, it keeps as much as a title holds.
+        const firstLine = said.split("\n")[0].trim();
+        const max = deskId ? 120 : 300;
+        const title = deskId && firstLine.length <= max ? firstLine : said.length <= max ? said : `${(deskId ? firstLine : said).slice(0, max - 3).trimEnd()}…`;
+        const brief = title === said ? {} : { notes: said };
+        const taskId = progress.addTask(goal.id, title);
         if (!taskId) break;
-        office.onSaid?.(msg.deskId, "you", `🎯 New task: ${text}`);
-        assignTask(client.name, goal.id, taskId, msg.deskId, {});
+        if (!deskId) {
+          send(ws, { t: "loop", goalId: goal.id, event: "warn", text: `🎯 Nobody's free right now — “${title}” is waiting on “${goal.title}” for the next one` });
+          break;
+        }
+        office.onSaid?.(deskId, "you", `🎯 New task: ${said}`);
+        if (assignTask(client.name, goal.id, taskId, deskId, brief)) send(ws, { t: "loop", goalId: goal.id, event: "warn", text: `🎯 ${nameAt(deskId)} is on “${title}”` });
         break;
       }
       case "policySet": {
@@ -868,6 +882,18 @@ function warnIfTooBig(model: string): void {
   if (!warning) return;
   log.start("agent", `⚠ ${warning}`).done(false);
   broadcast({ t: "loop", goalId: "", event: "warn", text: `🧠 ${warning}` });
+}
+
+/**
+ * A worker free to take something new: at work today (not asleep), nothing
+ * open on its plate (not mid-task, not presenting one) — idle ones first.
+ */
+function freeWorker(): string | null {
+  const busy = new Set(progress.snapshot().goals.flatMap((g) => g.tasks.filter((t) => t.deskId && t.status !== "done").map((t) => t.deskId!)));
+  const free = office
+    .snapshot()
+    .desks.filter((d) => d.worker && office.isStaffed(d.id) && !busy.has(d.id) && (d.worker.status === "idle" || d.worker.status === "done"));
+  return (free.find((d) => d.worker!.status === "idle") ?? free[0])?.id ?? null;
 }
 
 /** Extra lines for task briefs, from feature modules (e.g. the idea a task came from). */
