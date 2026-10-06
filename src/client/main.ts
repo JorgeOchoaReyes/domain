@@ -73,7 +73,11 @@ import { esc, escapeModal, modalOpen } from "./ui/modal.js";
 import { GoalsWindow } from "./ui/goals.js";
 import { SessionPill, openStartSession, showSessionSummary } from "./ui/session.js";
 import { PlayerCard, blankStats, openProfile } from "./ui/profile.js";
-import { confetti, floatXp, isMuted, setMuted, sound } from "./ui/fx.js";
+import { confetti, floatXp, isMuted, setFxVolume, setMuted, sound } from "./ui/fx.js";
+import { Ambience } from "./ambience.js";
+import { listenToFrontDoors } from "./scene/rooms.js";
+import { listenToModals } from "./ui/modal.js";
+import { isIndoors } from "../shared/layout.js";
 import { ACHIEVEMENTS, EMPTY_PROGRESS, sessionLength, type Goal, type ProgressState } from "../shared/progress.js";
 import * as THREE from "three";
 import "./styles/main.css";
@@ -125,7 +129,14 @@ let settings: Settings = loadSettings();
 /** The background music (composed live); the jukeboxes and Settings pick it. */
 const music = new Music();
 // Browsers only let sound start after you click or press a key: start it then.
-const startMusic = () => music.set({ on: settings.music, track: settings.track, volume: settings.musicVolume });
+/** The sound of the place: hum and keyboards indoors, wind and birds out; Settings has its volume. */
+const ambience = new Ambience();
+const startMusic = () => {
+  music.set({ on: settings.music, track: settings.track, volume: settings.musicVolume });
+  ambience.set({ on: settings.ambience, volume: settings.ambienceVolume });
+};
+listenToFrontDoors((opening) => sound.door(opening));
+listenToModals((open) => (open ? sound.open() : sound.close()));
 window.addEventListener("pointerdown", startMusic, { once: true });
 window.addEventListener("keydown", startMusic, { once: true });
 let lastQuality: Settings["graphics"] | null = null;
@@ -148,6 +159,8 @@ function applySettings(s: Settings): void {
   minimap?.el.classList.toggle("hidden", !s.minimap);
   // Before your first click the music waits (see startMusic); after it, changes apply at once.
   if (music.playing || !s.music) music.set({ on: s.music, track: s.track, volume: s.musicVolume });
+  if (ambience.playing || !s.ambience) ambience.set({ on: s.ambience, volume: s.ambienceVolume });
+  setFxVolume(s.fxVolume);
 }
 const terminal = new TerminalOverlay();
 const review = new ReviewPanel();
@@ -1857,6 +1870,8 @@ let last = performance.now();
 let sentX = NaN;
 let sentZ = NaN;
 let sentFacing = NaN;
+/** Which floor you were on last frame (null before the first). */
+let wasUpstairs: boolean | null = null;
 
 function frame(now: number): void {
   const dt = Math.min((now - last) / 1000, 0.05);
@@ -1886,7 +1901,16 @@ function frame(now: number): void {
   activities.update(now);
   world.gameRoom.setDisco(music.playing && music.current.id === "disco", music.pulse());
   world.hand.update(dt, player.speed, player.yawAngle, player.boosted > 0, settings.headBob);
-  here = minimap.update({ x: player.position.x, z: player.position.z, facing: player.facing }, world.workerSpots(), world.peerSpots()).id;
+  const workers = world.workerSpots();
+  here = minimap.update({ x: player.position.x, z: player.position.z, facing: player.facing }, workers, world.peerSpots()).id;
+  const { x: px, z: pz } = player.position;
+  ambience.update({ x: px, z: pz, look: player.lookDir, indoors: isIndoors(px, pz), daylight: world.dayLevel, workers });
+  // Changing floors: the elevator's ding.
+  const upNow = inUpstairs(px, pz);
+  if (upNow !== wasUpstairs) {
+    if (wasUpstairs !== null) sound.elevator();
+    wasUpstairs = upNow;
+  }
   hud.setHint(hintFor());
   // In VR an open panel is what you're using: no E key floating over it.
   world.setPrompt((vr.presenting && vr.panel.open) || reviewing() ? null : promptTarget());

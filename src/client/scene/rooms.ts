@@ -54,6 +54,12 @@ export interface Rooms {
 
 type Add = (o: THREE.Object3D) => void;
 
+let onFrontDoors: ((opening: boolean) => void) | null = null;
+/** Hear the front doors: called as they start to open (true) or close (false). */
+export function listenToFrontDoors(cb: (opening: boolean) => void): void {
+  onFrontDoors = cb;
+}
+
 const H = WALL_HEIGHT;
 const T = WALL_T;
 const DOOR_H = DOOR_HEIGHT;
@@ -761,8 +767,13 @@ function buildLobby(add: Add, solid: (x: number, z: number, hw: number, hd: numb
     right.position.x = cx + half / 2 + open * (half - 0.08);
   };
   place();
+  let wasNear = false;
   return (dt, p) => {
     const near = Math.hypot(p.x - cx, p.z - FRONT_DOOR.z) < 3.2;
+    if (near !== wasNear) {
+      wasNear = near;
+      onFrontDoors?.(near);
+    }
     open += ((near ? 1 : 0) - open) * Math.min(1, dt * 6);
     place();
   };

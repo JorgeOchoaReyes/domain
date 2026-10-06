@@ -616,6 +616,11 @@ export class World {
     }));
   }
 
+  /** Daylight outside right now: 0 night … 1 day (the ambience's birds keep its hours). */
+  get dayLevel(): number {
+    return this.daylight;
+  }
+
   /** Where the other people are, for the minimap. */
   peerSpots(): { x: number; z: number }[] {
     return [...this.peers.values()].map((v) => ({ x: v.person.root.position.x, z: v.person.root.position.z }));
