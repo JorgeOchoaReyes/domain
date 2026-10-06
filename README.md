@@ -898,9 +898,22 @@ Next up, after v1.0:
 - **Stuck agents, recovered.** Next, one-click fixes from the desk (update the
   CLI, restart its session, re-check its sign-in) and the CLI's own error
   shown.
+- **Estimates for every job.** Before you hand out a task: how long it'll
+  likely take and what it'll cost — on a cloud model, or free on a local one —
+  from the size of the task and how long similar ones took this team. Shown
+  on the assignment card, the laptop and the phone, and checked against what
+  it really took when the task is done, so the estimates get better.
+- **Local models first.** Suggest a model on this computer whenever one can
+  do the job: local models listed first (marked free and private) when hiring
+  and handing out work, a nudge when a small task is about to go to a big
+  cloud model, and autopilot preferring them for small tasks.
 - **Local models, end to end.** Pick a context window for Ollama models (or
   have the office make a copy with a bigger one), a speed check on hire, and
   autopilot that sizes tasks to the model — small ones for small models.
+- **Smoother still.** The first look at your office, the lobby and floor 2
+  still drops a few frames once per session (50–67 ms); the outline pass costs
+  as much as the scene itself; and static furniture could be merged into far
+  fewer draw calls. Measure with `scripts/perf/`.
 - **macOS and Linux**, tested end to end (the builds exist; they haven't been
   run on real machines yet).
 - **VR**, back on track: the last fixes for drawing and reviews in the headset.
