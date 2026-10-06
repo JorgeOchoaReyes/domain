@@ -307,6 +307,15 @@ const eod = new EodSync({
   },
   office: { staffed: activeDesks, workdir: (d) => office.workdir(d), instruct: (d, t) => office.instruct(d, t), nameOf: nameAt },
 });
+/**
+ * Something you said to a worker (or, with no desk, to everyone). When it is
+ * feedback — a rule, a correction, praise — it goes into the team lessons, so
+ * every worker learns from it, not just the one you told.
+ */
+function heard(text: string, deskId?: string): void {
+  const about = deskId ? progress.taskAt(deskId)?.title : undefined;
+  if (lessons.heard(text, about)) broadcast({ t: "loop", goalId: "", event: "warn", text: "📚 Noted for the team: every worker will learn from that" });
+}
 // Workers hired since the last write get the lessons in their own folder too.
 setInterval(() => lessons.write(), 60_000).unref();
 
@@ -694,6 +703,15 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
         send(ws, { t: "lessons", state: lessons.snapshot, syncing: eod.isRunning });
         break;
       }
+      case "lessonTeach": {
+        const text = str(msg.text, 240);
+        if (text) lessons.teach(text);
+        break;
+      }
+      case "lessonForget": {
+        lessons.forget({ lesson: str(msg.lesson, 240) ?? undefined, noteAt: typeof msg.noteAt === "number" ? msg.noteAt : undefined });
+        break;
+      }
       case "eodSync": {
         void eod.run();
         broadcast({ t: "lessons", state: lessons.snapshot, syncing: true });
@@ -815,7 +833,7 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
         break;
       }
       case "say": {
-        if (str(msg.text, 4000) !== null) office.say(msg.deskId, msg.text);
+        if (str(msg.text, 4000) !== null && office.say(msg.deskId, msg.text)) heard(msg.text, msg.deskId);
         break;
       }
       default: {
@@ -1013,6 +1031,7 @@ const ctx: ServerCtx = {
   },
   assignTask,
   briefNotes,
+  heard,
 };
 // Per-session MCP configs from a previous run (e.g. after a crash) can hold tokens: clear them.
 mcpCleanup(CWD);

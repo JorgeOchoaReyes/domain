@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Lessons } from "../src/server/lessons.ts";
+import { Lessons, feedbackKind } from "../src/server/lessons.ts";
 import { EodSync } from "../src/server/sync.ts";
 
 test("feedback is in every worker's LESSONS.md straight away, and saved", () => {
@@ -62,4 +62,36 @@ test("a sync whose lead never delivers loses nothing", async () => {
   });
   await sync.run();
   assert.deepEqual(l.snapshot.lessons, ["Name things plainly"]);
+});
+
+test("what you say is learned from when it's a rule, a correction or praise — not a question or a hello", () => {
+  assert.equal(feedbackKind("From now on, run the tests before you present"), "rule");
+  assert.equal(feedbackKind("Never push straight to master"), "rule");
+  assert.equal(feedbackKind("That's wrong, the button should be on the left"), "rule");
+  assert.equal(feedbackKind("The login page is broken"), "fix");
+  assert.equal(feedbackKind("This needs to change, the colors are confusing"), "fix");
+  assert.equal(feedbackKind("Perfect, love it"), "praise");
+  assert.equal(feedbackKind("How is it going?"), null);
+  assert.equal(feedbackKind("hi there"), null);
+  assert.equal(feedbackKind("ok"), null);
+});
+
+test("feedback said in chat goes in once, praise as something to keep doing; you can teach and forget", () => {
+  const dir = mkdtempSync(join(tmpdir(), "heard-"));
+  const l = new Lessons(null, () => [dir]);
+  assert.equal(l.heard("Always write a test for the empty case", "Login form"), true);
+  assert.equal(l.heard("Always write a test for the empty case"), false, "said to everyone at once: counted once");
+  assert.equal(l.heard("What are you working on?"), false);
+  assert.equal(l.heard("Great job on the docs"), true);
+  const notes = l.snapshot.notes;
+  assert.equal(notes.length, 2);
+  assert.equal(notes[0].about, "Login form");
+  assert.match(notes[1].text, /^Keep doing this — Great job/);
+  assert.match(readFileSync(join(dir, "LESSONS.md"), "utf8"), /Always write a test for the empty case/);
+
+  l.teach("Keep PRs under 300 lines");
+  assert.deepEqual(l.snapshot.lessons, ["Keep PRs under 300 lines"]);
+  l.forget({ lesson: "Keep PRs under 300 lines", noteAt: notes[0].at });
+  assert.equal(l.snapshot.lessons.length, 0);
+  assert.equal(l.snapshot.notes.length, 1);
 });

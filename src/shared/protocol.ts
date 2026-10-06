@@ -275,6 +275,9 @@ export type ClientMessage =
   /** The team's lessons (answered with "lessons"), and the end-of-day sync. */
   | { t: "lessonsGet" }
   | { t: "eodSync" }
+  /** A lesson you teach the team yourself; or take one back (a lesson by its line, a note by its time). */
+  | { t: "lessonTeach"; text: string }
+  | { t: "lessonForget"; lesson?: string; noteAt?: number }
   | { t: "goalDelete"; goalId: string }
   | { t: "taskAdd"; goalId: string; title: string }
   /** Put the worker at a desk on a task (it's briefed in its terminal). */

@@ -15,6 +15,27 @@ export type { LessonNote, LessonsState };
 export const MAX_LESSONS = 25;
 const MAX_NOTES = 120;
 
+/** "From now on…", "never…", "make sure…": a standing rule. */
+const RULE = /\b(always|never|from now on|going forward|in the future|next time|every time|each time|make sure|remember to|don'?t ever|please don'?t|do not|don'?t (use|add|do|make|change|touch|put|write|create|leave|forget|ship|push|commit)|stop \w+ing|avoid|prefer|instead|i (want|like|prefer|need|expect)|we (should|need to|want)|you (should|need to|must|have to)|should (always|never|be|have|use))\b/i;
+/** "That's wrong", "it's broken", "this needs to change": something to fix. */
+const FIX = /\b(wrong|broken|bug(gy)?|doesn'?t work|does not work|not working|isn'?t working|didn'?t work|fail(s|ed|ing)?|incorrect|bad|ugly|messy|a mess|not what i|that'?s not|this isn'?t|why did you|you forgot|forgot|missing|needs? (to )?(change|fix|be|work)|change (this|that|it)|fix (this|that|it)|redo|undo|revert|too (slow|big|small|long|much|many|short)|confus(ing|ed)|weird|not right)\b/i;
+/** "Perfect", "love it": what to keep doing. */
+const PRAISE = /\b(great|perfect|love (it|this|that)|nice (work|job)|well done|good (job|work|call)|exactly|awesome|excellent|keep (doing|it up)|that'?s (it|right|better))\b/i;
+
+/**
+ * Whether something you said is worth learning from: a rule ("from now on…"),
+ * a correction ("that's wrong", "this needs to change") or praise ("perfect").
+ * A plain question or a hello is not. Rules win over fixes over praise.
+ */
+export function feedbackKind(text: string): "rule" | "fix" | "praise" | null {
+  const t = text.replace(/\s+/g, " ").trim();
+  if (t.length < 8 || t.split(" ").length < 2) return null;
+  if (RULE.test(t)) return "rule";
+  if (FIX.test(t)) return "fix";
+  if (PRAISE.test(t)) return "praise";
+  return null;
+}
+
 export function lessonsMarkdown(s: LessonsState): string {
   const lines = [
     "# Team lessons",
@@ -63,6 +84,37 @@ export class Lessons {
     if (text.length < 4) return;
     this.state.notes.push({ ...n, text, at: Date.now() });
     this.state.notes = this.state.notes.slice(-MAX_NOTES);
+    this.save();
+  }
+
+  /**
+   * Something you said to a worker or the team (chat, office hours): kept as
+   * feedback when it's a rule, a correction or praise, so every worker learns
+   * from it — not just the one you said it to. Saying the same thing to
+   * everyone at once counts once. Returns whether it was kept.
+   */
+  heard(text: string, about?: string): boolean {
+    const kind = feedbackKind(text);
+    if (!kind) return false;
+    const said = text.replace(/\s+/g, " ").trim();
+    const recent = this.state.notes.slice(-10).some((n) => n.from === "you" && Date.now() - n.at < 120_000 && n.text.endsWith(said.slice(0, 400)));
+    if (recent) return false;
+    this.note({ from: "you", text: kind === "praise" ? `Keep doing this — ${said}` : said, about, kind: "feedback" });
+    return true;
+  }
+
+  /** A lesson you teach the team yourself: straight into the list, no sync needed. */
+  teach(text: string): void {
+    const line = text.replace(/\s+/g, " ").trim().slice(0, 240);
+    if (line.length < 4) return;
+    this.state.lessons = [...this.state.lessons.filter((l) => l !== line), line].slice(-MAX_LESSONS);
+    this.save();
+  }
+
+  /** Take back a lesson (by its line) or a note (by when it came in). */
+  forget(what: { lesson?: string; noteAt?: number }): void {
+    if (what.lesson !== undefined) this.state.lessons = this.state.lessons.filter((l) => l !== what.lesson);
+    if (what.noteAt !== undefined) this.state.notes = this.state.notes.filter((n) => n.at !== what.noteAt);
     this.save();
   }
 
