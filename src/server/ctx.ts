@@ -58,7 +58,9 @@ export interface ServerCtx {
   /** Something you said to a worker (or everyone): the team learns from it if it is feedback. */
   heard?(text: string, deskId: string | undefined, client: ClientRec): void;
   /** A task given to "whoever's free": a worker offers to take it, and you say yes (set by the chat module). */
-  offerTask?(goalId: string, taskId: string, title: string, skip?: string[]): void;
+  offerTask?(goalId: string, taskId: string, title: string, skip?: string[], who?: ClientRec): void;
+  /** Whether this person may direct the worker at that desk (theirs, or nobody else's here). */
+  mayDirectDesk?(client: ClientRec, deskId: string): boolean;
   /** Extra lines for a task's brief (e.g. the idea it came from); modules add to this. */
   briefNotes: ((goalId: string, taskId: string, deskId: string) => string)[];
 }

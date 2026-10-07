@@ -24,7 +24,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { fileURLToPath } from "node:url";
 import { dirname, join, normalize, extname } from "node:path";
 import { WebSocketServer, WebSocket } from "ws";
-import { AGENT_KINDS, AGENT_LABELS, coerceLook, parseClientMessage, type CheckResult, type Presentation, type ServerMessage } from "../shared/protocol.js";
+import { mayDirect, AGENT_KINDS, AGENT_LABELS, coerceLook, parseClientMessage, type CheckResult, type Presentation, type ServerMessage } from "../shared/protocol.js";
 import { GATE_RETRIES, coerceBrief, coercePolicy, isModelName } from "../shared/policy.js";
 import { runCheck, simulateCheck } from "./checks.js";
 import { OpLogger } from "./oplog.js";
@@ -601,6 +601,15 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
     const deskId = "deskId" in msg ? str(msg.deskId, 64) : null;
     if ("deskId" in msg && !deskId) return;
 
+    // Your agents are yours to direct: someone else's (while they're here) you can watch and message.
+    const directed = DIRECTING.has(msg.t) || (msg.t === "chatSend" && msg.raw === true);
+    const target = msg.t === "chatSend" ? str(msg.to, 64) : msg.t === "offerAnswer" ? offeredDesk(msg.taskId) : deskId;
+    if (directed && target && target !== "any" && !mayDirectDesk(client, target)) {
+      const w = office.workerAt(target);
+      send(ws, { t: "loop", goalId: "", event: "warn", text: `🔒 ${nameAt(target)} is ${w?.hiredBy ?? "someone else"}'s agent — you can message it; ask ${w?.hiredBy ?? "them"} to hand it work` });
+      return;
+    }
+
     switch (msg.t) {
       case "join": {
         client.name = (typeof msg.name === "string" ? msg.name : "").replace(/\s+/g, " ").trim().slice(0, 24) || "Guest";
@@ -786,7 +795,7 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
           const taskId = progress.addTask(goal.id, title);
           const files = coerceAttachments(msg.files);
           if (taskId && files.length) pendingFiles.set(taskId, files);
-          if (taskId) ctx.offerTask(goal.id, taskId, title);
+          if (taskId) ctx.offerTask(goal.id, taskId, title, [], client);
           break;
         }
         const deskId = toAny ? freeWorker() : msg.deskId;
@@ -1107,6 +1116,7 @@ function personaFor(deskId: string): string {
 }
 
 const ctx: ServerCtx = {
+  mayDirectDesk: (client, deskId) => mayDirectDesk(client, deskId),
   cwd: CWD,
   port: PORT,
   simulate: SIMULATE,
@@ -1309,6 +1319,26 @@ function writeAttachments(workdir: string, files: { name: string; text: string }
     /* best effort: the brief names only what was written */
   }
   return written;
+}
+
+/** What directs a worker (rather than just watching or talking to it). */
+const DIRECTING = new Set<string>(["input", "fire", "taskAssign", "quickTask", "review", "say", "plan", "ship", "wake", "ideaHandoff", "offerAnswer"]);
+
+/** The people in the office now (by name). */
+function presentNames(): string[] {
+  return [...clients.values()].filter((c) => c.joined || c.role === "host").map((c) => c.name);
+}
+
+/** Whether this person may direct the worker at that desk (see mayDirect). */
+function mayDirectDesk(client: ClientRec, deskId: string): boolean {
+  return mayDirect(office.workerAt(deskId), { name: client.name, host: client.role === "host" }, presentNames());
+}
+
+/** The desk a task was offered to (for answering the offer). */
+function offeredDesk(taskId: unknown): string | null {
+  if (typeof taskId !== "string") return null;
+  for (const g of progress.snapshot().goals) for (const t of g.tasks) if (t.id === taskId) return t.offered ?? null;
+  return null;
 }
 
 /** Hand a goal's waiting tasks to the free workers now, and say so. */

@@ -35,15 +35,20 @@ export interface MonitorActions {
   terminalVersion(deskId: string): number;
   /** Visitors watch; they don't type into workers. */
   canType(): boolean;
+  /** Your name (for "Mine"). */
+  me(): string;
+  /** Whether you may direct this agent (yours, or nobody else's here): otherwise you watch and message it. */
+  mayDirect(deskId: string): boolean;
   openTerminal(deskId: string): void;
   goToDesk(deskId: string): void;
 }
 
-type Filter = "all" | "waiting" | "review" | "working" | "free";
+type Filter = "all" | "mine" | "waiting" | "review" | "working" | "free";
 
 /** `ready`: the desks whose work has reached your line (not still with an auditor). */
-const FILTERS: { id: Filter; label: string; test: (d: Desk, ready: Set<string>) => boolean }[] = [
+const FILTERS: { id: Filter; label: string; test: (d: Desk, ready: Set<string>, me: string) => boolean }[] = [
   { id: "all", label: "All", test: () => true },
+  { id: "mine", label: "👤 Mine", test: (d, _r, me) => d.worker?.hiredBy === me },
   { id: "waiting", label: "🔴 Needs you", test: (d) => d.worker?.status === "waiting" },
   { id: "review", label: "🎤 To review", test: (d, ready) => ready.has(d.id) },
   { id: "working", label: "⚙️ Working", test: (d) => d.worker?.status === "working" || d.worker?.status === "booting" },
@@ -141,11 +146,13 @@ export class MonitorView {
     const ready = readyDesks(this.a.office());
     // Chips with counts.
     this.chips.innerHTML = FILTERS.map((f) => {
-      const n = staffed.filter((d) => f.test(d, ready)).length;
+      const n = staffed.filter((d) => f.test(d, ready, this.a.me())).length;
+      // "Mine" only matters with someone else's agents around.
+      if (f.id === "mine" && n === staffed.length) return "";
       return `<button class="mon-chip ${f.id === this.filter ? "on" : ""} ${(f.id === "waiting" || f.id === "review") && n ? "hot" : ""}" data-filter="${f.id}">${f.label} <b>${n}</b></button>`;
     }).join("");
     const test = FILTERS.find((f) => f.id === this.filter)!.test;
-    let shown = staffed.filter((d) => test(d, ready));
+    let shown = staffed.filter((d) => test(d, ready, this.a.me()));
     if (this.focused) shown = shown.filter((d) => d.id === this.focused);
     if (this.focused && !shown.length) this.focused = null;
 
@@ -280,12 +287,15 @@ export class MonitorView {
     // Only work that has reached your line can be reviewed here (a report still with its auditor isn't yours yet).
     const report = this.a.office().presentations.find((p) => p.deskId === d.id)?.report ?? null;
     const auditing = !report && !!w.report;
-    const head = JSON.stringify([w.status, workerName(w), w.agent, w.model, d.label, task, doing, w.branch, report?.at, report?.check?.status, auditing]);
+    const theirs = !this.a.mayDirect(d.id);
+    const head = JSON.stringify([w.status, workerName(w), w.agent, w.model, d.label, task, doing, w.branch, report?.at, report?.check?.status, auditing, theirs, w.hiredBy]);
     if (head === t.head) return;
     t.head = head;
     t.el.classList.toggle("waiting", w.status === "waiting");
     t.el.style.setProperty("--st", STATUS_BULB[w.status]);
-    t.el.querySelector(".mon-who")!.innerHTML = `<b>${esc(workerName(w))}</b> <small>${[w.identity ? AGENT_LABELS[w.agent] : "", w.model, d.label].filter(Boolean).map(esc).join(" · ")}</small>`;
+    t.el.querySelector(".mon-who")!.innerHTML = `<b>${esc(workerName(w))}</b> <small>${[w.identity ? AGENT_LABELS[w.agent] : "", w.model, d.label, theirs ? `🔒 ${w.hiredBy}'s` : ""].filter(Boolean).map(esc).join(" · ")}</small>`;
+    // Someone else's agent: you can message it, but its keys, tasks and reviews are theirs.
+    t.el.classList.toggle("theirs", theirs);
     t.el.querySelector(".mon-st")!.textContent = WALL_STATUS[w.status] ?? w.status;
     t.el.querySelector(".mon-now")!.innerHTML = `${task ? `<span class="mon-task-t">🎯 ${esc(task)}</span>` : ""}<span>${esc(doing)}</span>${w.branch ? `<span class="mon-br">🌿 ${esc(w.branch)}</span>` : ""}`;
     const input = t.el.querySelector<HTMLInputElement>(".mon-say input");
@@ -294,7 +304,7 @@ export class MonitorView {
     rv.classList.toggle("hidden", !report);
     rv.classList.remove("sent");
     t.el.classList.toggle("ready", !!report);
-    rv.innerHTML = report ? reviewHtml(report, this.a.canType()) : "";
+    rv.innerHTML = report ? reviewHtml(report, this.a.canType() && !theirs) : "";
     if (auditing) {
       rv.classList.remove("hidden");
       rv.innerHTML = `<div class="mon-rv-head"><b>🔍 Being audited:</b> <span class="mon-rv-title">${esc(w.report!.title)}</span></div><p class="mon-rv-hint">A teammate is checking it first — it comes to you when they're done.</p>`;

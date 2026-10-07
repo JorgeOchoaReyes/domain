@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { ChatStore, chatModule, screenLines } from "../src/server/chat.ts";
 import type { ServerCtx } from "../src/server/ctx.ts";
 import type { ChatThread } from "../src/shared/chat.ts";
-import type { ServerMessage } from "../src/shared/protocol.ts";
+import { mayDirect, type ServerMessage } from "../src/shared/protocol.ts";
 
 const ws = {} as never;
 const client = { id: "c1", name: "Jorge", alive: true, joined: true, role: "host" as const };
@@ -86,4 +86,16 @@ test("#people: the people here talk among themselves — everyone sees it, no wo
   assert.deepEqual(people!.messages.map((m) => [m.who, m.text]), [["Sam", "Want to grab lunch after this?"]]);
   assert.equal(said.length, 0, "no worker was told");
   assert.equal(threads().find((t) => t.id === "team")!.messages.length, 0, "and it's not in #team");
+});
+
+test("in a shared office your agents are yours to direct; the office's are everyone's; the host may always", () => {
+  const present = ["Jorge", "Ana"];
+  const ana = { name: "Ana", host: false };
+  assert.equal(mayDirect({ hiredBy: "Ana" }, ana, present), true, "her own");
+  assert.equal(mayDirect({ hiredBy: "Jorge" }, ana, present), false, "someone else's, while they're here");
+  assert.equal(mayDirect({ hiredBy: "Autopilot" }, ana, present), true, "the office's own");
+  assert.equal(mayDirect({ hiredBy: "Office" }, ana, present), true);
+  assert.equal(mayDirect({ hiredBy: "Sam" }, ana, present), true, "someone who left doesn't hold theirs");
+  assert.equal(mayDirect({ hiredBy: "Ana" }, { name: "Jorge", host: true }, present), true, "the host may always");
+  assert.equal(mayDirect(null, ana, present), true, "a free desk");
 });

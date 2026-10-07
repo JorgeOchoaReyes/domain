@@ -5,7 +5,7 @@ import { ingestVoices, osDictationHint, speak, useVoices } from "./voice.js";
 import { openVoices } from "./ui/voices.js";
 import { openGiveTask } from "./ui/waiting.js";
 import type { AgentKind, ClientMessage, Desk, Look, OfficeState, Presentation } from "../shared/protocol.js";
-import { AGENT_LABELS, DEFAULT_LOOK, coerceLook } from "../shared/protocol.js";
+import { mayDirect, AGENT_LABELS, DEFAULT_LOOK, coerceLook } from "../shared/protocol.js";
 import {
   ARCADES,
   DESK_BY_ID,
@@ -320,6 +320,8 @@ const monitorActions: MonitorActions = {
   paintTerminal: (deskId, g, x, y, w, h) => world.paintTerminal(deskId, g, x, y, w, h),
   terminalVersion: (deskId) => world.terminalVersion(deskId),
   canType: () => guestRole() !== "visitor",
+  me: () => myName,
+  mayDirect: (deskId) => mayDirect(deskById(deskId)?.worker, { name: myName, host: !guestRole() }, [myName, ...office.peers.map((p) => p.name)]),
   openTerminal: (deskId) => openTerminal(deskId),
   goToDesk: (deskId) => {
     escapeModal();

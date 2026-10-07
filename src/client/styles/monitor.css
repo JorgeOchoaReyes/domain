@@ -72,3 +72,7 @@
 .mon-rv-slides { margin: 4px 0 0; padding-left: 16px; color: #a6adc8; }
 .mon-rv-acts { display: inline-flex; gap: 6px; align-items: center; margin-left: auto; }
 .mon-rv-hint { margin: 6px 0 0; color: #7f849c; font-size: 11px; }
+
+/* Someone else's agent (in a shared office): watch and message it; its keys and tasks are theirs */
+.mon-tile.theirs .mon-keys, .mon-tile.theirs .mon-task { display: none; }
+.mon-tile.theirs .mon-bar { filter: saturate(.55); }

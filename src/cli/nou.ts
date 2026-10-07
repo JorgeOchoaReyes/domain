@@ -7,7 +7,7 @@ import WebSocket from "ws";
 import { readOfficeAddress } from "../server/address.js";
 import { TEAM_THREAD, type ChatMessage, type ChatThread } from "../shared/chat.js";
 import { BAY_DESK_IDS } from "../shared/layout.js";
-import { AGENT_LABELS, doingLabel, type ClientMessage, type Desk, type OfficeState, type ServerMessage } from "../shared/protocol.js";
+import { AGENT_LABELS, SHARED_HIRERS, doingLabel, type ClientMessage, type Desk, type OfficeState, type ServerMessage } from "../shared/protocol.js";
 import type { ProgressState } from "../shared/progress.js";
 import { ROLES, roleCharacter } from "../shared/roles.js";
 import { deckOf, parseSlide } from "../shared/slides.js";
@@ -94,6 +94,8 @@ export function findDesk(desks: Desk[], query: string): Desk | string {
 // --- the connection ---------------------------------------------------------------------------
 
 export interface Conn {
+  /** Who you are in the office. */
+  me: string;
   office: OfficeState;
   progress: ProgressState;
   threads: ChatThread[];
@@ -116,6 +118,7 @@ export function connect(name: string, url = officeUrl()): Promise<Conn> {
     const ws = new WebSocket(url);
     const listeners = new Set<(m: ServerMessage) => void>();
     const conn: Conn = {
+      me: name,
       office: { desks: [], peers: [], presentations: [] },
       progress: null as unknown as ProgressState,
       threads: [],
@@ -173,7 +176,7 @@ function currentTask(p: ProgressState, deskId: string): string | null {
   return null;
 }
 
-export function statusText(office: OfficeState, progress: ProgressState): string {
+export function statusText(office: OfficeState, progress: ProgressState, me = ""): string {
   const out: string[] = [];
   const s = progress.session;
   const goal = s?.goalId ? progress.goals.find((g) => g.id === s.goalId) : null;
@@ -193,7 +196,8 @@ export function statusText(office: OfficeState, progress: ProgressState): string
     const doing = w.status === "working" && w.doing ? doingLabel(w.doing) : w.activity;
     // Its activity often just repeats the task: say it once.
     const extra = task && doing.includes(task) ? "" : doing;
-    out.push(`   ${pad(bold(workerName(d)), 14 + (TTY ? 8 : 0))}${pad(dim(AGENT_LABELS[w.agent]), 13 + (TTY ? 8 : 0))}${pad(color(st), 11 + (TTY ? 9 : 0))}${task ? `🎯 ${task}${extra ? " — " : ""}` : ""}${dim(extra)}`);
+    const owner = me && w.hiredBy !== me && !SHARED_HIRERS.includes(w.hiredBy) ? dim(` (${w.hiredBy}'s)`) : "";
+    out.push(`   ${pad(bold(workerName(d)) + owner, 14 + (TTY ? 8 : 0) + (owner ? owner.length : 0))}${pad(dim(AGENT_LABELS[w.agent]), 13 + (TTY ? 8 : 0))}${pad(color(st), 11 + (TTY ? 9 : 0))}${task ? `🎯 ${task}${extra ? " — " : ""}` : ""}${dim(extra)}`);
   }
   const ready = office.presentations.filter((p) => p.report);
   const waiting = staffed.filter((d) => d.worker!.status === "waiting");
@@ -294,7 +298,7 @@ async function run(conn: Conn, cmd: string, words: string[], flags: Record<strin
   switch (cmd) {
     case "status":
     case "s":
-      console.log(statusText(conn.office, conn.progress));
+      console.log(statusText(conn.office, conn.progress, conn.me));
       return 0;
 
     case "task":
@@ -427,7 +431,7 @@ async function run(conn: Conn, cmd: string, words: string[], flags: Record<strin
         await forever();
         return 0;
       }
-      console.log(statusText(conn.office, conn.progress));
+      console.log(statusText(conn.office, conn.progress, conn.me));
       console.log(dim("\n— live (Ctrl+C to stop) —"));
       watchEvents(conn);
       await forever();
@@ -490,7 +494,7 @@ async function run(conn: Conn, cmd: string, words: string[], flags: Record<strin
       if (!text) return usage('nou standup "what you want done today"');
       if (conn.progress.session) {
         console.log(yellow("A session's already on:"));
-        console.log(statusText(conn.office, conn.progress));
+        console.log(statusText(conn.office, conn.progress, conn.me));
         return 1;
       }
       conn.send({ t: "standupVoice", text });

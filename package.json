@@ -20,6 +20,7 @@
     "build:electron": "tsc -p tsconfig.electron.json",
     "nou": "tsx src/cli/run.ts",
     "e2e:real": "tsx scripts/e2e/real-agents.ts",
+    "e2e:team": "tsx scripts/e2e/multiplayer.ts",
     "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.client.json --noEmit && tsc -p tsconfig.electron.json --noEmit",
     "start": "node bin/domain.js",
     "electron": "npm run build && npm run build:electron && electron dist/electron/main.js",

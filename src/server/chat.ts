@@ -139,8 +139,10 @@ export function chatModule(ctx: ServerCtx, store = new ChatStore(join(ctx.cwd, "
     return m;
   };
   /** A task given to everyone: the best-placed worker offers to take it, in #team, and waits for your OK. */
-  ctx.offerTask = (goalId, taskId, title, skip = []) => {
-    const pick = pickVolunteer(desks(), onTask(), skip);
+  ctx.offerTask = (goalId, taskId, title, skip = [], asker) => {
+    // Only agents the asker may direct offer (in a shared office, yours — and the office's own).
+    const mine = asker && ctx.mayDirectDesk ? desks().filter((d) => !d.worker || ctx.mayDirectDesk!(asker, d.id)) : desks();
+    const pick = pickVolunteer(mine, onTask(), skip);
     if (!pick) {
       ctx.progress.setOffered(goalId, taskId, null);
       store.add(TEAM_THREAD, { from: "agent", who: "Office", text: `${skip.length ? "Nobody else can" : "Nobody on the team can"} take “${title}” yet — it's waiting for the next one free${skip.length ? "" : " (or hire someone)"}.`, at: Date.now() });
@@ -178,7 +180,7 @@ export function chatModule(ctx: ServerCtx, store = new ChatStore(join(ctx.cwd, "
       if (msg.answer === "next") {
         o.state = "passed";
         store.touch();
-        ctx.offerTask!(o.goalId, taskId, o.title, o.asked);
+        ctx.offerTask!(o.goalId, taskId, o.title, o.asked, client);
         return;
       }
       if (msg.answer === "anyone") {

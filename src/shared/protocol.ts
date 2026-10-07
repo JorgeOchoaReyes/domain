@@ -119,6 +119,21 @@ export interface Worker {
   doing?: string;
 }
 
+/** Workers the office started itself (not one person's): anyone may direct them. */
+export const SHARED_HIRERS: readonly string[] = ["Office", "Autopilot"];
+
+/**
+ * Who may direct a worker — give it tasks, type into it, review its work,
+ * send it home: whoever hired it, while they're here. Everyone can watch it
+ * and message it. The host (it runs on their computer) may always; workers
+ * the office started are everyone's; and someone who left doesn't hold theirs.
+ */
+export function mayDirect(worker: Pick<Worker, "hiredBy"> | null | undefined, who: { name: string; host: boolean }, present: readonly string[]): boolean {
+  if (!worker || who.host) return true;
+  const owner = worker.hiredBy;
+  return owner === who.name || SHARED_HIRERS.includes(owner) || !present.includes(owner);
+}
+
 /** "Editing math.js" → "✏️ Editing math.js": a worker's step with an icon, for its bubble. */
 export function doingLabel(doing: string): string {
   const icon = /^Reading/.test(doing)
