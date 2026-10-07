@@ -5,7 +5,7 @@ import { ingestVoices, osDictationHint, speak, useVoices } from "./voice.js";
 import { openVoices } from "./ui/voices.js";
 import { openGiveTask } from "./ui/waiting.js";
 import type { AgentKind, ClientMessage, Desk, Look, OfficeState, Presentation } from "../shared/protocol.js";
-import { mayDirect, AGENT_LABELS, DEFAULT_LOOK, coerceLook } from "../shared/protocol.js";
+import { mayDirect, AGENT_KINDS, AGENT_LABELS, DEFAULT_LOOK, coerceLook } from "../shared/protocol.js";
 import {
   ARCADES,
   DESK_BY_ID,
@@ -28,7 +28,7 @@ import {
   JUKEBOXES,
   GONG,
 } from "../shared/layout.js";
-import { ALL_ARCADES, UPSTAIRS, UP_ELEVATOR, WORK_SPOTS, inUpstairs, TEAM_FLOOR, TEAM_ELEVATOR, inTeamFloor, floorOf, type WorkSpot } from "../shared/layout.js";
+import { ALL_ARCADES, BAY_DESK_IDS, UPSTAIRS, UP_ELEVATOR, WORK_SPOTS, inUpstairs, TEAM_FLOOR, TEAM_ELEVATOR, inTeamFloor, floorOf, type WorkSpot } from "../shared/layout.js";
 import { Activities } from "./ui/activities.js";
 import { myLaptopProp } from "./scene/laptop.js";
 import { Net } from "./net.js";
@@ -41,6 +41,7 @@ import { openTeleport, placeDestinations, teleportFlash, type Destination } from
 import { Minimap } from "./ui/minimap.js";
 import { ObjectiveTracker, nextObjective, type Objective } from "./ui/objective.js";
 import { MyLaptop } from "./ui/mylaptop.js";
+import { ROLES, roleCharacter } from "../shared/roles.js";
 import { openMonitor, type MonitorActions, type MonitorView } from "./ui/monitor.js";
 import { cameras } from "./scene/monitorwall.js";
 import { openDeck, refreshDeck } from "./ui/deck.js";
@@ -62,7 +63,7 @@ import { ingestLogs, openLogs } from "./ui/logs.js";
 import { openOfficeMenu, type OfficeTile } from "./ui/officemenu.js";
 import { ingestProjects, openProjects, projectBadge, projectState } from "./ui/projects.js";
 import { ingestGithub } from "./ui/github.js";
-import { agentsState, ingestAgents, installAgent, setAgentsSender } from "./ui/agents.js";
+import { agentsState, ingestAgents, installAgent, isInstalled, setAgentsSender } from "./ui/agents.js";
 import { openHire, openTeam, type TeamContext } from "./ui/team.js";
 import { openPolicy } from "./ui/policy.js";
 import type { LoopHandlers } from "./ui/loop.js";
@@ -224,6 +225,29 @@ const assistant = new Assistant(hudRoot, {
 /** When you last pressed a key or clicked (Arnold only nudges after a quiet spell). */
 let lastActivity = performance.now();
 for (const ev of ["keydown", "pointerdown"]) window.addEventListener(ev, () => (lastActivity = performance.now()), { capture: true, passive: true });
+/**
+ * ⚡ Quick start: three ready-made agents (a builder, a tester, a reviewer) at
+ * the first free desks, then the stand-up — say what you want, and they're
+ * on it. The fastest way from opening the office to agents at work.
+ */
+function quickStart(): void {
+  const free = office.desks.filter((d) => !d.worker && !BAY_DESK_IDS.includes(d.id));
+  const taken = progress.team.map((c) => c.name);
+  const hired: string[] = [];
+  for (const id of ["builder", "tester", "reviewer"]) {
+    const desk = free.shift();
+    const role = ROLES.find((r) => r.id === id);
+    if (!desk || !role) break;
+    const agent = isInstalled(role.agent) ? role.agent : (AGENT_KINDS.find((k) => isInstalled(k)) ?? role.agent);
+    const c = roleCharacter(role, [...taken, ...hired], agent);
+    hired.push(c.name);
+    net.send({ t: "characterSave", character: c });
+    net.send({ t: "hire", deskId: desk.id, agent: c.agent, characterId: c.id });
+  }
+  hud.toast(hired.length ? `⚡ ${hired.join(", ")} are on their way to their desks — now say what you want done` : "No free desks for a quick start");
+  setTimeout(() => openStandupNow(), 1200);
+}
+
 /** A first visit: Arnold offers the tour before the first stand-up. */
 let welcomeDue = false;
 applySettings(settings);
@@ -502,7 +526,7 @@ net.onMessage = (msg) => {
       if (welcomeDue) {
         welcomeDue = false;
         standupDue = false;
-        setTimeout(() => assistant.welcome(myName, () => openStandupNow()), 600);
+        setTimeout(() => assistant.welcome(myName, () => openStandupNow(), office.desks.some((d) => d.worker) || guestRole() === "visitor" ? undefined : () => quickStart()), 600);
       } else if (standupDue) {
         standupDue = false;
         setTimeout(() => openStandupNow(), 500);

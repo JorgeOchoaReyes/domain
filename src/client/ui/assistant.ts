@@ -112,7 +112,20 @@ export class Assistant {
   }
 
   /** First visit: offer the tour, then carry on with `then` (e.g. the stand-up). */
-  welcome(name: string, then: () => void): void {
+  welcome(name: string, then: () => void, quickStart?: () => void): void {
+    // Nobody hired yet: the fastest way in is a team of three and the stand-up.
+    if (quickStart) {
+      this.say(
+        {
+          id: "welcome",
+          urgency: 3,
+          text: `Hi ${name}! I'm Arnold. Fastest way in: I hire you three agents (a builder, a tester and a reviewer), then you just say what you want done. Or take the two-minute tour first.`,
+          action: { label: "⚡ Quick start", run: () => (this.markToured(), quickStart()) },
+        },
+        { label: "🗺 Tour first", run: () => this.startTour(then) },
+      );
+      return;
+    }
     this.say(
       {
         id: "welcome",

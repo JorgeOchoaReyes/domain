@@ -120,7 +120,7 @@ export function openStandup(
     ? staffed
         .map((d) => {
           const w = d.worker!;
-          return `<li><span class="dot" style="background:${AGENT_COLOR[w.agent]}"></span><span class="name">${esc(AGENT_LABELS[w.agent])}<span class="sub">${esc(w.activity)}</span></span><span class="bulb" style="background:${STATUS_BULB[w.status]}"></span></li>`;
+          return `<li><span class="dot" style="background:${AGENT_COLOR[w.agent]}"></span><span class="name">${esc(w.identity?.name ?? AGENT_LABELS[w.agent])}<span class="sub">${w.identity ? `${esc(AGENT_LABELS[w.agent])} · ` : ""}${esc(w.activity)}</span></span><span class="bulb" style="background:${STATUS_BULB[w.status]}"></span></li>`;
         })
         .join("")
     : `<li class="empty">Nobody hired yet. After stand-up, walk to a desk with a <b>+</b> and press <span class="key">E</span>.</li>`;
