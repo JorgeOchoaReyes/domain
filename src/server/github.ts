@@ -187,6 +187,27 @@ export class GitHub {
   }
 
   /** A pull request's state and its checks, rolled up. */
+  /** The open pull requests, newest first, each with its checks. */
+  async openPulls(owner: string, repo: string, limit = 8): Promise<(PullRequestInfo & { head: string })[]> {
+    const list = (await this.request("GET", `/repos/${owner}/${repo}/pulls?state=open&per_page=${limit}`, undefined, undefined, true)) as Record<string, unknown>[];
+    return Promise.all(
+      (Array.isArray(list) ? list : []).slice(0, limit).map(async (r) => {
+        const head = r.head as { ref?: string; sha?: string } | undefined;
+        let checks: PullRequestInfo["checks"] = "none";
+        if (head?.sha) {
+          try {
+            const runs = (await this.request("GET", `/repos/${owner}/${repo}/commits/${head.sha}/check-runs`, undefined, undefined, true)) as { check_runs?: { status?: string; conclusion?: string | null }[] };
+            const status = (await this.request("GET", `/repos/${owner}/${repo}/commits/${head.sha}/status`, undefined, undefined, true)) as { statuses?: { state?: string }[] };
+            checks = rollupChecks(runs.check_runs ?? [], status.statuses ?? []);
+          } catch {
+            /* checks unknown */
+          }
+        }
+        return { number: Number(r.number), url: String(r.html_url ?? ""), title: String(r.title ?? ""), state: "open" as const, checks, head: String(head?.ref ?? "") };
+      }),
+    );
+  }
+
   async pullStatus(owner: string, repo: string, number: number, topic?: string): Promise<PullRequestInfo> {
     const r = (await this.request("GET", `/repos/${owner}/${repo}/pulls/${number}`, undefined, topic)) as Record<string, unknown>;
     const sha = String((r.head as { sha?: string } | undefined)?.sha ?? "");

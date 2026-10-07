@@ -1,6 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, symlinkSync, unlinkSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { basename, join, relative, resolve } from "node:path";
+import { homedir } from "node:os";
+import { createHash } from "node:crypto";
 
 /**
  * Each worker's own desk in git: a worktree under `.domain/worktrees/<desk>`
@@ -35,7 +37,15 @@ export class Workspaces {
   /** The repository's top folder, or null when the project isn't a git repo with a commit. */
   readonly root: string | null;
 
-  constructor(private readonly cwd: string) {
+  /**
+   * `home`: where the worktrees go. The office keeps them outside the project
+   * (see officeWorktrees): an agent whose folder sits inside your checkout can
+   * mistake your checkout for its own. Without it, `.domain/worktrees` in the repo.
+   */
+  constructor(
+    private readonly cwd: string,
+    private readonly home: string | null = null,
+  ) {
     this.root = this.detect();
   }
 
@@ -55,7 +65,7 @@ export class Workspaces {
     if (!this.root) return null;
     const id = Math.random().toString(36).slice(2, 6);
     const branch = `domain/${agent}-${deskId}-${id}`;
-    const dir = join(this.root, ".domain", "worktrees");
+    const dir = this.home ?? join(this.root, ".domain", "worktrees");
     // The same folder for a desk each time (unless the last one was kept), so an
     // agent that asks whether to trust its folder only asks once per desk.
     const path = existsSync(join(dir, deskId)) ? join(dir, `${deskId}-${id}`) : join(dir, deskId);
@@ -295,4 +305,15 @@ export class Workspaces {
   private gitOrThrow(cwd: string, args: string[]): string {
     return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], windowsHide: true, timeout: 60_000 }).trim();
   }
+}
+
+/**
+ * Where the office keeps a project's worktrees: in its own folder
+ * (~/.domain/worktrees/<project>-<id>), away from your checkout, so nothing
+ * in an agent's path points back at your files.
+ */
+export function officeWorktrees(projectDir: string, env: NodeJS.ProcessEnv = process.env): string {
+  const base = env.DOMAIN_WORKTREES || join(homedir(), ".domain", "worktrees");
+  const id = createHash("sha1").update(resolve(projectDir).toLowerCase()).digest("hex").slice(0, 6);
+  return join(base, `${basename(resolve(projectDir)).replace(/[^A-Za-z0-9._-]/g, "_")}-${id}`);
 }

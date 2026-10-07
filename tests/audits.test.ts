@@ -152,3 +152,33 @@ test("an auditor with work of its own waiting: its verdict comes by its own file
   audits.checkVerdicts();
   assert.deepEqual(released, ["desk-1"]);
 });
+
+test("an auditor still building its own task: its report is its own work, never taken as its verdict", async () => {
+  // Found with real agents: Echo audited Pixel while writing its own README; its README report was
+  // taken as "approved" on Pixel's work, and the README never reached the manager.
+  const dirs: Record<string, string> = { "desk-1": mkdtempSync(join(tmpdir(), "b-")), "desk-2": mkdtempSync(join(tmpdir(), "a-")) };
+  const log: string[] = [];
+  const released: string[] = [];
+  const office: AuditOffice = {
+    workdir: (d) => dirs[d],
+    hold: (d, a) => log.push(`hold ${d}: ${a}`),
+    amendReport: () => {},
+    dismiss: (d) => log.push(`dismiss ${d}`),
+    review: () => true,
+    instruct: (d, text) => log.push(`tell ${d}: ${text}`),
+    isStaffed: () => true,
+  };
+  // desk-2 has a task of its own (no auditor on it, so no pair) and audits desk-1.
+  const audits = new Audits({ office, base: () => null, nameOf: (d) => d, release: (d) => released.push(d), note: () => {}, hasOwnTask: (d) => d === "desk-2" });
+  audits.start("desk-1", "desk-2", "Fix average", 3);
+  audits.builderReady("desk-1", done("average fixed"));
+  assert.equal(audits.auditorReport("desk-2", done("README written")), false, "its README is its own");
+  assert.ok(!log.includes("dismiss desk-2"));
+  assert.deepEqual(released, [], "desk-1's work isn't approved by it");
+  assert.ok(audits.isAuditing("desk-2"), "the audit is still on");
+  // An auditor with nothing of its own: its report is its verdict, as before.
+  const free = new Audits({ office, base: () => null, nameOf: (d) => d, release: (d) => released.push(d), note: () => {}, hasOwnTask: () => false });
+  free.start("desk-1", "desk-2", "Fix average", 3);
+  free.builderReady("desk-1", done("average fixed"));
+  assert.equal(free.auditorReport("desk-2", done("Looks good")), true);
+});

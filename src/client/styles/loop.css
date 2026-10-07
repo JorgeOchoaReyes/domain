@@ -158,3 +158,22 @@
 .br-new:hover { background: #d8cfc2; }
 .br-view { position: relative; }
 .br-start { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; margin: 8px 0; }
+
+/* The laptop's Repo app */
+.rp { display: flex; flex-direction: column; gap: 12px; padding: 12px; overflow: auto; height: 100%; }
+.rp-card { border: 2px solid var(--ink); border-radius: 14px; background: #fff; padding: 12px 14px; }
+.rp-card h3 { margin: 0 0 8px; font-size: 16px; font-weight: 900; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.rp-card h3 a { color: inherit; }
+.rp-branch { font-size: 13px; font-weight: 800; color: #2a9d8f; }
+.rp-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; font-size: 13px; font-weight: 700; margin: 4px 0; }
+.rp-pill { font: 800 12px var(--font); border-radius: 999px; padding: 2px 9px; background: #eee; }
+.rp-pill.ok { background: #c7f5df; }
+.rp-pill.warn { background: #fff0bf; }
+.rp-pill.bad { background: #ffd2dc; }
+.rp-when { color: var(--muted); font-size: 12px; }
+.rp-files { display: flex; flex-wrap: wrap; gap: 4px; }
+.rp-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.rp-table th { text-align: left; font-size: 11px; color: var(--muted); text-transform: uppercase; padding: 4px 6px; }
+.rp-table td { padding: 5px 6px; border-top: 1px solid #eee; vertical-align: top; }
+.rp-prs { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 700; }
+.rp code { font: 600 12px ui-monospace, Consolas, monospace; background: #f3f0ea; border-radius: 5px; padding: 0 4px; }

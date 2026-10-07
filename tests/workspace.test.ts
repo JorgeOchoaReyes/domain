@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Workspaces } from "../src/server/workspace.ts";
+import { Workspaces, officeWorktrees } from "../src/server/workspace.ts";
 import { runCheck } from "../src/server/checks.ts";
 import type { CheckResult } from "../src/shared/protocol.ts";
 
@@ -155,5 +155,27 @@ test("a worker's copy borrows your installed dependencies — never committed, n
     assert.equal(readFileSync(join(dir, "node_modules", "left-pad", "index.js"), "utf8"), "module.exports = 1;\n", "your node_modules is untouched");
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the office keeps agents' copies outside your project, so nothing in their path points at your checkout", () => {
+  const dir = repo();
+  const home = mkdtempSync(join(tmpdir(), "domain-wt-home-"));
+  try {
+    const where = officeWorktrees(dir, { DOMAIN_WORKTREES: home } as NodeJS.ProcessEnv);
+    assert.ok(where.startsWith(home), where);
+    assert.equal(officeWorktrees(dir, { DOMAIN_WORKTREES: home } as NodeJS.ProcessEnv), where, "the same project, the same place");
+    assert.notEqual(officeWorktrees(join(dir, "other"), { DOMAIN_WORKTREES: home } as NodeJS.ProcessEnv), where, "another project, another place");
+    const ws = new Workspaces(dir, where);
+    const a = ws.create("desk-1", "claude")!;
+    assert.ok(a.path.startsWith(where) && !a.path.startsWith(dir), a.path);
+    writeFileSync(join(a.path, "app.txt"), "changed by the agent\n");
+    git(a.path, "commit", "-qam", "agent work");
+    assert.equal(readFileSync(join(dir, "app.txt"), "utf8"), "hello\n", "your checkout untouched");
+    assert.equal(ws.merge(a.branch, "agent work").outcome, "merged");
+    assert.equal(readFileSync(join(dir, "app.txt"), "utf8").replace(/\r/g, ""), "changed by the agent\n", "until it's merged");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
   }
 });

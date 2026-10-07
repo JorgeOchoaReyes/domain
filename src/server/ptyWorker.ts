@@ -249,6 +249,9 @@ export class PtyWorker implements IWorkerSession {
     return false;
   }
 
+  /** Stopped at a startup question only you can answer (see CONSENT_PROMPT). */
+  private consentAsked = false;
+
   /** Whether it's stopped at a trust prompt. */
   get askingTrust(): boolean {
     return this.trustAsked;
@@ -265,8 +268,9 @@ export class PtyWorker implements IWorkerSession {
   write(data: string): void {
     if (this.disposed) return;
     // You answered the startup prompt: look for the agent's screen again.
-    if (this.trustAsked) {
+    if (this.trustAsked || this.consentAsked) {
       this.trustAsked = false;
+      this.consentAsked = false;
       this.scanFrom = this.scrollback.length;
       this.lastOutputAt = Date.now();
       this.setStatus("working", `${AGENT_LABELS[this.agent]} starting…`);
@@ -315,6 +319,13 @@ export class PtyWorker implements IWorkerSession {
       return;
     }
     if (this.trustAsked) return;
+    // A question only you can answer (it would quit if a brief were typed into it): wait for you.
+    if (!this.consentAsked && CONSENT_PROMPT.test(this.screen().join("\n"))) {
+      this.consentAsked = true;
+      this.setStatus("waiting", `${AGENT_LABELS[this.agent]} needs you ${consentAbout(this.screen().join("\n"))} — answer in its terminal (your task goes to it after)`);
+      return;
+    }
+    if (this.consentAsked) return;
     if (this.skipUpdateMenu()) return;
     // Still loading (Codex shows "model: loading" until it's connected): anything typed now is lost.
     if (STILL_LOADING.test(this.screen().join("\n"))) {
@@ -484,6 +495,22 @@ const BURST = 400;
 /** An agent asking for permission or a choice: Claude Code, Codex, Gemini CLI, and plain y/n. */
 export const ASKING =
   /do\s*you\s*want\s*to\s*(?:proceed|make\s*this\s*edit|create|run|allow)|allow\s*(?:this\s*)?(?:command|execution|edit)\??|approve\s*this|\(y\/n\)|\[y\/n\]|press\s*enter\s*to\s*confirm|yes,\s*proceed\s*\(y\)/i;
+
+/**
+ * A startup question you have to answer yourself: Claude Code's one-time
+ * "Bypass Permissions mode" confirmation (for the "Never asks" leash), and
+ * menus like it — "Yes, I accept" against "No, exit". Its default is to exit,
+ * so a brief typed into it would quit the agent: briefs wait until you've
+ * answered (we never accept it for you).
+ */
+export const CONSENT_PROMPT = /yes,?\s*i\s*accept[\s\S]{0,300}no,?\s*exit|no,?\s*exit[\s\S]{0,300}yes,?\s*i\s*accept/i;
+
+/** What the consent question is about, in a few words (for "needs you"). */
+export function consentAbout(screen: string): string {
+  if (/bypass\s*permissions/i.test(screen)) return "to confirm running without asking (the “Never asks” leash) — once, then it remembers";
+  const m = /^\s*(?:WARNING:\s*)?(.{8,80}?)\s*$/m.exec(screen.replace(/[❯›▶>].*$/gm, ""));
+  return m ? `to confirm: “${m[1].trim()}”` : "to confirm a startup question";
+}
 
 /** Claude Code, Codex and Gemini CLI each ask, on a folder they haven't seen, whether to trust it. */
 export const TRUST_PROMPT = /trust (?:this folder|the (?:contents|files) (?:of|in) this (?:directory|folder))|do you trust/i;

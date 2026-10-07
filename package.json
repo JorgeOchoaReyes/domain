@@ -4,7 +4,8 @@
   "description": "A 3D workspace where you walk up to desks and put coding agents to work, each with its own live terminal.",
   "type": "module",
   "bin": {
-    "domain": "bin/domain.js"
+    "domain": "bin/domain.js",
+    "nou": "bin/nou.js"
   },
   "main": "dist/electron/main.js",
   "files": [
@@ -17,6 +18,8 @@
     "build:client": "vite build",
     "build:server": "tsc -p tsconfig.server.json",
     "build:electron": "tsc -p tsconfig.electron.json",
+    "nou": "tsx src/cli/run.ts",
+    "e2e:real": "tsx scripts/e2e/real-agents.ts",
     "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.client.json --noEmit && tsc -p tsconfig.electron.json --noEmit",
     "start": "node bin/domain.js",
     "electron": "npm run build && npm run build:electron && electron dist/electron/main.js",

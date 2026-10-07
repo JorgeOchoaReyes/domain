@@ -59,6 +59,38 @@ export interface PullRequestInfo {
   checks: "pending" | "success" | "failure" | "none";
 }
 
+/** A commit, briefly. */
+export interface CommitLine {
+  sha: string;
+  subject: string;
+  /** "3 minutes ago". */
+  when: string;
+}
+
+/**
+ * Where the repo stands, at a glance: your branch against GitHub, what's
+ * uncommitted, each agent's branch, and the open pull requests with their
+ * checks. Asked for with { t: "repoStatus" }.
+ */
+export interface RepoStatus {
+  at: number;
+  isGit: boolean;
+  branch: string | null;
+  github: { owner: string; repo: string; url: string } | null;
+  /** Your branch against its upstream on GitHub, as of `fetchedAt` (null: no upstream). */
+  ahead: number | null;
+  behind: number | null;
+  fetchedAt: number | null;
+  last: CommitLine | null;
+  /** Uncommitted changes in your checkout (they hold up merging agents' work). */
+  dirty: string[];
+  /** Each agent's own branch: commits it has that yours doesn't, files it hasn't committed, its last commit. */
+  agents: { deskId: string; name: string; branch: string; ahead: number; dirty: number; last: CommitLine | null }[];
+  /** Open pull requests (null: not on GitHub, or not signed in). */
+  pulls: (PullRequestInfo & { head: string })[] | null;
+  pullsError?: string;
+}
+
 /** What a tool did, shown in the Logs (and inline wherever it happened). */
 export type OpTool = "git" | "github" | "mcp" | "check" | "deploy" | "agent";
 

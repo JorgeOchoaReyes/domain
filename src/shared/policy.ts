@@ -54,6 +54,36 @@ export interface TaskBrief {
   notes?: string;
   /** When its auditor checks: only the finished work, or checkpoints along the way too. */
   auditWhen?: "end" | "along";
+  /** Notes and files you attached (text): copied into its folder, under .domain/notes/. */
+  files?: Attachment[];
+}
+
+/** A text file you attached to a task. */
+export interface Attachment {
+  name: string;
+  text: string;
+}
+export const MAX_ATTACH = 8;
+export const MAX_ATTACH_BYTES = 200_000;
+
+/** Attached files, cleaned: plain file names, text only, size and count capped. */
+export function coerceAttachments(v: unknown): Attachment[] {
+  if (!Array.isArray(v)) return [];
+  const out: Attachment[] = [];
+  const seen = new Set<string>();
+  for (const x of v) {
+    if (!x || typeof x !== "object") continue;
+    const o = x as Record<string, unknown>;
+    if (typeof o.text !== "string" || o.text.length > MAX_ATTACH_BYTES || o.text.includes("\u0000")) continue;
+    // Just a file name: no folders, nothing that climbs out of the notes folder.
+    let name = typeof o.name === "string" ? o.name.split(/[\\/]/).pop()!.replace(/[^A-Za-z0-9._ -]/g, "_").replace(/^\.+/, "").trim().slice(0, 80) : "";
+    if (!name) name = `note-${out.length + 1}.txt`;
+    while (seen.has(name.toLowerCase())) name = `${out.length + 1}-${name}`;
+    seen.add(name.toLowerCase());
+    out.push({ name, text: o.text });
+    if (out.length >= MAX_ATTACH) break;
+  }
+  return out;
 }
 
 /** Audits go back and forth at most this many rounds by default. */
@@ -196,6 +226,7 @@ export function coerceBrief(raw: unknown, policy: TeamPolicy): TaskBrief {
       : {}),
     ...(typeof o.auditor === "string" && o.auditWhen === "along" ? { auditWhen: "along" as const } : {}),
     ...(typeof o.notes === "string" && o.notes.trim() ? { notes: o.notes.trim().replace(/\s+/g, " ").slice(0, 2000) } : {}),
+    ...(coerceAttachments(o.files).length ? { files: coerceAttachments(o.files) } : {}),
   };
 }
 

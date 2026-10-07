@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { launchCommand } from "../src/server/workerSession.ts";
 import { Office, taskBriefText } from "../src/server/office.ts";
 import { Progress } from "../src/server/progress.ts";
-import { DEFAULT_POLICY, coerceBrief, coercePolicy, isModelName } from "../src/shared/policy.ts";
+import { DEFAULT_POLICY, MAX_ATTACH, MAX_ATTACH_BYTES, coerceAttachments, coerceBrief, coercePolicy, isModelName } from "../src/shared/policy.ts";
 
 test("workers launch on their model and leash, with only safe model names", () => {
   assert.equal(launchCommand("claude"), "claude");
@@ -92,4 +92,19 @@ test("hiring on a model and leash, and switching models between tasks", () => {
   assert.equal(office.switchModel(deskId, "opus"), "switched");
   assert.equal(office.snapshot().desks[0].worker!.model, "opus");
   office.dispose();
+});
+
+test("attached files: plain names that can't climb out, text only, capped", () => {
+  const out = coerceAttachments([
+    { name: "../../secrets/../notes.md", text: "hi" },
+    { name: "notes.md", text: "again" },
+    { name: "bin.dat", text: "a\u0000b" },
+    { name: "", text: "no name" },
+    { name: "big.txt", text: "x".repeat(MAX_ATTACH_BYTES + 1) },
+    "nonsense",
+  ]);
+  assert.deepEqual(out.map((f) => f.name), ["notes.md", "2-notes.md", "note-3.txt"]);
+  assert.equal(coerceAttachments(Array.from({ length: 20 }, (_, i) => ({ name: `f${i}.md`, text: "x" }))).length, MAX_ATTACH);
+  assert.deepEqual(coerceBrief({ files: [{ name: "a.md", text: "A" }] }, DEFAULT_POLICY).files, [{ name: "a.md", text: "A" }]);
+  assert.equal(coerceBrief({}, DEFAULT_POLICY).files, undefined);
 });

@@ -8,7 +8,7 @@ import type { ChatPeek, ChatThread, ChatWork } from "./chat.js";
 import type { HistoryEvent } from "./history.js";
 import type { GoalKind, ProgressState, SessionSummary, ToneId } from "./progress.js";
 import type { Leash, TaskBrief, TeamPolicy } from "./policy.js";
-import type { GithubAccount, GithubIssue, GithubRepo, OpLog, ProjectInfo, PullRequestInfo, RecentProject } from "./project.js";
+import type { GithubAccount, GithubIssue, GithubRepo, OpLog, ProjectInfo, PullRequestInfo, RecentProject, RepoStatus } from "./project.js";
 import type { Character, WorkerIdentity } from "./team.js";
 import type { McpHealth, McpSeen, McpServer } from "./mcp.js";
 
@@ -226,7 +226,7 @@ export interface OfficeState {
 
 export type ClientMessage =
   /** Sent once on connect to announce who you are and how you look. */
-  | { t: "join"; name: string; look?: Look }
+  | { t: "join"; name: string; look?: Look; cli?: boolean }
   /** Presence update as you walk around. */
   | { t: "move"; x: number; z: number; facing: number }
   /** Staff an empty desk with an agent. */
@@ -288,7 +288,7 @@ export type ClientMessage =
   /** Put the worker at a desk on a task (it's briefed in its terminal). */
   | { t: "taskAssign"; goalId: string; taskId: string; deskId: string; brief?: TaskBrief }
   /** Hand a worker something to do, straight from the chat: tracked as a task (on the session's goal, or "Quick tasks"). deskId "any": whoever's free. */
-  | { t: "quickTask"; deskId: string; text: string; goalId?: string }
+  | { t: "quickTask"; deskId: string; text: string; goalId?: string; files?: { name: string; text: string }[] }
   /** Change the team's defaults for hiring and handing out tasks. */
   | { t: "policySet"; policy: TeamPolicy }
   /** Tick a task off (or back on) by hand. */
@@ -321,6 +321,8 @@ export type ClientMessage =
   | { t: "resume" }
   /** The desktop app's 🎤: start (or stop) Windows voice typing in the box that has focus. */
   | { t: "dictate" }
+  /** Where the repo stands: your branch, agents' branches, open pull requests (answered with "repoStatus"). */
+  | { t: "repoStatus" }
   /** Answer a worker's "I'll take it": let them, ask someone else, or leave it for whoever's free. */
   | { t: "offerAnswer"; taskId: string; answer: "take" | "next" | "anyone" }
   // --- the agent loop ------------------------------------------------------
@@ -431,6 +433,7 @@ export type ServerMessage =
   | { t: "award"; who: string; xp: number; reason: string; levelUp?: { level: number; title: string }; unlocked: string[] }
   /** The focus session ended. */
   | { t: "sessionEnd"; summary: SessionSummary }
+  | { t: "repoStatus"; status: RepoStatus }
   /** A spoken stand-up turned into a plan ("claude": by a model; "simple": from your sentences). */
   | { t: "standupDraft"; draft: StandupDraft; via: "claude" | "simple" }
   // --- projects and GitHub -------------------------------------------------

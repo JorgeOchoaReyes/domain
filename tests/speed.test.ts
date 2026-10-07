@@ -4,7 +4,7 @@ import { Autopilot, type AutopilotDeps } from "../src/server/autopilot.ts";
 import { DEFAULT_POLICY, GREEN_MAX_LINES, coercePolicy, type TeamPolicy } from "../src/shared/policy.ts";
 import type { Desk, Presentation } from "../src/shared/protocol.ts";
 import type { Goal } from "../src/shared/progress.ts";
-import { draftPrompt, eodRecap, parseDraft, simpleDraft, spreadTasks } from "../src/shared/standupDraft.ts";
+import { asTask, draftPrompt, eodRecap, parseDraft, simpleDraft, spreadTasks } from "../src/shared/standupDraft.ts";
 import { draftStandup } from "../src/server/standupVoice.ts";
 import { pickVolunteer } from "../src/shared/chat.ts";
 
@@ -212,4 +212,13 @@ test("a task someone's offered to take waits for your answer: nobody else grabs 
   const { ap, log } = setup({ sessionGoal: "today", desks: [desk("desk-1", worker())], goals: [g] });
   ap.tick();
   assert.deepEqual(log, ["assign b → desk-1"]);
+});
+
+test("without a model, what you said becomes tasks that start with what to do", () => {
+  assert.equal(asTask("the login bug fixed"), "Fix the login bug");
+  assert.equal(asTask("a dark mode toggle"), "Add a dark mode toggle");
+  assert.equal(asTask("tests for checkout"), "Write tests for checkout");
+  assert.equal(asTask("the README updated"), "Update the README");
+  assert.equal(asTask("Refactor the auth module"), "Refactor the auth module");
+  assert.deepEqual(simpleDraft("Today I want a dark mode toggle, the login bug fixed, and tests for checkout.").goal.tasks, ["Add a dark mode toggle", "Fix the login bug", "Write tests for checkout"]);
 });

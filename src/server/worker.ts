@@ -321,7 +321,11 @@ ${MAGENTA}▸ called to office hours — preparing a progress report…${RESET}
       return;
     }
 
-    this.setStatus("working", `Working: ${task.slice(0, 40)}`);
+    // Feedback on the task it's on ("[Review] Changes requested…", "[Audit] …") is more work on that task, not a new one.
+    const followUp = /^\[(?:Review|Audit|Office hours|Team chat)\]/.test(task) && this.current;
+    if (!followUp) this.current = task;
+    const title = this.current ?? task;
+    this.setStatus("working", followUp ? `Reworking: ${title.slice(0, 40)}` : `Working: ${task.slice(0, 40)}`);
     const steps = [
       `${DIM}· reading the task…${RESET}`,
       `${DIM}· scanning the repository…${RESET}`,
@@ -335,20 +339,23 @@ ${MAGENTA}▸ called to office hours — preparing a progress report…${RESET}
         i++;
         this.later(600, tick);
       } else {
-        this.present(task);
+        this.present(title, !!followUp);
       }
     };
     this.later(500, tick);
   }
+  /** The task it's working on (feedback is more work on this). */
+  private current: string | null = null;
 
   /**
    * Produce a report and line up to present it. Every third task "blocks" on a
    * question instead of finishing, so the two report kinds are both exercised.
    */
-  private present(task: string): void {
+  private present(task: string, rework = false): void {
     this.taskCount++;
-    this.history.push(task);
-    const blocked = this.taskCount % 3 === 0;
+    if (!this.history.includes(task)) this.history.push(task);
+    // Every third new task needs a decision; reworked ones come back finished.
+    const blocked = !rework && this.taskCount % 3 === 0;
     const short = task.length > 46 ? task.slice(0, 46) + "…" : task;
 
     const report: Report = blocked

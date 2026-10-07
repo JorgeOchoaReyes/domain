@@ -158,6 +158,34 @@ const DURATION = /^(?:for )?(?:about|around|roughly|maybe|like|probably|say)?\s*
 const EOD_PHRASE = /\b(?:(?:by|at|before|for)\s+)?(?:the\s+)?(?:end of (?:the )?day|eod|tonight)\b/gi;
 const EOD = /\b(?:end of (?:the )?day|eod|by tonight|by the end|before (?:i|we) (?:leave|log off|stop)|today's done when|done means)\b/i;
 
+const VERBS = /^(add|build|make|fix|write|update|create|remove|delete|refactor|clean|test|ship|deploy|release|document|research|investigate|review|improve|implement|set|move|rename|upgrade|migrate|support|finish|start|draft|design|polish|speed|optimi[sz]e|change|replace|check|run|open|merge|publish|prepare|plan|explore|compare|look|find|get|keep|split|wire|hook|connect|port|bump|tidy|redo|rework|rewrite|translate|configure|install|enable|disable|handle|show|hide|let|allow|stop|use)\b/i;
+/** "the login bug fixed" → "Fix the login bug": a done-state at the end becomes the verb. */
+const DONE_STATE: [RegExp, string][] = [
+  [/^(.*?)\s+(?:fixed|sorted(?: out)?|resolved)$/i, "Fix"],
+  [/^(.*?)\s+(?:shipped|released|deployed|live|out)$/i, "Ship"],
+  [/^(.*?)\s+(?:added|in(?: place)?)$/i, "Add"],
+  [/^(.*?)\s+(?:updated|refreshed)$/i, "Update"],
+  [/^(.*?)\s+(?:written|drafted)$/i, "Write"],
+  [/^(.*?)\s+(?:done|finished|complete|completed)$/i, "Finish"],
+  [/^(.*?)\s+(?:merged)$/i, "Merge"],
+  [/^(.*?)\s+(?:cleaned up|tidied(?: up)?)$/i, "Clean up"],
+  [/^(.*?)\s+(?:removed|gone)$/i, "Remove"],
+  [/^(.*?)\s+(?:tested)$/i, "Test"],
+];
+
+/** A task line that starts with what to do. */
+export function asTask(clause: string): string {
+  const t = clause.trim();
+  if (!t || VERBS.test(t)) return t;
+  for (const [re, verb] of DONE_STATE) {
+    const m = re.exec(t);
+    if (m && m[1]) return `${verb} ${m[1].replace(/^(?:the|a|an)\s+/i, (x) => x.toLowerCase())}`;
+  }
+  if (/^(?:tests?|docs?|documentation|a readme|the readme|notes|a report|a summary|a guide)\b/i.test(t)) return `Write ${t[0].toLowerCase()}${t.slice(1)}`;
+  if (/^(?:a|an|the|some|new)\s/i.test(t)) return `Add ${t[0].toLowerCase()}${t.slice(1)}`;
+  return t;
+}
+
 /** Your sentences, cleaned up into task lines. */
 function clauses(spoken: string): string[] {
   return spoken
@@ -206,7 +234,7 @@ export function simpleDraft(spoken: string, team: TeamMember[] = []): StandupDra
         .replace(/^(?:i want|we want|i'd like|have|get)\s+/i, ""),
     )
     .filter((c) => c.split(/\s+/).length >= 2);
-  const tasks = all.filter((c) => !EOD.test(c)).slice(0, MAX_TASKS);
+  const tasks = all.filter((c) => !EOD.test(c)).slice(0, MAX_TASKS).map(asTask);
   const eod = (eodLines.length ? eodLines : tasks.slice(0, 3)).map((c) => c[0].toUpperCase() + c.slice(1)).slice(0, 4);
   const research = /\b(research|report|compare|investigate|survey|look into)\b/i.test(text) && !/\b(build|implement|fix|add)\b/i.test(text);
   const title = tasks.length === 1 ? tasks[0] : tasks.length ? `Today: ${tasks.slice(0, 2).map((t) => t.toLowerCase()).join(", ")}${tasks.length > 2 ? "…" : ""}` : "Today's goal";

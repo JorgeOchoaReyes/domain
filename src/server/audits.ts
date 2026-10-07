@@ -45,6 +45,8 @@ export interface AuditDeps {
   simulate?: { verdict(auditor: string, report: Report, file: string): void; recall(builder: string): void };
   /** How long an audit may take before the work comes to you anyway. */
   maxAuditMs?: number;
+  /** Whether this desk has an open task of its own (then its report is its own work, never a verdict). */
+  hasOwnTask?(deskId: string): boolean;
 }
 
 interface Pair {
@@ -171,8 +173,9 @@ export class Audits {
   auditorReport(auditor: string, report: Report): boolean {
     const p = [...this.pairs.values()].find((x) => x.auditor === auditor && x.phase === "auditing");
     if (!p) return false;
-    const ownWorkWaiting = [...this.pairs.values()].some((x) => x.builder === auditor && x.phase === "auditing");
-    if (ownWorkWaiting) return false;
+    // An auditor with work of its own is reporting on that work: its verdict comes in its verdict file.
+    const ownWork = [...this.pairs.values()].some((x) => x.builder === auditor) || !!this.deps.hasOwnTask?.(auditor);
+    if (ownWork) return false;
     this.deps.office.dismiss(auditor, report.status === "ready" ? "[Audit] Thanks — your approval is on its way to your manager. Carry on." : "[Audit] Thanks — the issues are with the builder now. You'll be asked again when it's fixed.");
     this.verdict(p, report);
     return true;

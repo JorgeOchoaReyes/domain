@@ -1,3 +1,4 @@
+import { attachHtml, wireAttach } from "./attach.js";
 import type { Desk } from "../../shared/protocol.js";
 import { AGENT_LABELS } from "../../shared/protocol.js";
 import type { Goal, GoalTask } from "../../shared/progress.js";
@@ -109,6 +110,7 @@ export function openAssignCard(o: AssignOptions): void {
     <section>
       <h4>🗣 Anything else they should know? <span class="as-hint">optional — type it, or ${micButton("as-mic") ? "press 🎤 and say it" : "jot it down"}</span></h4>
       <div class="as-notes-row"><textarea class="as-notes" rows="2" placeholder="e.g. Keep the old endpoint working, and ask me before adding a dependency">${esc(start?.notes ?? "")}</textarea>${micButton("as-mic")}</div>
+      ${attachHtml()}
     </section>`;
 
   const footer = document.createElement("div");
@@ -211,6 +213,7 @@ export function openAssignCard(o: AssignOptions): void {
     if (e.key !== "Escape") e.stopPropagation();
   });
   wireMic(body.querySelector<HTMLButtonElement>(".as-mic"), notesEl);
+  const attached = wireAttach(body);
   footer.querySelector(".policy")!.addEventListener("click", () => {
     modal.close();
     o.onEditPolicy();
@@ -219,7 +222,8 @@ export function openAssignCard(o: AssignOptions): void {
     const lines = doneEl.value.split("\n").map((x) => x.trim()).filter(Boolean);
     modal.close();
     const notes = notesEl.value.trim();
-    o.onAssign(deskId, { model, minutes, onTimeUp, planFirst, done: lines.length ? lines : [...o.policy.done], ...(auditor ? { auditor, rounds, auditWhen } : {}), ...(notes ? { notes } : {}) });
+    const files = attached();
+    o.onAssign(deskId, { model, minutes, onTimeUp, planFirst, done: lines.length ? lines : [...o.policy.done], ...(auditor ? { auditor, rounds, auditWhen } : {}), ...(notes ? { notes } : {}), ...(files.length ? { files } : {}) });
   });
 
   renderWorkers();

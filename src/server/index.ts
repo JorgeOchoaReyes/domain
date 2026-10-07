@@ -3,12 +3,13 @@ import { Autopilot } from "./autopilot.js";
 import { draftStandup } from "./standupVoice.js";
 import { CHANGED_HEADING, changedSlide } from "../shared/slides.js";
 import { stopDictationHelper, toggleDictation } from "./dictate.js";
+import { clearOfficeAddress, writeOfficeAddress } from "./address.js";
 import type { TeamMember } from "../shared/standupDraft.js";
 import { BAY_DESK_IDS, DESKS } from "../shared/layout.js";
 import { Lessons } from "./lessons.js";
 import { EodSync } from "./sync.js";
 import { scanSkills } from "./skills.js";
-import { isLeash } from "../shared/policy.js";
+import { coerceAttachments, isLeash } from "../shared/policy.js";
 import { homedir } from "node:os";
 import { HistoryLog } from "./history.js";
 import { Audits } from "./audits.js";
@@ -19,7 +20,7 @@ import { localModelWarning } from "./workerSession.js";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, normalize, extname } from "node:path";
 import { WebSocketServer, WebSocket } from "ws";
@@ -351,6 +352,7 @@ function toYou(presentation: Presentation): void {
 
 const audits = new Audits({
   office,
+  hasOwnTask: (deskId) => !!progress.taskAt(deskId),
   base: () => office.workspaces?.base() ?? null,
   nameOf: nameAt,
   release: (deskId) => {
@@ -602,8 +604,11 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
     switch (msg.t) {
       case "join": {
         client.name = (typeof msg.name === "string" ? msg.name : "").replace(/\s+/g, " ").trim().slice(0, 24) || "Guest";
-        client.joined = true;
-        office.addPeer(id, client.name, coerceLook(msg.look));
+        // A command line (nou) runs the office from a terminal: it doesn't walk in as a person.
+        if (msg.cli !== true) {
+          client.joined = true;
+          office.addPeer(id, client.name, coerceLook(msg.look));
+        }
         send(ws, { t: "welcome", selfId: id, office: office.snapshot() });
         send(ws, { t: "progress", progress: progress.snapshot() });
         send(ws, { t: "oplogAll", entries: log.all() });
@@ -644,6 +649,8 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
           : null;
         if (office.hire(msg.deskId, agent, client.name, model, leash, policy.isolate, identity)) {
           warnIfTooBig(model);
+          const autoless = autoModeWarning(agent, model, leash);
+          if (autoless) broadcast({ t: "loop", goalId: "", event: "warn", text: autoless });
           watchLocalContext(model);
           history.add({ kind: "hired", who: client.name, text: `${client.name} hired ${nameAt(msg.deskId)} at ${msg.deskId.replace("desk-", "desk ")}`, worker: workerRef(msg.deskId) });
           if (character) progress.characterHired(character.id);
@@ -777,6 +784,8 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
         if (toAny && ctx.offerTask) {
           const title = said.length <= 300 ? said : `${said.slice(0, 297).trimEnd()}…`;
           const taskId = progress.addTask(goal.id, title);
+          const files = coerceAttachments(msg.files);
+          if (taskId && files.length) pendingFiles.set(taskId, files);
           if (taskId) ctx.offerTask(goal.id, taskId, title);
           break;
         }
@@ -786,7 +795,8 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
         const firstLine = said.split("\n")[0].trim();
         const max = deskId ? 120 : 300;
         const title = deskId && firstLine.length <= max ? firstLine : said.length <= max ? said : `${(deskId ? firstLine : said).slice(0, max - 3).trimEnd()}…`;
-        const brief = title === said ? {} : { notes: said };
+        const files = coerceAttachments(msg.files);
+        const brief = { ...(title === said ? {} : { notes: said }), ...(files.length ? { files } : {}) };
         const taskId = progress.addTask(goal.id, title);
         if (!taskId) break;
         if (!deskId) {
@@ -945,7 +955,11 @@ const briefNotes: ((goalId: string, taskId: string, deskId: string) => string)[]
 function assignTask(who: string, goalId: string, taskId: string, deskId: string, rawBrief: unknown): boolean {
   const desk = office.snapshot().desks.find((d) => d.id === deskId);
   if (!desk?.worker) return false;
-  const brief = coerceBrief(rawBrief ?? {}, progress.policy);
+  const raw = (rawBrief ?? {}) as Record<string, unknown>;
+  // Files attached when it was given to everyone go with it to whoever takes it.
+  const waiting = pendingFiles.get(taskId);
+  if (waiting) pendingFiles.delete(taskId);
+  const brief = coerceBrief(waiting && !raw.files ? { ...raw, files: waiting } : raw, progress.policy);
   const got = progress.assign(who, goalId, taskId, deskId, brief);
   if (!got) return false;
   const paired = brief.auditor ? audits.start(deskId, brief.auditor, got.title, brief.rounds ?? DEFAULT_AUDIT_ROUNDS, brief.auditWhen === "along") : false;
@@ -964,7 +978,14 @@ function assignTask(who: string, goalId: string, taskId: string, deskId: string,
   const delay = switched === "restarted" ? 6000 : switched === "switched" && !SIMULATE ? 1500 : 0;
   const ws = office.workspaceOf(deskId);
   if (ws) office.workspaces?.sync(ws.path);
-  const notes = briefNotes.map((f) => f(goalId, taskId, deskId)).join("") + (brief.notes ? ` Notes from your manager: "${brief.notes}"` : "");
+  // The team's lessons in its own folder before it starts (the brief says to read them first).
+  lessons.write();
+  // Files you attached go into its own folder (no asking for access), and the brief points at them.
+  const attached = writeAttachments(office.workdir(deskId), brief.files ?? []);
+  const notes =
+    briefNotes.map((f) => f(goalId, taskId, deskId)).join("") +
+    (brief.notes ? ` Notes from your manager: "${brief.notes}"` : "") +
+    (attached.length ? ` Your manager attached reference files — read them before you start: ${attached.map((n) => `.domain/notes/${n}`).join(", ")}.` : "");
   const handOver = () => {
     if (got.goal.kind === "research") {
       goalFiles.ensure(goalId);
@@ -1264,6 +1285,32 @@ function teamForPlanning(): TeamMember[] {
     });
 }
 
+/** Claude Code's auto mode ("Safe actions auto") doesn't run on Haiku: it falls back to asking about everything. */
+function autoModeWarning(agent: string, model: string, leash: string): string | null {
+  if (agent !== "claude" || leash !== "safe" || !/haiku/i.test(model || progress.policy.defaultModel.claude)) return null;
+  return "⚠️ Haiku can't use Claude Code's auto mode, so “Safe actions auto” will ask you before every action. Use Sonnet or Opus for it — or “Edits OK” / “Never asks” on Haiku.";
+}
+
+/** Files attached to a task given to everyone, until someone takes it. */
+const pendingFiles = new Map<string, { name: string; text: string }[]>();
+
+/** Write attached files into a worker's .domain/notes/ (kept out of git); returns the names written. */
+function writeAttachments(workdir: string, files: { name: string; text: string }[]): string[] {
+  if (!files.length) return [];
+  const dir = join(workdir, ".domain", "notes");
+  const written: string[] = [];
+  try {
+    mkdirSync(dir, { recursive: true });
+    for (const f of files) {
+      writeFileSync(join(dir, f.name), f.text);
+      written.push(f.name);
+    }
+  } catch {
+    /* best effort: the brief names only what was written */
+  }
+  return written;
+}
+
 /** Hand a goal's waiting tasks to the free workers now, and say so. */
 function dispatchGoal(who: string, goalId: string): void {
   const n = autopilot.dispatch(goalId);
@@ -1363,6 +1410,8 @@ export const serverReady: Promise<string> = new Promise((resolve, reject) => {
   httpServer.listen(PORT, HOST, () => {
     const url = `http://${HOST}:${PORT}`;
     console.log(`domain server listening on ${url}`);
+    // Where the office is, for the command line (nou) to find it.
+    writeOfficeAddress({ port: PORT, host: HOST, pid: process.pid, project: CWD, startedAt: Date.now() });
     tellAppReady(url);
     resolve(url);
   });
@@ -1375,6 +1424,7 @@ export const serverReady: Promise<string> = new Promise((resolve, reject) => {
 function closeUp(): void {
   mcpCleanup(CWD);
   stopDictationHelper();
+  clearOfficeAddress(process.pid);
   deployer.cancel();
   goalFiles.stop();
   progress.dispose();

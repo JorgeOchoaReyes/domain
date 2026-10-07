@@ -1,3 +1,5 @@
+import { AGENT_LABELS } from "../shared/protocol.js";
+import type { RepoStatus } from "../shared/project.js";
 import { execFile, spawn } from "node:child_process";
 import { existsSync, mkdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
@@ -147,6 +149,65 @@ export function createProjects(ctx: ServerCtx, deps: ProjectDeps = {}): Projects
     };
   }
 
+  // --- where the repo stands ----------------------------------------------------------------
+  let fetchedAt: number | null = null;
+  /** A commit, briefly (null when there isn't one). */
+  const commit = async (cwd: string, ref = "HEAD") => {
+    const l = await git(cwd, ["log", "-1", "--format=%h%x09%s%x09%cr", ref]);
+    if (!l) return null;
+    const [sha, subject, when] = l.split("\t");
+    return { sha, subject: subject ?? "", when: when ?? "" };
+  };
+  async function repoStatus(): Promise<RepoStatus> {
+    const i = await info();
+    const empty: RepoStatus = { at: Date.now(), isGit: false, branch: null, github: null, ahead: null, behind: null, fetchedAt, last: null, dirty: [], agents: [], pulls: null };
+    if (!i.isGit) return empty;
+    const cwd = resolve(ctx.cwd);
+    // What GitHub has, every couple of minutes at most (never asking you to sign in from here).
+    if (i.github && (!fetchedAt || Date.now() - fetchedAt > 120_000)) {
+      const ok = await new Promise<boolean>((done) =>
+        execFile("git", ["fetch", "--quiet", "origin"], { cwd, windowsHide: true, timeout: 30_000, env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never" } }, (err) => done(!err)),
+      );
+      if (ok) fetchedAt = Date.now();
+    }
+    // Against its upstream — or, without one set, the same branch on origin.
+    const counts =
+      (await git(cwd, ["rev-list", "--left-right", "--count", "@{upstream}...HEAD"])) ??
+      (i.branch ? await git(cwd, ["rev-list", "--left-right", "--count", `origin/${i.branch}...HEAD`]) : null);
+    const [behind, ahead] = counts ? counts.split(/\s+/).map(Number) : [null, null];
+    const dirty = ((await git(cwd, ["status", "--porcelain"])) ?? "")
+      .split("\n")
+      .filter((l) => l.trim() && !/\.domain\//.test(l))
+      .map((l) => l.slice(3))
+      .slice(0, 20);
+    const base = i.branch;
+    const agents: RepoStatus["agents"] = [];
+    for (const d of ctx.office.snapshot().desks) {
+      const w = d.worker;
+      if (!w?.branch || !base) continue;
+      const n = await git(cwd, ["rev-list", "--count", `${base}..${w.branch}`]);
+      const st = await git(ctx.office.workdir(d.id), ["status", "--porcelain"]);
+      agents.push({
+        deskId: d.id,
+        name: w.identity?.name ?? `${AGENT_LABELS[w.agent]} · ${d.label}`,
+        branch: w.branch,
+        ahead: Number(n ?? 0),
+        dirty: (st ?? "").split("\n").filter((l) => l.trim() && !/\.domain\//.test(l)).length,
+        last: await commit(cwd, w.branch),
+      });
+    }
+    let pulls: RepoStatus["pulls"] = null;
+    let pullsError: string | undefined;
+    if (i.github && github.account) {
+      try {
+        pulls = await github.openPulls(i.github.owner, i.github.repo);
+      } catch (e) {
+        pullsError = e instanceof Error ? e.message : String(e);
+      }
+    }
+    return { at: Date.now(), isGit: true, branch: i.branch, github: i.github, ahead, behind, fetchedAt, last: await commit(cwd), dirty, agents, pulls, ...(pullsError ? { pullsError } : {}) };
+  }
+
   async function sendProject(ws: WebSocket): Promise<void> {
     const i = await info();
     ctx.send(ws, { t: "project", info: i, recent: loadPrefs(prefsFile).recent, account: github.account });
@@ -271,6 +332,7 @@ export function createProjects(ctx: ServerCtx, deps: ProjectDeps = {}): Projects
   timer?.unref?.();
 
   const routes: Routes = {
+    repoStatus: (_m, _c, ws) => void repoStatus().then((status) => ctx.send(ws, { t: "repoStatus", status })),
     projectInfo: (_m, _c, ws) => {
       void sendProject(ws);
       // Quietly check whether git already holds a GitHub sign-in.

@@ -1,3 +1,4 @@
+import { attachHtml, wireAttach } from "./attach.js";
 import { copyAll, copyOnSelect } from "./termcopy.js";
 import { TEAM_THREAD, type ChatThread } from "../../shared/chat.js";
 import { UPDATE_ASK, offerHtml, wireOffers } from "./chat.js";
@@ -6,6 +7,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import type { OfficeState, ServerMessage } from "../../shared/protocol.js";
+import type { RepoStatus } from "../../shared/project.js";
 import { AGENT_LABELS } from "../../shared/protocol.js";
 import { EMPTY_PROGRESS, goalProgress, goalStage, stageLabel, STAGE_ICON, type Goal, type ProgressState } from "../../shared/progress.js";
 import { AGENT_COLOR, STATUS_BULB } from "../scene/characters.js";
@@ -20,6 +22,8 @@ import "../styles/loop.css";
  * Your own laptop, open anywhere (L): a little desktop with a dock of apps.
  *
  * - 📺 Monitor: every worker's live terminal at once, to watch and answer.
+ * - 📦 Repo: where the repo stands — your branch against GitHub, what's
+ *   uncommitted, each agent's branch, and the open pull requests' checks.
  * - 🌐 Browser: the app your workers are building, in a frame — the preview
  *   URL from domain.config.json, or any dev server found running locally.
  * - 🖥 Workers: any worker's live terminal, to watch or type into.
@@ -31,11 +35,12 @@ import "../styles/loop.css";
  * the office and progress.
  */
 
-export type LaptopApp = "team" | "monitor" | "browser" | "workers" | "loop" | "decks" | "deploy";
+export type LaptopApp = "team" | "monitor" | "repo" | "browser" | "workers" | "loop" | "decks" | "deploy";
 
 const APPS: { id: LaptopApp; icon: string; label: string }[] = [
   { id: "team", icon: "💬", label: "Team" },
   { id: "monitor", icon: "📺", label: "Monitor" },
+  { id: "repo", icon: "📦", label: "Repo" },
   { id: "browser", icon: "🌐", label: "Browser" },
   { id: "workers", icon: "🖥", label: "Workers" },
   { id: "loop", icon: "🎯", label: "Loop" },
@@ -124,6 +129,10 @@ export class MyLaptop {
         this.progress = msg.progress;
         this.soft();
         break;
+      case "repoStatus":
+        this.repo = msg.status;
+        if (this.isOpen && this.app === "repo") this.renderRepo();
+        break;
       case "chat":
         this.threads = msg.threads;
         if (this.isOpen && this.app === "team") this.renderTeamLog();
@@ -203,6 +212,7 @@ export class MyLaptop {
     this.content.dataset.app = app;
     if (app === "team") this.showTeam();
     else if (app === "monitor") this.monitorView = new MonitorView(this.content, this.monitor);
+    else if (app === "repo") this.showRepo();
     else if (app === "browser") this.showBrowser();
     else if (app === "workers") this.showWorkers();
     else if (app === "deploy") this.showDeploy();
@@ -220,6 +230,77 @@ export class MyLaptop {
     else if (this.app === "deploy") this.renderDeployHead();
   }
 
+  // --- repo: where things stand -------------------------------------------------------------
+
+  private repo: RepoStatus | null = null;
+  private repoTimer: number | null = null;
+
+  private showRepo(): void {
+    this.actions.send({ t: "repoStatus" });
+    this.renderRepo();
+    if (this.repoTimer !== null) clearInterval(this.repoTimer);
+    // Fresh while you look at it (the office fetches from GitHub every couple of minutes at most).
+    this.repoTimer = window.setInterval(() => {
+      if (this.isOpen && this.app === "repo") this.actions.send({ t: "repoStatus" });
+      else if (this.repoTimer !== null) {
+        clearInterval(this.repoTimer);
+        this.repoTimer = null;
+      }
+    }, 15_000);
+  }
+
+  private renderRepo(): void {
+    if (this.app !== "repo") return;
+    const s = this.repo;
+    if (!s) {
+      this.content.innerHTML = `<p class="lt-note">Looking at the repo…</p>`;
+      return;
+    }
+    if (!s.isGit) {
+      this.content.innerHTML = `<div class="rp"><p class="lt-note">This project isn't a git repo yet — open one (File → Open project folder) or clone one from GitHub in Projects.</p></div>`;
+      return;
+    }
+    const commit = (c: RepoStatus["last"]) => (c ? `<code>${esc(c.sha)}</code> ${esc(c.subject)} <span class="rp-when">${esc(c.when)}</span>` : `<span class="rp-when">no commits</span>`);
+    const sync =
+      s.ahead === null
+        ? `<span class="rp-pill">no upstream</span>`
+        : s.ahead === 0 && s.behind === 0
+          ? `<span class="rp-pill ok">✓ up to date with GitHub</span>`
+          : `${s.ahead ? `<span class="rp-pill warn">↑ ${s.ahead} to push</span>` : ""}${s.behind ? `<span class="rp-pill warn">↓ ${s.behind} to pull</span>` : ""}`;
+    const checks = (c: string) => (c === "success" ? `<span class="rp-pill ok">✓ checks pass</span>` : c === "failure" ? `<span class="rp-pill bad">✗ checks fail</span>` : c === "pending" ? `<span class="rp-pill warn">⏳ checks running</span>` : `<span class="rp-pill">no checks</span>`);
+    this.content.innerHTML = `<div class="rp">
+      <section class="rp-card">
+        <h3>📦 ${s.github ? `<a href="${esc(s.github.url)}" target="_blank" rel="noreferrer">${esc(s.github.owner)}/${esc(s.github.repo)}</a>` : "Local repo"} <span class="rp-branch">🌿 ${esc(s.branch ?? "?")}</span></h3>
+        <div class="rp-row">${sync}${s.dirty.length ? `<span class="rp-pill bad">✎ ${s.dirty.length} uncommitted</span>` : `<span class="rp-pill ok">✓ clean</span>`}</div>
+        <div class="rp-row">Last commit: ${commit(s.last)}</div>
+        ${s.dirty.length ? `<div class="rp-files">${s.dirty.map((f) => `<code>${esc(f)}</code>`).join(" ")}<p class="lt-note">Uncommitted changes on your branch hold up merging agents' work.</p></div>` : ""}
+        ${s.fetchedAt ? `<p class="lt-note">Checked GitHub ${esc(new Date(s.fetchedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }))}</p>` : ""}
+      </section>
+      <section class="rp-card">
+        <h3>👥 Agents' branches</h3>
+        ${
+          s.agents.length
+            ? `<table class="rp-table"><tr><th>Agent</th><th>Branch</th><th>Ahead</th><th>Uncommitted</th><th>Last commit</th></tr>${s.agents
+                .map((a) => `<tr><td><b>${esc(a.name)}</b></td><td><code>${esc(a.branch)}</code></td><td>${a.ahead ? `↑ ${a.ahead}` : "—"}</td><td>${a.dirty ? `✎ ${a.dirty}` : "—"}</td><td>${commit(a.last)}</td></tr>`)
+                .join("")}</table>`
+            : `<p class="lt-note">No agents on their own branches yet (Team policy → own branches).</p>`
+        }
+      </section>
+      <section class="rp-card">
+        <h3>🔀 Open pull requests</h3>
+        ${
+          s.pulls === null
+            ? `<p class="lt-note">${s.github ? (s.pullsError ? esc(s.pullsError) : "Sign in with GitHub (Projects) to see pull requests.") : "Not on GitHub."}</p>`
+            : s.pulls.length
+              ? `<ul class="rp-prs">${s.pulls.map((p) => `<li><a href="${esc(p.url)}" target="_blank" rel="noreferrer">#${p.number} ${esc(p.title)}</a> <code>${esc(p.head)}</code> ${checks(p.checks)}</li>`).join("")}</ul>`
+              : `<p class="lt-note">None open.</p>`
+        }
+      </section>
+      <p class="lt-note">Updated ${esc(new Date(s.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" }))} · <button class="btn small rp-refresh">↻ Refresh</button></p>
+    </div>`;
+    this.content.querySelector(".rp-refresh")?.addEventListener("click", () => this.actions.send({ t: "repoStatus" }));
+  }
+
   // --- team: message anyone, hand out work, ask for updates -------------------------
 
   private showTeam(): void {
@@ -230,6 +311,7 @@ export class MyLaptop {
         <div class="tm-log"></div>
         <div class="tm-compose">
           <div class="tm-box"><textarea rows="2" placeholder="Write to them — or press 🎤 and say it…"></textarea>${micButton("tm-mic")}</div>
+          ${attachHtml("tm-attach")}
           <div class="tm-acts">
             <button class="btn small tm-say">💬 Send message</button>
             <button class="btn small primary tm-task">🎯 Give as a task</button>
@@ -254,10 +336,13 @@ export class MyLaptop {
       box.value = "";
     };
     this.content.querySelector(".tm-say")!.addEventListener("click", say);
+    const attached = wireAttach(this.content.querySelector<HTMLElement>(".tm-compose")!);
     this.content.querySelector(".tm-task")!.addEventListener("click", () => {
       if (!text()) return box.focus();
+      const files = attached();
       // To everyone: whoever'd take it offers in #team, and you say yes (or ask someone else).
-      this.actions.send({ t: "quickTask", deskId: this.teamTo === TEAM_THREAD ? "any" : this.teamTo, text: text() });
+      this.actions.send({ t: "quickTask", deskId: this.teamTo === TEAM_THREAD ? "any" : this.teamTo, text: text(), ...(files.length ? { files } : {}) });
+      if (files.length) this.show("team");
       box.value = "";
     });
     this.content.querySelector(".tm-update")!.addEventListener("click", () => this.actions.send({ t: "chatSend", to: this.teamTo, text: UPDATE_ASK }));

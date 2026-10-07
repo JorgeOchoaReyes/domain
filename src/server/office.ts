@@ -18,7 +18,7 @@ import { createWorker, enterDelay, type IWorkerSession } from "./workerSession.j
 import { LEASH_RULES, type Leash, type TaskBrief } from "../shared/policy.js";
 import type { WorkerIdentity } from "../shared/team.js";
 import { DropWatcher, writeBrief } from "./reports.js";
-import { Workspaces, type Workspace } from "./workspace.js";
+import { officeWorktrees, Workspaces, type Workspace } from "./workspace.js";
 
 interface Seat {
   desk: Desk;
@@ -131,7 +131,7 @@ export class Office {
     this.reportsDir = join(this.cwd, ".domain", "reports");
     this.repliesDir = join(this.cwd, ".domain", "replies");
     this.reviewsDir = join(this.cwd, ".domain", "reviews");
-    const ws = this.simulate ? null : new Workspaces(this.cwd);
+    const ws = this.simulate ? null : new Workspaces(this.cwd, officeWorktrees(this.cwd));
     this.workspaces = ws?.enabled ? ws : null;
 
     for (const def of DESKS) {
@@ -900,7 +900,9 @@ export function taskBriefText(goalTitle: string, taskTitle: string, why = "", br
   const plan = brief?.planFirst
     ? ` Plan first: before changing anything, write your plan as a report to $DOMAIN_REPORT_FILE with status "plan" (title "Plan: …", the approach in the summary, the steps and risks as slides) and wait. Build only once the plan is approved.`
     : "";
-  const own = branch ? ` You're on your own branch, ${branch}: commit your work there before you present.` : "";
+  const own = branch
+    ? ` You're on your own branch, ${branch}, in your own copy of the project — the folder you started in. Work only there, with paths relative to it; never read or change files in any other copy of the project. Commit your work there before you present.`
+    : "";
   const rules = leash ? ` Your permissions: ${LEASH_RULES[leash]}.` : "";
   const checkpoints =
     brief?.auditor && brief.auditWhen === "along"
@@ -933,3 +935,4 @@ function stripIcon(s: string): string {
 function taskLabel(activity: string | undefined): string | null {
   return activity && /^(?:🎯|🧠)/u.test(activity) ? activity : null;
 }
+

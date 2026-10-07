@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ASKING, TRUST_PROMPT, highlighted, plain } from "../src/server/ptyWorker.ts";
+import { ASKING, CONSENT_PROMPT, TRUST_PROMPT, consentAbout, highlighted, plain } from "../src/server/ptyWorker.ts";
 
 test("a startup trust prompt is recognised in raw terminal output", () => {
   // Claude Code 2.1, as captured from a worker's terminal (cursor moves between words).
@@ -84,3 +84,19 @@ test("workers don't inherit a Claude Code session's markers", async () => {
   const env = workerEnv({ PATH: "/bin", HOME: "/h", CLAUDECODE: "1", CLAUDE_CODE_CHILD_SESSION: "x", CLAUDE_CODE_ENTRYPOINT: "cli", ANTHROPIC_API_KEY: "k" });
   assert.deepEqual(Object.keys(env).sort(), ["ANTHROPIC_API_KEY", "HOME", "PATH"]);
 });
+
+test("Claude Code's one-time 'never asks' confirmation is yours to answer: never typed into, never accepted for you", () => {
+  const screen = [
+    "WARNING: Claude Code running in Bypass Permissions mode",
+    "In Bypass Permissions mode, Claude Code will not ask for your approval",
+    "before running potentially dangerous commands.",
+    "❯ No, exit",
+    "  Yes, I accept",
+    "Enter to confirm · Esc to cancel",
+  ].join("\n");
+  assert.ok(CONSENT_PROMPT.test(screen));
+  assert.match(consentAbout(screen), /Never asks/);
+  assert.ok(!CONSENT_PROMPT.test("❯ Yes, I trust this folder\n  No, exit"), "the trust prompt is handled on its own");
+  assert.ok(!CONSENT_PROMPT.test("> Try \"fix the tests\"\n? for shortcuts"));
+});
+
