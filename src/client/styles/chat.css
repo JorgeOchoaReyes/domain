@@ -55,3 +55,8 @@
 .ch-sec li span { color: var(--muted); font-size: 12px; font-weight: 700; margin-left: 6px; }
 .ch-sec code { font: 12px ui-monospace, Consolas, monospace; }
 .ch-none { margin: 0; font-size: 13px; color: var(--muted); font-weight: 700; }
+
+/* "I'll take it": answer a worker's offer right in the chat */
+.offer { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.offer.done { font-size: 12px; font-weight: 800; color: var(--muted); }
+.offer.sent { opacity: .5; pointer-events: none; }

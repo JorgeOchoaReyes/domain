@@ -24,6 +24,8 @@ export interface GoalTask {
   run?: TaskRun | null;
   /** Saved for this desk's worker (picked at the stand-up): it waits for them rather than going to whoever's free. */
   for?: string | null;
+  /** Offered to this desk's worker ("I'll take it"): nobody else takes it while you decide. */
+  offered?: string | null;
 }
 
 /** What a goal produces: working software, or a research deck. */
@@ -221,7 +223,40 @@ export const XP = {
 /** Focus sessions run for hours, like a real block of work. */
 export const SESSION_LENGTHS = [60, 120, 180, 240] as const;
 /** The longest a session may be (a full working day). */
-export const MAX_SESSION_MINUTES = 480;
+/** Long enough for a whole day ("until end of day" from early morning). */
+export const MAX_SESSION_MINUTES = 720;
+
+/** When the day ends when the policy doesn't say. */
+export const DEFAULT_EOD = "17:30";
+
+/**
+ * A session "until end of day": the minutes from now to the end-of-day time
+ * ("17:30"). Already past it (or nearly), an hour; never more than a session can run.
+ */
+export function minutesUntilEod(eodAt: string, now = new Date()): number {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(eodAt) ?? /^(\d{1,2}):(\d{2})$/.exec(DEFAULT_EOD)!;
+  const end = new Date(now);
+  end.setHours(Number(m[1]), Number(m[2]), 0, 0);
+  const mins = Math.round((end.getTime() - now.getTime()) / 60_000);
+  return mins < 15 ? 60 : Math.min(MAX_SESSION_MINUTES, mins);
+}
+
+/** Whether it's already (nearly) the end of the day. */
+export function pastEod(eodAt: string, now = new Date()): boolean {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(eodAt) ?? /^(\d{1,2}):(\d{2})$/.exec(DEFAULT_EOD)!;
+  return now.getHours() * 60 + now.getMinutes() > Number(m[1]) * 60 + Number(m[2]) - 15;
+}
+
+/** "5:30 PM": the end-of-day time, as people read it. */
+export function eodLabel(eodAt: string): string {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(eodAt) ?? /^(\d{1,2}):(\d{2})$/.exec(DEFAULT_EOD)!;
+  const d = new Date();
+  d.setHours(Number(m[1]), Number(m[2]), 0, 0);
+  return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+/** Said "all day" or "until end of day"? */
+export const ALL_DAY = /\b(?:all day|rest of the day|(?:until|till|til|through) (?:the )?(?:end of (?:the )?day|eod|tonight)|full day)\b/i;
 
 /** A session's length in words: "45 min", "2 h", "1 h 30 min". */
 export function sessionLength(minutes: number): string {

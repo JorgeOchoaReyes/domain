@@ -14,6 +14,8 @@ import {
   HOOP,
   KITCHEN,
   REVIEW_SPOT,
+  MONITOR_CHAIR,
+  OFFICE_ARMCHAIRS,
   SPAWN,
   STANDUP,
   WORK_PAD,
@@ -40,6 +42,7 @@ import { Minimap } from "./ui/minimap.js";
 import { ObjectiveTracker, nextObjective, type Objective } from "./ui/objective.js";
 import { MyLaptop } from "./ui/mylaptop.js";
 import { openMonitor, type MonitorActions, type MonitorView } from "./ui/monitor.js";
+import { cameras } from "./scene/monitorwall.js";
 import { openDeck, refreshDeck } from "./ui/deck.js";
 import { loadSettings, openSettings, saveSettings, type Settings } from "./ui/settings.js";
 import { Music } from "./music.js";
@@ -116,7 +119,14 @@ const hudRoot = document.getElementById("hud") as HTMLElement;
 
 const world = new World(canvas, myLook, myName || "You");
 const player = new Player(world, canvas, load<ViewMode>("domain.view", "first") === "third" ? "third" : "first");
-player.onStand = () => world.setSeated(false);
+player.onStand = () => {
+  world.setSeated(false);
+  // Up from the monitor wall's chair: the arrows walk again.
+  if (world.cctv.seated) {
+    world.setCctv({ seated: false });
+    player.arrowsTaken = false;
+  }
+};
 player.onView = (mode) => {
   save("domain.view", mode);
   document.body.classList.toggle("fp", mode === "first");
@@ -454,8 +464,25 @@ net.onMessage = (msg) => {
       }
       break;
     case "report": {
-      const label = AGENT_LABELS[msg.presentation.agent];
-      hud.toast(`📋 ${label} is ready to present — lining up outside your office${away() ? " · T to head over" : ""}`);
+      // Work's done: it lines up outside your office, your phone pings, and Arnold offers to review it now.
+      const p = msg.presentation;
+      const w = deskById(p.deskId)?.worker;
+      const name = w?.identity?.name ?? AGENT_LABELS[p.agent];
+      const r = p.report;
+      // The report's title, without the "Finished:" / "Need a decision:" it may start with (we say that ourselves).
+      const title = r?.title.replace(/^\s*(?:finished|need a decision|needs a decision|plan|blocked)\s*:\s*/i, "") ?? "";
+      const what = r ? (r.status === "plan" ? `has a plan for “${title}”` : r.status === "blocked" ? `needs a decision on “${title}”` : `finished “${title}”`) : "is putting together a progress report";
+      if (r) {
+        sound.chime();
+        phone.notify(`${name} ${what}${r.status === "ready" ? " — ready to review" : ""}`, "reviews");
+      }
+      hud.toast(`📋 ${name} ${what} — lining up outside your office${away() ? " · T to head over" : ""}`);
+      if (r && !reviewing()) {
+        assistant.say(
+          { id: `ready-${p.deskId}-${r.at}`, urgency: 3, text: `${name} ${what}. It's lined up outside your office.`, action: { label: "🎤 Review now", run: () => openMonitorNow(p.deskId) } },
+          { label: "Office hours", run: () => startOfficeHours() },
+        );
+      }
       break;
     }
     case "progress": {
@@ -962,7 +989,21 @@ function onChat(threads: ChatThread[]): void {
   }
   lastAnswers = fresh;
   teamChat.update(threads);
+  // "I'll take it": Arnold asks you, wherever you are (the phone, walking about), with the answers on buttons.
+  const offer = threads.find((t) => t.id === TEAM_THREAD)?.messages.filter((m) => m.offer?.state === "open").at(-1);
+  if (offer?.offer && !askedOffers.has(offer.offer.taskId + offer.offer.deskId)) {
+    askedOffers.add(offer.offer.taskId + offer.offer.deskId);
+    const o = offer.offer;
+    const answer = (a: "take" | "next" | "anyone") => () => net.send({ t: "offerAnswer", taskId: o.taskId, answer: a });
+    sound.click();
+    assistant.say(
+      { id: `offer-${o.taskId}`, urgency: 3, text: `${offer.who}: ${offer.text}`, action: { label: `✅ Let ${offer.who.split(" ")[0]} take it`, run: answer("take") } },
+      { label: "🔁 Someone else", run: answer("next") },
+    );
+  }
 }
+/** Offers Arnold has already asked you about. */
+const askedOffers = new Set<string>();
 
 // --- VR ----------------------------------------------------------------------------------------
 
@@ -1440,11 +1481,44 @@ function openStandupNow(): void {
 // The end-of-day recap is read aloud.
 listenForRecap((text) => speak(text, "claude"));
 
+/** An armchair in your office within reach, if any. */
+function armchairNear(x: number, z: number): (typeof OFFICE_ARMCHAIRS)[number] | null {
+  return OFFICE_ARMCHAIRS.find((a) => Math.hypot(a.x - x, a.z - z) < 1.3) ?? null;
+}
+
+/** Sit in the chair at the monitor wall: the arrows work its cameras until you get up. */
+function sitAtMonitorWall(): void {
+  player.sit(MONITOR_CHAIR.x, MONITOR_CHAIR.z, MONITOR_CHAIR.facing, MONITOR_CHAIR.pitch);
+  world.setSeated(true);
+  player.arrowsTaken = true;
+  world.setCctv({ seated: true, cam: world.cctv.cam ?? cameras(office.desks)[0]?.id ?? null });
+  hud.toast("📺 CCTV: ← → switch camera · ↑ ↓ all or one · C cycle · E full monitor · W to get up");
+}
+
+/** At the monitor wall's chair: ← → switch camera, ↑ ↓ all or one, C cycles. True if the key was for it. */
+function cctvKey(e: KeyboardEvent): boolean {
+  if (!world.cctv.seated || !player.sitting) return false;
+  const k = e.key;
+  if (k === "ArrowLeft" || k === "ArrowRight") {
+    world.setCctv({ cycle: false, mode: "single" });
+    world.stepCctv(k === "ArrowLeft" ? -1 : 1);
+  } else if (k === "ArrowUp" || k === "ArrowDown") {
+    world.setCctv({ cycle: false, mode: world.cctv.mode === "grid" ? "single" : "grid" });
+  } else if (k.toLowerCase() === "c") {
+    const on = !world.cctv.cycle;
+    world.setCctv({ cycle: on, ...(on ? { mode: "single" as const } : {}) });
+    hud.toast(on ? "📺 Cycling through the cameras" : "📺 Cycling off");
+  } else return false;
+  sound.click();
+  return true;
+}
+
 /** N: the next thing that needs you — an agent's question, then work ready to review — in the Agent monitor. */
 function nextNeedsYou(): void {
   const waiting = office.desks.find((d) => d.worker?.status === "waiting");
-  const ready = office.desks.find((d) => d.worker?.report) ?? office.desks.find((d) => office.presentations.some((p) => p.deskId === d.id && p.report));
-  const id = waiting?.id ?? ready?.id;
+  // Work in your line (not still with its auditor).
+  const ready = office.presentations.find((p) => p.report);
+  const id = waiting?.id ?? ready?.deskId;
   if (!id) {
     hud.toast("✨ Nobody needs you right now");
     return;
@@ -1850,16 +1924,33 @@ function interact(): void {
     openGiveTask(free, progress, (m) => net.send(m));
     return;
   }
-  if (interactFun()) return;
   const { x, z } = player.position;
+  // The monitor wall and your desk come before the fun things near them (the bin's paper toss).
+  if (world.cctv.seated) {
+    openMonitorNow(world.cctv.mode === "single" ? (world.cctv.cam ?? undefined) : undefined);
+    return;
+  }
   if (world.nearMonitorWall(x, z)) {
-    openMonitorNow();
+    sitAtMonitorWall();
     return;
   }
   if (world.inMyOffice(x, z) && world.nearReviewDesk(x, z)) {
-    startOfficeHours();
+    // Someone ready: office hours. Nobody yet: just sit down at your desk.
+    if (office.presentations.some((p) => p.report)) startOfficeHours();
+    else {
+      player.sit(REVIEW_SPOT.x, REVIEW_SPOT.z, 0);
+      world.setSeated(true);
+      hud.toast("🪑 At your desk · R rounds everyone up · W to get up");
+    }
     return;
   }
+  const arm = armchairNear(x, z);
+  if (arm && !player.sitting) {
+    player.sit(arm.x, arm.z, arm.facing);
+    world.setSeated(true);
+    return;
+  }
+  if (interactFun()) return;
   const near = world.nearestDesk(x, z);
   if (!near || near.dist > INTERACT_RADIUS) return;
   const desk = deskById(near.id);
@@ -1916,9 +2007,12 @@ function hintWork(): string | null {
     if (world.nearReviewDesk(x, z)) {
       return ready
         ? `<span class="title">⭐ Your desk</span> <span class="key">E</span> Start office hours · ${ready} ready`
-        : `<span class="title">⭐ Your desk</span> Nobody ready yet · <span class="key">R</span> round up workers`;
+        : `<span class="title">⭐ Your desk</span> <span class="key">E</span> Sit down · nobody ready yet · <span class="key">R</span> round up workers`;
     }
-    if (world.nearMonitorWall(x, z)) return `<span class="title">📺 Monitor wall</span> <span class="key">E</span> Every agent's CLI, live — answer them from here`;
+    if (world.cctv.seated) return `<span class="title">📺 CCTV</span> <span class="key">←</span><span class="key">→</span> switch · <span class="key">↑</span><span class="key">↓</span> all / one · <span class="key">C</span> cycle · <span class="key">E</span> full monitor · <span class="key">W</span> get up`;
+    if (world.nearMonitorWall(x, z)) return `<span class="title">📺 Monitor wall</span> <span class="key">E</span> Sit and watch every agent, CCTV-style`;
+    if (player.sitting) return `<span class="title">🪑 Sitting</span> <span class="key">W</span> get up`;
+    if (armchairNear(x, z)) return `<span class="title">🛋 Armchair</span> <span class="key">E</span> Sit down`;
     return `<span class="title">⭐ Your office</span> Sit at your desk to hold reviews · <span class="key">K</span> Agent monitor`;
   }
   const near = world.nearestDesk(x, z);
@@ -1965,6 +2059,10 @@ window.addEventListener("keydown", (e) => {
   if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
   if (el?.closest?.(".xterm")) return;
   if (modalOpen()) return;
+  if (cctvKey(e)) {
+    e.preventDefault();
+    return;
+  }
   const key = e.key.toLowerCase();
   if (key === "e") interact();
   else if (key === "o") startOfficeHours();
@@ -2128,7 +2226,7 @@ void pickCharacter(myName, myLook).then(({ name, look }) => {
 
 // A handle for poking at the office from the console (and screenshot scripts) in dev builds.
 if (import.meta.env.DEV) {
-  (window as unknown as { domain: unknown }).domain = { world, player, vr, music, startOfficeHours, openLaptop, openTravel, openGoals, openHistory: () => openHistory((m) => net.send(m)), openTerminal, phone, escapeModal, net, laptop, progress: () => progress, office: () => office };
+  (window as unknown as { domain: unknown }).domain = { world, player, vr, music, startOfficeHours, openLaptop, openTravel, openGoals, openHistory: () => openHistory((m) => net.send(m)), openTerminal, phone, escapeModal, net, laptop, progress: () => progress, office: () => office, openHire: (deskId: string) => { const d = deskById(deskId); if (d) hire(d); } };
   (window as unknown as { __roomAt: unknown }).__roomAt = (x: number, z: number) => roomAt(x, z).id;
 }
 

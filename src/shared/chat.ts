@@ -12,6 +12,42 @@ export interface ChatMessage {
   at: number;
   /** Typed straight into the terminal rather than said as a message. */
   raw?: boolean;
+  /** A worker offering to take a task given to "whoever's free": yours to accept, pass on, or leave. */
+  offer?: TaskOffer;
+}
+
+/** "I'll take it": a task given to everyone, and the worker who'd take it, waiting for your OK. */
+export interface TaskOffer {
+  goalId: string;
+  taskId: string;
+  title: string;
+  deskId: string;
+  /** Free now, or taking it after what it's on. */
+  free: boolean;
+  /** open: waiting for you; taken: you said yes; passed: you asked someone else; anyone: left for whoever's free. */
+  state: "open" | "taken" | "passed" | "anyone";
+  /** Who's been asked already (so "someone else" moves on). */
+  asked: string[];
+}
+
+/** Who'd take a task: someone free, else whoever's closest to done — work waiting for review, then working. */
+export function pickVolunteer(
+  desks: { id: string; worker: { status: string } | null }[],
+  onTask: Map<string, string>,
+  skip: readonly string[] = [],
+): { deskId: string; free: boolean; after: string } | null {
+  const staffed = desks.filter((d) => d.worker && d.worker.status !== "asleep" && d.worker.status !== "booting" && !skip.includes(d.id));
+  const rank = (d: (typeof staffed)[number]) => {
+    const busy = onTask.has(d.id);
+    const st = d.worker!.status;
+    if (!busy && (st === "idle" || st === "done")) return 0;
+    if (st === "presenting") return 1;
+    if (st === "working") return 2;
+    return 3;
+  };
+  const best = [...staffed].sort((a, b) => rank(a) - rank(b))[0];
+  if (!best) return null;
+  return { deskId: best.id, free: rank(best) === 0, after: onTask.get(best.id) ?? "what it's on" };
 }
 
 export interface ChatThread {

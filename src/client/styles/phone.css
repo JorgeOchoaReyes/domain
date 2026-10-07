@@ -77,3 +77,11 @@ button.ph-card { cursor: pointer; }
 .ph-rv-note { margin-top: 4px; font: 600 12px var(--font); border: 2px solid #eadfce; border-radius: 10px; padding: 5px 8px; outline: none; }
 .ph-rv-note:focus { border-color: var(--accent); }
 .ph-card.done { opacity: .45; pointer-events: none; }
+
+/* A notification: the phone buzzes and a banner drops from it */
+.phone-btn.buzz { animation: ph-buzz-once .6s ease-in-out 2; }
+@keyframes ph-buzz-once { 25% { transform: rotate(-12deg); } 50% { transform: rotate(12deg); } 75% { transform: rotate(-8deg); } }
+.ph-banners { position: fixed; top: 74px; right: 16px; z-index: 60; display: flex; flex-direction: column; gap: 8px; width: min(340px, calc(100vw - 32px)); pointer-events: none; }
+.ph-banner { pointer-events: auto; display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 10px 14px; border: 3px solid var(--ink); border-radius: 16px; background: rgba(255, 250, 243, .97); box-shadow: 0 4px 0 var(--ink); font: 800 13px var(--font); color: var(--ink); cursor: pointer; animation: ph-drop .25s ease-out; }
+.ph-banner-app { font-size: 11px; color: var(--muted); }
+@keyframes ph-drop { from { transform: translateY(-16px); opacity: 0; } }

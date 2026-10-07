@@ -457,10 +457,10 @@ export class Player {
   }
 
   /** Sit at (x, z) facing `facing`: the view drops to seated height, and any move key stands you up. */
-  sit(x: number, z: number, facing: number): void {
+  sit(x: number, z: number, facing: number, pitch = -0.05): void {
     this.placeAt(x, z, facing);
     this.seated = true;
-    this.lookPitch = -0.05;
+    this.lookPitch = pitch;
     this.updateCamera();
   }
 
@@ -501,7 +501,11 @@ export class Player {
     return this.world.player.position;
   }
 
+  /** The arrow keys are for something else right now (the monitor wall's cameras): they don't walk. */
+  arrowsTaken = false;
+
   private has(key: string): boolean {
+    if (this.arrowsTaken && key.startsWith("Arrow")) return false;
     return this.keys.has(key);
   }
 }

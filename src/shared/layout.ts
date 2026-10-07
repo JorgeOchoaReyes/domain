@@ -150,6 +150,13 @@ export const SCREEN = { x: 13.6, y: 1.9, z: FLOOR.maxZ - 0.08, width: 5.2, heigh
  * stand to open the Agent monitor (E); `key` is where its E key floats.
  */
 export const MONITOR_WALL = { x: MY_OFFICE.minX + 0.12, y: 1.75, z: 9.4, width: 5, height: 2.6, spot: { x: MY_OFFICE.minX + 1.6, z: 9.4 }, r: 2 } as const;
+/** The armchairs in your office (facing the presentation screen): sit in them with E. */
+export const OFFICE_ARMCHAIRS = [
+  { x: 11.0, z: 11.4, facing: 0.5, color: "#ef476f" },
+  { x: 16.0, z: 10.4, facing: -0.5, color: "#06d6a0" },
+] as const;
+/** The chair facing the monitor wall: sit in it to work the CCTV (facing -x, at the wall). */
+export const MONITOR_CHAIR = { x: MY_OFFICE.minX + 3.6, z: 9.4, facing: -Math.PI / 2, pitch: 0.14 } as const;
 /** How thick the office's walls are. */
 export const MY_OFFICE_WALL_T = 0.16;
 

@@ -8,7 +8,9 @@ import {
   FLOOR,
   GONG,
   LOUNGE,
+  MONITOR_CHAIR,
   MONITOR_WALL,
+  OFFICE_ARMCHAIRS,
   MY_OFFICE,
   OFFICE_DOOR,
   PLANTS,
@@ -686,15 +688,20 @@ function buildMyOffice(add: (o: THREE.Object3D) => void): { screen: LiveBoard; r
   m.position.set(0.95, 0.825, 0.1);
   desk.add(m);
   add(desk);
+  // A chair facing the monitor wall, to watch the cameras from.
+  const cctvChair = chair("#ef476f");
+  cctvChair.position.set(MONITOR_CHAIR.x, 0, MONITOR_CHAIR.z);
+  cctvChair.rotation.y = MONITOR_CHAIR.facing + Math.PI;
+  add(cctvChair);
   const bossChair = chair("#3d405b");
   bossChair.position.set(REVIEW_DESK.x, 0, REVIEW_DESK.z - 0.85);
   // Its back away from the desk: you sit in it facing the screen.
   bossChair.rotation.y = Math.PI;
   add(bossChair);
-  for (const x of [11.2, 16.0]) {
-    const arm = armchair(x < 13 ? "#ef476f" : "#06d6a0");
-    arm.position.set(x, 0, 10.4);
-    arm.rotation.y = x < 13 ? 0.5 : -0.5;
+  for (const a of OFFICE_ARMCHAIRS) {
+    const arm = armchair(a.color);
+    arm.position.set(a.x, 0, a.z);
+    arm.rotation.y = a.facing;
     add(arm);
   }
 

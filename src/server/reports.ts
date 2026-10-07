@@ -122,15 +122,32 @@ up for a review, write a single JSON file:
   "status": "ready",            // "ready" = done & reviewable, "blocked" = need a decision
   "title": "Short headline",
   "summary": "One paragraph, read aloud as you present.",
-  "slides": ["Key point 1", "Key point 2", "Key point 3"],
+  "slides": [
+    "What I built\\n- The point, with the detail that matters\\n- Another point",
+    "How it works\\n- The approach in a line or two\\n\`\`\`ts\\nconst theKeyBit = 'a few lines of the real code';\\n\`\`\`",
+    "How I tested it\\n- 24 tests pass, 3 new: what they cover\\n- What I tried by hand"
+  ],
   "question": "Only when blocked: the decision you need.",
   "preview": { "url": "http://localhost:3000" },
   "at": 1700000000000
 }
 \`\`\`
 
-Each slide is one short point (3 to 6 slides works best); they are shown one
-at a time on the big screen while your summary is read aloud.
+Make it a real presentation, 4 to 7 slides, shown one at a time on the big
+screen while each is read aloud. Each slide is a string: a **heading** on its
+first line, then **2 to 4 bullet lines** (\`- …\`) with specifics — names of
+files, functions, numbers, before/after — and, where it helps, a **short code
+block** (\`\`\` fences, under 10 lines) of the key change. A good deck covers:
+
+1. **What and why** — what you did and the problem it solves.
+2. **How it works** — the approach, with the key bit of code.
+3. **What changed** — the main files and what each change does.
+4. **How you tested it** — test names and results, what you checked by hand.
+5. **Risks and next steps** — what's not done, what to watch, what you'd do next.
+
+No filler slides and no one-liners like "Done" or "No code changes" — if there
+is little to show, use fewer, fuller slides. (The office adds a slide with the
+files changed and one with your check's result on its own.)
 
 ## 2. Talk back (office hours and team chat)
 

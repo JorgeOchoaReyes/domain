@@ -12,6 +12,7 @@ import {
   BOT_COLORS,
   FACES,
   HATS,
+  MAX_PERSONA,
   MAX_TEAM,
   coerceCharacter,
   defaultLook,
@@ -25,6 +26,7 @@ import { AGENT_COLOR, Bot } from "../scene/characters.js";
 import { listVoices, speak, stopSpeaking } from "../voice.js";
 import { esc, openModal } from "./modal.js";
 import { agentsState, installAgent, isInstalled, onAgentsChange } from "./agents.js";
+import { ROLES, roleCharacter, type Role } from "../../shared/roles.js";
 import "../styles/team.css";
 
 /**
@@ -52,14 +54,24 @@ function randomName(taken: Set<string>): string {
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
-const PERSONAS: { label: string; text: string }[] = [
-  { label: "🧪 Careful tester", text: "Write or update tests first, keep commits small, and never leave the build red." },
-  { label: "⚡ Fast prototyper", text: "Get a working version fast, keep it simple, and note the shortcuts you took." },
-  { label: "📚 Docs lover", text: "Explain what you changed in plain words and keep the README and comments up to date." },
-  { label: "🔒 Security-minded", text: "Check inputs, secrets and permissions; call out anything risky before you change it." },
-  { label: "🎨 UI polisher", text: "Care about the details users see: spacing, wording, empty states and accessibility." },
-  { label: "🧹 Tidy refactorer", text: "Leave the code cleaner than you found it, without changing behaviour." },
-];
+/** The agent a role runs on here: its own if that CLI's installed, else the first one that is. */
+function roleAgent(role: Role): AgentKind {
+  return isInstalled(role.agent) ? role.agent : (AGENT_KINDS.find((k) => isInstalled(k)) ?? role.agent);
+}
+
+/** The ready-made agents, as cards: hire one (or add it to the team) in a click. */
+function rolesHtml(hiring: boolean): string {
+  return `<section class="tm-roles">
+    <h4>🧩 Ready-made agents <span class="tm-sub">detailed working methods for the usual jobs — ${hiring ? "hire one in a click" : "add one to your team"}, edit it after</span></h4>
+    <ul class="tm-role-list">${ROLES.map(
+      (r) => `<li class="tm-role" data-role="${r.id}" title="${esc(r.persona)}">
+        <span class="tm-role-icon" style="background:${r.look.color}">${r.icon}</span>
+        <span class="tm-role-main"><b>${esc(r.title)}</b><small>${esc(r.blurb)}</small></span>
+        <button class="btn small ${hiring ? "primary" : ""} tm-role-go">${hiring ? "Hire" : "＋ Add"}</button>
+      </li>`,
+    ).join("")}</ul>
+  </section>`;
+}
 
 const FACE_LABEL: Record<Face, string> = { smile: "🙂 Smile", grin: "😁 Grin", cool: "😎 Cool", sleepy: "😴 Sleepy", wink: "😉 Wink", focused: "🧐 Focused" };
 const HAT_LABEL: Record<Hat, string> = {
@@ -214,9 +226,10 @@ function openRoster(ctx: TeamContext & Partial<Pick<HireContext, "onHire">>, des
       ${
         team.length
           ? `<ul class="tm-list">${team.map((c) => cardHtml(c, ctx.desks, hiring, policy)).join("")}</ul>`
-          : `<div class="tm-empty">${avatarHtml(null, "claude", 72)}<div><b>No characters yet.</b><br/>Give a worker a name, a face and a way of working — it remembers who it is every time you hire it.</div></div>`
+          : `<div class="tm-empty">${avatarHtml(null, "claude", 72)}<div><b>No characters yet.</b><br/>Pick a ready-made agent below, or give a worker a name, a face and a way of working — it remembers who it is every time you hire it.</div></div>`
       }
     </section>
+    ${rolesHtml(hiring)}
     ${
       hiring
         ? `<section class="tm-quick">
@@ -303,6 +316,19 @@ function openRoster(ctx: TeamContext & Partial<Pick<HireContext, "onHire">>, des
     modal.close();
     ctx.onEditPolicy();
   });
+  // A ready-made agent: it joins the team as a character (and, hiring, sits down at the desk).
+  body.querySelectorAll<HTMLElement>(".tm-role").forEach((li) =>
+    li.querySelector(".tm-role-go")!.addEventListener("click", () => {
+      const role = ROLES.find((r) => r.id === li.dataset.role)!;
+      if (team.length >= MAX_TEAM) return;
+      const c = roleCharacter(role, team.map((x) => x.name), roleAgent(role));
+      ctx.onSave(c);
+      local.set(c.id, c);
+      modal.close();
+      if (hiring) ctx.onHire?.(c.id);
+      else openRoster(ctx, desk, local);
+    }),
+  );
   body.querySelector(".tm-new")?.addEventListener("click", () => {
     modal.close();
     openEditor(null, ctx, desk, local);
@@ -402,9 +428,9 @@ function openEditor(
         <div><label>Leash</label><div class="seg tm-leash-in">${(Object.keys(LEASH_LABEL) as Leash[]).map((l) => `<button data-l="${l}" title="${esc(LEASH_RULES[l])}">${LEASH_ICON[l]} ${esc(LEASH_LABEL[l])}</button>`).join("")}</div></div>
       </div>
 
-      <label>How it works <span class="tm-sub">— added to every task it gets</span></label>
-      <div class="templates tm-presets">${PERSONAS.map((p, i) => `<button class="btn chip" data-p="${i}">${esc(p.label)}</button>`).join("")}</div>
-      <textarea class="tm-persona-in" rows="3" maxlength="600" placeholder="e.g. Write tests first, keep commits small, explain decisions in the PR."></textarea>
+      <label>How it works <span class="tm-sub">— added to every task it gets · start from a role, then make it yours</span></label>
+      <div class="templates tm-presets">${ROLES.map((r, i) => `<button class="btn chip" data-p="${i}" title="${esc(r.blurb)}">${r.icon} ${esc(r.title)}</button>`).join("")}</div>
+      <textarea class="tm-persona-in" rows="7" maxlength="${MAX_PERSONA}" placeholder="What it's for and how it works: what it does first, how it goes about it, what done means, what it reports back."></textarea>
 
       <label>Look</label>
       <div class="swatches tm-colors">${BOT_COLORS.map((col) => `<button class="swatch" data-c="${col}" style="background:${col}" aria-label="${col}"></button>`).join("")}</div>
@@ -463,9 +489,14 @@ function openEditor(
   });
   body.querySelectorAll<HTMLElement>(".tm-presets [data-p]").forEach((b) =>
     b.addEventListener("click", () => {
-      const p = PERSONAS[Number(b.dataset.p)];
-      c.persona = personaIn.value.trim() ? `${personaIn.value.trim()} ${p.text}` : p.text;
+      // A role's method replaces what's there (they're whole working methods, not one-liners to stack).
+      const r = ROLES[Number(b.dataset.p)];
+      c.persona = r.persona;
       personaIn.value = c.persona;
+      if (c.agent === "claude" && !c.model) c.model = r.model;
+      c.leash = r.leash;
+      renderModels();
+      body.querySelectorAll<HTMLElement>(".tm-leash-in button").forEach((x) => x.classList.toggle("on", x.dataset.l === c.leash));
     }),
   );
 

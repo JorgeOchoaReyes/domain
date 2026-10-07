@@ -1,6 +1,8 @@
 import { Alumni } from "./alumni.js";
 import { Autopilot } from "./autopilot.js";
 import { draftStandup } from "./standupVoice.js";
+import { CHANGED_HEADING, changedSlide } from "../shared/slides.js";
+import { stopDictationHelper, toggleDictation } from "./dictate.js";
 import type { TeamMember } from "../shared/standupDraft.js";
 import { BAY_DESK_IDS, DESKS } from "../shared/layout.js";
 import { Lessons } from "./lessons.js";
@@ -327,6 +329,16 @@ setInterval(() => lessons.write(), 60_000).unref();
 
 /** A report reaches you: into the line, announced, and in the history. */
 function toYou(presentation: Presentation): void {
+  // Finished work gets a slide of what changed, from git (once).
+  const ws = office.workspaceOf(presentation.deskId);
+  if (presentation.report?.status === "ready" && ws && office.workspaces && !presentation.report.slides.some((s) => s.startsWith(CHANGED_HEADING))) {
+    const slide = changedSlide(office.workspaces.diffFiles(office.workdir(presentation.deskId)));
+    if (slide) {
+      const add = (r: NonNullable<Presentation["report"]>) => ({ ...r, slides: [...r.slides, slide] });
+      office.amendReport(presentation.deskId, add);
+      presentation = { ...presentation, report: add(presentation.report) };
+    }
+  }
   const { deskId, report } = presentation;
   progress.reported(deskId);
   broadcast({ t: "report", presentation });
@@ -761,6 +773,13 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
         let goal = open(str(msg.goalId, 64)) ?? open(snap.session?.goalId) ?? snap.goals.find((g) => g.title === "Quick tasks" && !g.shippedAt && !g.doneAt);
         goal ??= progress.createGoal(client.name, "Quick tasks", "Small things handed out from the chat", [], "build") ?? undefined;
         if (!goal) break;
+        // To everyone: whoever'd take it says so in #team, and it's yours to OK (see the chat module).
+        if (toAny && ctx.offerTask) {
+          const title = said.length <= 300 ? said : `${said.slice(0, 297).trimEnd()}…`;
+          const taskId = progress.addTask(goal.id, title);
+          if (taskId) ctx.offerTask(goal.id, taskId, title);
+          break;
+        }
         const deskId = toAny ? freeWorker() : msg.deskId;
         // A long one, handed out now: its first line (or the start) is the title, and all of it goes in the brief.
         // Waiting for someone, it keeps as much as a title holds.
@@ -1308,6 +1327,8 @@ routes.set("standupVoice", (msg, _client, ws) => {
   const open = snap.goals.filter((g) => !g.doneAt && !g.shippedAt).map((g) => g.title);
   void draftStandup(text, open, { simulate: SIMULATE, team: teamForPlanning() }).then(({ draft, via }) => send(ws, { t: "standupDraft", draft, via }));
 });
+// The desktop app's 🎤: Windows voice typing, into the box that has focus.
+routes.set("dictate", () => void toggleDictation());
 // Resume yesterday: the team wakes, and the last stand-up's plan starts again with its tasks handed out.
 routes.set("resume", (_msg, client) => {
   const plan = progress.lastPlan;
@@ -1353,6 +1374,7 @@ export const serverReady: Promise<string> = new Promise((resolve, reject) => {
  */
 function closeUp(): void {
   mcpCleanup(CWD);
+  stopDictationHelper();
   deployer.cancel();
   goalFiles.stop();
   progress.dispose();

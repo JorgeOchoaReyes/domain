@@ -2,6 +2,11 @@ import type { Desk } from "../../shared/protocol.js";
 import { AGENT_LABELS } from "../../shared/protocol.js";
 import {
   SESSION_LENGTHS,
+  ALL_DAY,
+  DEFAULT_EOD,
+  eodLabel,
+  minutesUntilEod,
+  pastEod,
   TONES,
   XP,
   goalProgress,
@@ -159,6 +164,7 @@ export function openStandup(
   let goalChoice: string | "new" = open[0]?.id ?? "new";
   let kind: GoalKind = "build";
   let tone: ToneId = "ship";
+  const eodAt = progress.policy.autopilot.eodAt || DEFAULT_EOD;
   let minutes: number = TONES.find((t) => t.id === tone)!.minutes;
 
   body.innerHTML = `
@@ -212,7 +218,7 @@ export function openStandup(
       <input type="text" class="su-intent" maxlength="140" placeholder="e.g. Checkout works end to end and is deployed" />
 
       <div class="su-step"><span class="su-n">4</span><h3>How long?</h3></div>
-      <div class="seg su-len">${SESSION_LENGTHS.map((m) => `<button data-m="${m}" class="${m === minutes ? "on" : ""}">${sessionLength(m)}</button>`).join("")}</div>
+      <div class="seg su-len">${SESSION_LENGTHS.map((m) => `<button data-m="${m}" class="${m === minutes ? "on" : ""}">${sessionLength(m)}</button>`).join("")}<button data-m="eod" title="Ends at ${esc(eodLabel(eodAt))} — the end-of-day time in Team policy (past it, an hour)">🌙 ${pastEod(eodAt) ? "One more hour" : `Until ${esc(eodLabel(eodAt))}`} <small>(${sessionLength(minutesUntilEod(eodAt))})</small></button></div>
     </section>`;
 
   const footer = document.createElement("div");
@@ -238,6 +244,8 @@ export function openStandup(
   });
 
   const $ = <T extends HTMLElement>(sel: string) => body.querySelector<T>(sel)!;
+  // The length may be "until end of day" (worked out again as the day starts).
+  let untilEod = false;
   const newBox = $(".su-new");
   const title = $<HTMLInputElement>(".su-title");
   const tasks = $<HTMLTextAreaElement>(".su-tasks");
@@ -276,18 +284,19 @@ export function openStandup(
       body.querySelectorAll<HTMLElement>(".su-kind button").forEach((x) => x.classList.toggle("on", x.dataset.k === kind));
     }),
   );
-  const syncLen = () => body.querySelectorAll<HTMLElement>(".su-len button").forEach((x) => x.classList.toggle("on", Number(x.dataset.m) === minutes));
+  const syncLen = () => body.querySelectorAll<HTMLElement>(".su-len button").forEach((x) => x.classList.toggle("on", x.dataset.m === "eod" ? untilEod : !untilEod && Number(x.dataset.m) === minutes));
   body.querySelectorAll<HTMLButtonElement>(".su-tone").forEach((b) =>
     b.addEventListener("click", () => {
       tone = b.dataset.tone as ToneId;
       body.querySelectorAll(".su-tone").forEach((x) => x.classList.toggle("on", x === b));
-      minutes = TONES.find((t) => t.id === tone)!.minutes;
+      if (!untilEod) minutes = TONES.find((t) => t.id === tone)!.minutes;
       syncLen();
     }),
   );
   body.querySelectorAll<HTMLButtonElement>(".su-len button").forEach((b) =>
     b.addEventListener("click", () => {
-      minutes = Number(b.dataset.m);
+      untilEod = b.dataset.m === "eod";
+      minutes = untilEod ? minutesUntilEod(eodAt) : Number(b.dataset.m);
       syncLen();
     }),
   );
@@ -362,7 +371,9 @@ export function openStandup(
       syncGoal();
       tone = d.tone;
       body.querySelectorAll<HTMLElement>(".su-tone").forEach((x) => x.classList.toggle("on", x.dataset.tone === tone));
-      minutes = d.minutes;
+      // "All day" / "until end of day" means just that.
+      untilEod = ALL_DAY.test(said.value);
+      minutes = untilEod ? minutesUntilEod(eodAt) : d.minutes;
       syncLen();
       intent.value = d.intention;
       touched = false;
@@ -443,6 +454,7 @@ export function openStandup(
     } else {
       plan = { goalId: goalChoice, tone, intention: intent.value.trim(), minutes };
     }
+    if (untilEod) plan.minutes = minutesUntilEod(eodAt);
     plan.dispatch = dispatchOn();
     if (drafted) {
       plan.summary = drafted.summary;

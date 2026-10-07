@@ -1,5 +1,5 @@
 import { eodRecap } from "../../shared/standupDraft.js";
-import { SESSION_LENGTHS, XP, clock, goalProgress, sessionLength, type ProgressState, type SessionSummary } from "../../shared/progress.js";
+import { DEFAULT_EOD, pastEod, SESSION_LENGTHS, XP, clock, eodLabel, goalProgress, minutesUntilEod, sessionLength, type ProgressState, type SessionSummary } from "../../shared/progress.js";
 import { confetti, sound } from "./fx.js";
 import { esc, openModal } from "./modal.js";
 
@@ -11,13 +11,15 @@ import { esc, openModal } from "./modal.js";
 export function openStartSession(progress: ProgressState, goalId: string | null, onStart: (minutes: number, goalId: string | null) => void): void {
   const open = progress.goals.filter((g) => !g.doneAt);
   let minutes: number = SESSION_LENGTHS[0];
+  const eodAt = progress.policy.autopilot.eodAt || DEFAULT_EOD;
+  let untilEod = false;
   let goal: string | null = goalId ?? open[0]?.id ?? null;
   const body = document.createElement("div");
   body.className = "start-session";
   body.innerHTML = `
     <p class="setting-note" style="margin-top:0">A timed sprint for the whole office. Hire, assign and review as usual — when the timer runs out, everyone here earns <b>${XP.sessionMinute} XP a minute</b> and keeps their streak alive.</p>
     <label>How long?</label>
-    <div class="lengths">${SESSION_LENGTHS.map((m) => `<button class="len ${m === minutes ? "sel" : ""}" data-m="${m}"><b>${m / 60}</b><span>${m === 60 ? "hour" : "hours"}</span><i>+${m * XP.sessionMinute} XP</i></button>`).join("")}</div>
+    <div class="lengths">${SESSION_LENGTHS.map((m) => `<button class="len ${m === minutes ? "sel" : ""}" data-m="${m}"><b>${m / 60}</b><span>${m === 60 ? "hour" : "hours"}</span><i>+${m * XP.sessionMinute} XP</i></button>`).join("")}<button class="len" data-m="eod" title="Ends at the end-of-day time in Team policy"><b>🌙</b><span>${pastEod(eodAt) ? "one more hour" : `until ${esc(eodLabel(eodAt))}`}</span><i>${sessionLength(minutesUntilEod(eodAt))}</i></button></div>
     <label>Focus on</label>
     <ul class="svc-list pick-goal">
       ${open
@@ -34,7 +36,8 @@ export function openStartSession(progress: ProgressState, goalId: string | null,
   const modal = openModal({ title: "Start a focus session", icon: "⏱", body, footer });
   body.querySelectorAll<HTMLButtonElement>(".len").forEach((b) =>
     b.addEventListener("click", () => {
-      minutes = Number(b.dataset.m);
+      untilEod = b.dataset.m === "eod";
+      minutes = untilEod ? minutesUntilEod(eodAt) : Number(b.dataset.m);
       body.querySelectorAll(".len").forEach((x) => x.classList.toggle("sel", x === b));
     }),
   );
@@ -46,7 +49,7 @@ export function openStartSession(progress: ProgressState, goalId: string | null,
   );
   footer.querySelector(".go")!.addEventListener("click", () => {
     modal.close();
-    onStart(minutes, goal);
+    onStart(untilEod ? minutesUntilEod(eodAt) : minutes, goal);
   });
 }
 

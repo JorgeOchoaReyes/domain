@@ -103,6 +103,26 @@ export class Workspaces {
     }
   }
 
+  /** Each file a worker's work touches against your branch, with lines added and removed (new files too). */
+  diffFiles(path: string): { file: string; added: number; removed: number }[] {
+    const base = this.base();
+    if (!base) return [];
+    const out: { file: string; added: number; removed: number }[] = [];
+    for (const l of (this.git(path, ["diff", "--numstat", base]) ?? "").split("\n")) {
+      const m = /^(\d+|-)\t(\d+|-)\t(.+)$/.exec(l);
+      if (m && !m[3].startsWith(".domain/")) out.push({ file: m[3], added: Number(m[1]) || 0, removed: Number(m[2]) || 0 });
+    }
+    for (const f of (this.git(path, ["ls-files", "--others", "--exclude-standard"]) ?? "").split("\n").filter(Boolean).slice(0, 40)) {
+      if (f.startsWith(".domain/")) continue;
+      try {
+        out.push({ file: f, added: readFileSync(join(path, f), "utf8").split("\n").length, removed: 0 });
+      } catch {
+        /* unreadable: skip it */
+      }
+    }
+    return out;
+  }
+
   /**
    * How many lines a worker's work adds and removes against your branch:
    * committed and uncommitted changes, plus the new files it hasn't added yet.

@@ -1,3 +1,4 @@
+import { deckOf, parseSlide, slideSpeech } from "../../shared/slides.js";
 import type { CheckResult, Presentation } from "../../shared/protocol.js";
 import type { WorkerIdentity } from "../../shared/team.js";
 import { AGENT_LABELS } from "../../shared/protocol.js";
@@ -98,7 +99,7 @@ export class ReviewPanel {
     this.deskId = p.deskId;
     this.handlers = handlers;
     this.slideIndex = 0;
-    this.slideCount = 1 + p.report.slides.length + (p.report.preview?.url || p.report.preview?.image ? 1 : 0);
+    this.slideCount = 1 + deckOf(p.report).length + (p.report.preview?.url || p.report.preview?.image ? 1 : 0);
     this.auto = true;
     this.sent = false;
 
@@ -260,7 +261,8 @@ export class ReviewPanel {
     const p = this.p!;
     const r = p.report!;
     const i = this.slideIndex;
-    const previewAt = 1 + r.slides.length;
+    const slides = deckOf(r);
+    const previewAt = 1 + slides.length;
     let html: string;
     if (i === 0) {
       html = `<div class="slide title-slide">
@@ -270,10 +272,7 @@ export class ReviewPanel {
         ${r.question ? `<div class="question">❓ ${esc(r.question)}</div>` : ""}
       </div>`;
     } else if (i < previewAt) {
-      html = `<div class="slide point-slide">
-        <div class="kicker">${esc(r.title)}</div>
-        <div class="point"><span class="bullet"></span><span>${esc(r.slides[i - 1])}</span></div>
-      </div>`;
+      html = slideBodyHtml(slides[i - 1], r.title);
     } else {
       const prev = r.preview!;
       html = `<div class="slide preview-slide">
@@ -293,7 +292,7 @@ export class ReviewPanel {
     const i = this.slideIndex;
     let text: string;
     if (i === 0) text = `${r.title}. ${r.summary}${r.question ? ` My question for you: ${r.question}` : ""}`;
-    else if (i <= r.slides.length) text = r.slides[i - 1];
+    else if (i <= deckOf(r).length) text = slideSpeech(deckOf(r)[i - 1]);
     else text = "And here's a live preview.";
     const at = i;
     speak(
@@ -385,4 +384,22 @@ function checkBanner(c: CheckResult | undefined): string {
   if (c.status === "pass") return `<div class="check-banner pass">✅ <code>${esc(c.command)}</code> passed${secs}</div>`;
   if (c.status === "running") return `<div class="check-banner running">🧪 Running <code>${esc(c.command)}</code>…</div>`;
   return `<details class="check-banner fail"><summary>❌ <code>${esc(c.command)}</code> failed${c.exitCode !== null ? ` (exit ${c.exitCode})` : ""}${secs} — show output</summary><pre>${esc(c.tail.split("\n").slice(-30).join("\n"))}</pre></details>`;
+}
+
+/** A slide in the review window: its heading, its points, and its code. One-liners show as one big point. */
+export function slideBodyHtml(text: string, title: string): string {
+  const s = parseSlide(text);
+  if (!s.heading && s.bullets.length === 1 && !s.code)
+    return `<div class="slide point-slide"><div class="kicker">${esc(title)}</div><div class="point"><span class="bullet"></span><span>${esc(s.bullets[0])}</span></div></div>`;
+  return `<div class="slide rich-slide">
+    <div class="kicker">${esc(title)}</div>
+    ${s.heading ? `<h2>${esc(s.heading)}</h2>` : ""}
+    ${s.bullets.length ? `<ul>${s.bullets.map((b) => `<li>${inlineCode(b)}</li>`).join("")}</ul>` : ""}
+    ${s.code ? `<pre><code>${esc(s.code)}</code></pre>` : ""}
+  </div>`;
+}
+
+/** \`code\` in a bullet, shown as code. */
+function inlineCode(t: string): string {
+  return esc(t).replace(/`([^`]+)`/g, "<code>$1</code>");
 }

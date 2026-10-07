@@ -1,3 +1,4 @@
+import { deckOf, slideSpeech } from "../../shared/slides.js";
 import type * as THREE from "three";
 import type { ClientMessage, Desk, OfficeState, Presentation } from "../../shared/protocol.js";
 import type { ProgressState } from "../../shared/progress.js";
@@ -268,7 +269,7 @@ export class VrFlows implements VrHooks {
     const p = this.presentation();
     if (m.kind !== "review" || !p?.report) return;
     const r = p.report;
-    const text = m.slide === 0 ? `${r.title}. ${r.summary}` : (r.slides[m.slide - 1] ?? "");
+    const text = m.slide === 0 ? `${r.title}. ${r.summary}` : slideSpeech(deckOf(r)[m.slide - 1] ?? "");
     const voice = this.ctx.office().desks.find((d) => d.id === m.deskId)?.worker?.identity?.voice ?? "";
     speak(text, p.agent, undefined, voice);
   }
@@ -281,7 +282,7 @@ export class VrFlows implements VrHooks {
       return;
     }
     const r = p.report;
-    const count = 1 + r.slides.length;
+    const count = 1 + deckOf(r).length;
     const go = (d: number) => () => {
       m.slide = Math.max(0, Math.min(count - 1, m.slide + d));
       this.ctx.world.setPresenting(m.deskId, m.slide);

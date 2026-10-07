@@ -1,3 +1,4 @@
+import { deckOf, parseSlide } from "../../shared/slides.js";
 import type { Desk, Presentation } from "../../shared/protocol.js";
 import type { Idea } from "../../shared/ideas.js";
 import { AGENT_LABELS } from "../../shared/protocol.js";
@@ -292,7 +293,8 @@ export function paintSlide(c: HTMLCanvasElement, p: Presentation | null, index: 
   g.textBaseline = "middle";
   g.fillText(`${AGENT_LABELS[p.agent]} · hired by ${p.hiredBy}`, 30, H - 25);
   g.textAlign = "right";
-  const total = r.slides.length + 1;
+  const slides = deckOf(r);
+  const total = slides.length + 1;
   g.fillText(`${Math.min(index, total - 1) + 1} / ${total}`, W - 30, H - 25);
   g.textAlign = "left";
   g.fillStyle = INK;
@@ -307,16 +309,50 @@ export function paintSlide(c: HTMLCanvasElement, p: Presentation | null, index: 
     if (r.status === "blocked" && r.question) pill(g, 60, H - 100, `❓ ${r.question.slice(0, 60)}`, "#ffd166", INK, 26);
     return;
   }
-  const slide = r.slides[Math.min(index - 1, r.slides.length - 1)] ?? "";
+  const s = parseSlide(slides[Math.min(index - 1, slides.length - 1)] ?? "");
   g.font = `800 28px ${F}`;
   g.fillStyle = accent;
   g.fillText(r.title.slice(0, 70), 60, 70);
   g.fillStyle = INK;
-  g.font = `900 54px ${F}`;
-  const lines = wrap(g, slide, W - 160, 4);
-  const top = H / 2 - (lines.length * 66) / 2;
-  dot(g, 80, top + 30, 14, accent);
-  lines.forEach((l, i) => g.fillText(l, 110, top + 30 + i * 66));
+  // A one-liner: one big point in the middle.
+  if (!s.heading && s.bullets.length === 1 && !s.code) {
+    g.font = `900 54px ${F}`;
+    const lines = wrap(g, s.bullets[0], W - 160, 4);
+    const top = H / 2 - (lines.length * 66) / 2;
+    dot(g, 80, top + 30, 14, accent);
+    lines.forEach((l, i) => g.fillText(l, 110, top + 30 + i * 66));
+    return;
+  }
+  // A real slide: its heading, its points, its code.
+  let y = 130;
+  if (s.heading) {
+    g.font = `900 50px ${F}`;
+    for (const l of wrap(g, s.heading, W - 120, 2)) {
+      g.fillText(l, 60, y);
+      y += 60;
+    }
+    y += 10;
+  }
+  const bottom = H - 70;
+  const codeLines = s.code ? s.code.split("\n").slice(0, 10) : [];
+  const codeH = codeLines.length ? codeLines.length * 30 + 30 : 0;
+  g.font = `700 32px ${F}`;
+  for (const b of s.bullets) {
+    const lines = wrap(g, b.replace(/`/g, ""), W - 170, 3);
+    if (y + lines.length * 40 > bottom - codeH) break;
+    dot(g, 80, y, 9, accent);
+    g.fillStyle = INK;
+    lines.forEach((l, i) => g.fillText(l, 105, y + i * 40));
+    y += lines.length * 40 + 14;
+  }
+  if (codeLines.length) {
+    const top = Math.min(y + 6, bottom - codeH);
+    g.fillStyle = "#1e1f2e";
+    g.fillRect(60, top - 20, W - 120, codeH);
+    g.fillStyle = "#cdd6f4";
+    g.font = `24px ui-monospace, Consolas, monospace`;
+    codeLines.forEach((l, i) => g.fillText(l.slice(0, 90), 80, top + 6 + i * 30));
+  }
 }
 
 /** The review whiteboard before anyone writes on it. */

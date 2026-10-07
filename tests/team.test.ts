@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { MAX_TEAM, coerceCharacter, coerceLook, defaultLook, personaBrief } from "../src/shared/team.ts";
+import { MAX_PERSONA, MAX_TEAM, coerceCharacter, coerceLook, defaultLook, personaBrief } from "../src/shared/team.ts";
 import { Progress } from "../src/server/progress.ts";
 import { OpLogger } from "../src/server/oplog.ts";
 import { Office } from "../src/server/office.ts";
@@ -31,7 +31,7 @@ test("characters are cleaned: a name is required, looks fall back to the agent's
     agent: "codex",
     model: "rm -rf /",
     leash: "yolo",
-    persona: "x".repeat(2000),
+    persona: "x".repeat(5000),
     look: { color: "red", face: "angry", hat: "crown", accessory: "cape" },
     mcp: ["a", 3, "b"],
   })!;
@@ -39,7 +39,7 @@ test("characters are cleaned: a name is required, looks fall back to the agent's
   assert.equal(c.agent, "codex");
   assert.equal(c.model, "", "a model that isn't a safe name is dropped");
   assert.equal(c.leash, "ask");
-  assert.equal(c.persona.length, 600);
+  assert.equal(c.persona.length, MAX_PERSONA, "long enough for a detailed method, and no longer");
   assert.deepEqual(c.look, { color: defaultLook("codex").color, face: "smile", hat: "crown", accessory: "none" });
   assert.deepEqual(c.mcp, ["a", "b"]);
   assert.equal(coerceCharacter({ name: "Bo", agent: "nope" })!.agent, "claude", "an unknown agent becomes Claude Code");

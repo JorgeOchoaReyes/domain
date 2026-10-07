@@ -6,6 +6,7 @@ import type { Desk, Presentation } from "../src/shared/protocol.ts";
 import type { Goal } from "../src/shared/progress.ts";
 import { draftPrompt, eodRecap, parseDraft, simpleDraft, spreadTasks } from "../src/shared/standupDraft.ts";
 import { draftStandup } from "../src/server/standupVoice.ts";
+import { pickVolunteer } from "../src/shared/chat.ts";
 
 const worker = (status = "idle") => ({ agent: "claude", status, activity: "", report: null, model: "", leash: "auto" });
 const desk = (id: string, w: object | null) => ({ id, label: id, worker: w }) as unknown as Desk;
@@ -189,4 +190,26 @@ test("a task saved for someone waits for them; the rest go to whoever's free", (
   const gone = setup({ sessionGoal: "today", desks: [desk("desk-1", worker())], goals: [g2] });
   gone.ap.tick();
   assert.deepEqual(gone.log, ["assign a → desk-1"]);
+});
+
+test("who offers to take a task: someone free, else the one closest to done, never someone asleep or already asked", () => {
+  const ds = [
+    { id: "desk-1", worker: { status: "working" } },
+    { id: "desk-2", worker: { status: "presenting" } },
+    { id: "desk-3", worker: { status: "asleep" } },
+    { id: "desk-4", worker: { status: "idle" } },
+  ];
+  const on = new Map([["desk-1", "Refactor auth"], ["desk-2", "Dark mode"]]);
+  assert.deepEqual(pickVolunteer(ds, on), { deskId: "desk-4", free: true, after: "what it's on" });
+  assert.deepEqual(pickVolunteer(ds, on, ["desk-4"]), { deskId: "desk-2", free: false, after: "Dark mode" });
+  assert.deepEqual(pickVolunteer(ds, on, ["desk-4", "desk-2"])?.deskId, "desk-1");
+  assert.equal(pickVolunteer(ds, on, ["desk-4", "desk-2", "desk-1"]), null);
+});
+
+test("a task someone's offered to take waits for your answer: nobody else grabs it", () => {
+  const g = goal("today", ["a", "b"]);
+  g.tasks[0].offered = "desk-2";
+  const { ap, log } = setup({ sessionGoal: "today", desks: [desk("desk-1", worker())], goals: [g] });
+  ap.tick();
+  assert.deepEqual(log, ["assign b → desk-1"]);
 });

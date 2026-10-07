@@ -30,6 +30,8 @@ const HOST_ONLY: ReadonlySet<T> = new Set<T>([
   "agentInstall",
   "trustWorkers",
   "voicesKey",
+  // Presses keys on this computer.
+  "dictate",
 ]);
 
 export function allowed(role: Role, t: string): boolean {

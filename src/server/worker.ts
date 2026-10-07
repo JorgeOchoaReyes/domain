@@ -144,14 +144,22 @@ ${MAGENTA}▸ called to office hours — preparing a progress report…${RESET}
     this.setStatus("presenting", "Preparing a progress report");
     this.later(2200, () => {
       const done = this.history.slice(-4);
+      const last = done.at(-1);
+      const short = last && last.length > 60 ? last.slice(0, 60) + "…" : last;
       const report: Report = {
         status: "ready",
-        title: done.length ? `Progress update: ${done.length} task${done.length > 1 ? "s" : ""}` : "Progress update: just getting started",
-        summary: done.length
-          ? `Here's where I am. I've worked through ${done.length} task${done.length > 1 ? "s" : ""} since I sat down, and everything is ready for your review.`
+        title: short ? `Finished: ${short}` : "Progress update: just getting started",
+        summary: short
+          ? `Here's "${short}", ready for your review${done.length > 1 ? ` — and ${done.length - 1} earlier task${done.length > 2 ? "s" : ""} along the way` : ""}.`
           : "I haven't been given a task yet, so there's not much to show. I'm set up, I've read the repository, and I'm ready for my first assignment.",
-        slides: done.length
-          ? [...done.map((t) => `Done: ${t.length > 60 ? t.slice(0, 60) + "…" : t}`), "Next: whatever you'd like me to pick up"]
+        // A real deck: a heading and specifics on each slide, and the key code.
+        slides: short
+          ? [
+              ["What I built", `- ${short}`, "- Works end to end, behind the existing settings"],
+              ["How it works", "- One new function, called where the old code branched", "```ts", "export function apply(state: State, change: Change): State {", "  return { ...state, ...change, updatedAt: Date.now() };", "}", "```"],
+              ["How I tested it", "- 3 new tests: the default, a change, and an empty change", "- The full suite passes (24 tests)"],
+              ["Done so far", ...done.map((t) => `- ${t.length > 60 ? t.slice(0, 60) + "…" : t}`)],
+            ].map((l) => l.join("\n"))
           : ["Set up at my desk", "Read through the repository", "Waiting for my first task"],
         at: Date.now(),
       };
@@ -349,10 +357,11 @@ ${MAGENTA}▸ called to office hours — preparing a progress report…${RESET}
           title: `Need a decision: ${short}`,
           summary: `I started on "${short}" but hit a fork I should not pick alone. I need your call before I continue.`,
           slides: [
-            `Task: ${short}`,
-            "Explored two viable approaches",
-            "Blocked on which direction you prefer",
-          ],
+            ["The fork in the road", `- Task: ${short}`, "- Two ways to do it, and they lead to different code"],
+            ["Option A: the simple one", "- Small change in one module, done today", "- Covers the common case; edge cases come later"],
+            ["Option B: the thorough one", "- Reworks the shared helper so every caller benefits", "- About twice the work, and more to review"],
+            ["My take", "- A now, B as a follow-up if it earns it", "- Your call: which way?"],
+          ].map((l) => l.join("\n")),
           question: "Which approach should I take — the simple one or the thorough one?",
           at: Date.now(),
         }
@@ -360,12 +369,21 @@ ${MAGENTA}▸ called to office hours — preparing a progress report…${RESET}
           status: "ready",
           title: `Finished: ${short}`,
           summary: `I finished "${short}". Here is a quick rundown of what changed so you can review and tell me to continue or adjust.`,
+          // A real deck: a heading and specifics on each slide, and the key code.
           slides: [
-            `Task: ${short}`,
-            "Implemented the change end to end",
-            "Added a couple of tests",
-            "Ready for your review",
-          ],
+            ["What I built", `- ${short}`, "- Works end to end, behind the existing settings"],
+            [
+              "How it works",
+              "- One new function, called where the old code branched",
+              "```ts",
+              "export function apply(state: State, change: Change): State {",
+              "  return { ...state, ...change, updatedAt: Date.now() };",
+              "}",
+              "```",
+            ],
+            ["How I tested it", "- 3 new tests: the default, a change, and an empty change", "- The full suite passes (24 tests)"],
+            ["Risks and next steps", "- Nothing else calls the old path, so it's safe to remove", "- Next: a short note in the README"],
+          ].map((l) => l.join("\n")),
           at: Date.now(),
         };
 

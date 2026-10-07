@@ -1,3 +1,4 @@
+import { deckOf, slideSpeech } from "../../shared/slides.js";
 import type { Presentation } from "../../shared/protocol.js";
 import type { WorkerIdentity } from "../../shared/team.js";
 import { AGENT_LABELS } from "../../shared/protocol.js";
@@ -35,7 +36,7 @@ export class ProjectorReview {
     this.deskId = p.deskId;
     this.handlers = handlers;
     this.slide = 0;
-    this.count = 1 + p.report.slides.length;
+    this.count = 1 + deckOf(p.report).length;
     this.auto = true;
     const name = who ? `${who.name} (${AGENT_LABELS[p.agent]})` : AGENT_LABELS[p.agent];
     const r = p.report;
@@ -160,7 +161,7 @@ export class ProjectorReview {
     const r = this.p?.report;
     if (!r || !this.el) return;
     const at = this.slide;
-    const text = at === 0 ? `${r.title}. ${r.summary}${r.question ? ` My question for you: ${r.question}` : ""}` : (r.slides[at - 1] ?? "");
+    const text = at === 0 ? `${r.title}. ${r.summary}${r.question ? ` My question for you: ${r.question}` : ""}` : slideSpeech(deckOf(r)[at - 1] ?? "");
     speak(
       text,
       this.p!.agent,

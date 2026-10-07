@@ -112,6 +112,34 @@ export class Phone {
     setInterval(() => this.refresh(), 1000);
   }
 
+  /**
+   * A notification: the phone buzzes and a banner drops from it for a while
+   * (tap it to open that app). The banners stack, newest on top.
+   */
+  notify(text: string, app: PhoneApp = "alerts"): void {
+    this.button.classList.remove("buzz");
+    void this.button.offsetWidth;
+    this.button.classList.add("buzz");
+    const b = document.createElement("button");
+    b.className = "ph-banner";
+    b.innerHTML = `<span class="ph-banner-app">📱 domain</span><span class="ph-banner-text"></span>`;
+    b.querySelector(".ph-banner-text")!.textContent = text;
+    b.addEventListener("click", () => {
+      b.remove();
+      this.open(app);
+    });
+    let stack = document.querySelector<HTMLElement>(".ph-banners");
+    if (!stack) {
+      stack = document.createElement("div");
+      stack.className = "ph-banners";
+      document.body.append(stack);
+    }
+    stack.prepend(b);
+    while (stack.children.length > 3) stack.lastElementChild!.remove();
+    setTimeout(() => b.remove(), 9000);
+    this.refresh();
+  }
+
   /** The phone's button, for the dock. */
   get dockButton(): HTMLButtonElement {
     return this.button;

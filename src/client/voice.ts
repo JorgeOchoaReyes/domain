@@ -335,6 +335,7 @@ export class Dictation {
 /** The desktop app: its built-in browser has no speech service, but the OS has dictation. */
 const DESKTOP = typeof navigator !== "undefined" && /Electron/.test(navigator.userAgent);
 const MAC = typeof navigator !== "undefined" && /Mac/.test(navigator.platform || navigator.userAgent);
+const WINDOWS = typeof navigator !== "undefined" && /Win/.test(navigator.platform || navigator.userAgent);
 
 /** How to start the OS's own dictation, in the desktop app. */
 export function osDictationHint(): string {
@@ -344,7 +345,7 @@ export function osDictationHint(): string {
 /** A 🎤 button's HTML (empty when there's no way to dictate here). */
 export function micButton(cls = ""): string {
   if (!DESKTOP && !sttSupported()) return "";
-  return `<button type="button" class="btn mic ${cls}" title="${DESKTOP ? `Dictate: ${osDictationHint()}` : "Dictate — click again to stop"}">🎤</button>`;
+  return `<button type="button" class="btn mic ${cls}" title="${DESKTOP && !WINDOWS ? `Dictate: ${osDictationHint()}` : "Dictate — click again to stop"}">🎤</button>`;
 }
 
 /**
@@ -354,9 +355,29 @@ export function micButton(cls = ""): string {
 export function wireMic(button: HTMLButtonElement | null, field: HTMLInputElement | HTMLTextAreaElement, onError?: (error: string) => void): void {
   if (!button) return;
   if (DESKTOP) {
-    // The OS dictates into whatever has focus: put the cursor in the box and say how.
+    // The OS dictates into whatever has focus. On Windows the office starts it for you (Win+H:
+    // Windows voice typing) and the second click stops it; elsewhere it says how.
+    const before = field.placeholder;
+    let live = false;
+    const stop = () => {
+      live = false;
+      button.classList.remove("live");
+      field.placeholder = before;
+    };
+    field.addEventListener("blur", () => live && setTimeout(() => document.activeElement !== field && stop(), 300));
     button.addEventListener("click", () => {
       field.focus();
+      // Typing goes at the end of what's there.
+      const end = field.value.length;
+      field.setSelectionRange(end, end);
+      if (WINDOWS && sendMsg) {
+        sendMsg({ t: "dictate" });
+        if (live) return stop();
+        live = true;
+        button.classList.add("live");
+        field.placeholder = "🎤 Listening — speak now (Windows voice typing) · click 🎤 again to stop";
+        return;
+      }
       field.placeholder = `🎤 ${osDictationHint()[0].toUpperCase()}${osDictationHint().slice(1)} — it types here`;
       button.classList.add("live");
       setTimeout(() => button.classList.remove("live"), 4000);

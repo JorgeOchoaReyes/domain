@@ -319,6 +319,10 @@ export type ClientMessage =
   | { t: "standupVoice"; text: string }
   /** Pick up where the last stand-up left off: wake the team, same goal, tone and length, tasks handed out. */
   | { t: "resume" }
+  /** The desktop app's 🎤: start (or stop) Windows voice typing in the box that has focus. */
+  | { t: "dictate" }
+  /** Answer a worker's "I'll take it": let them, ask someone else, or leave it for whoever's free. */
+  | { t: "offerAnswer"; taskId: string; answer: "take" | "next" | "anyone" }
   // --- the agent loop ------------------------------------------------------
   /** Ask the worker at a desk to break a goal into tasks (it writes plan.md). */
   | { t: "plan"; goalId: string; deskId: string }

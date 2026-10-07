@@ -495,7 +495,7 @@ export class Office {
         typeLine(
           session,
           "[Office hours] Your manager is rounding everyone up for a review. Pause what you're doing and prepare a short progress report: " +
-            "write it as JSON to $DOMAIN_REPORT_FILE following .domain/BRIEF.md (title, summary, 3-6 short slides, at = now in ms). Then wait for feedback.",
+            "write it as JSON to $DOMAIN_REPORT_FILE following .domain/BRIEF.md (title, summary, 4-7 real slides — a heading and 2-4 specific bullets each, code where it helps — at = now in ms). Then wait for feedback.",
         );
       }
       called++;

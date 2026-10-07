@@ -1,3 +1,4 @@
+import { deckOf, parseSlide } from "../../shared/slides.js";
 import type { ClientMessage, Desk, OfficeState, Report } from "../../shared/protocol.js";
 import { AGENT_LABELS, doingLabel } from "../../shared/protocol.js";
 import { TEAM_THREAD } from "../../shared/chat.js";
@@ -40,13 +41,19 @@ export interface MonitorActions {
 
 type Filter = "all" | "waiting" | "review" | "working" | "free";
 
-const FILTERS: { id: Filter; label: string; test: (d: Desk) => boolean }[] = [
+/** `ready`: the desks whose work has reached your line (not still with an auditor). */
+const FILTERS: { id: Filter; label: string; test: (d: Desk, ready: Set<string>) => boolean }[] = [
   { id: "all", label: "All", test: () => true },
   { id: "waiting", label: "🔴 Needs you", test: (d) => d.worker?.status === "waiting" },
-  { id: "review", label: "🎤 To review", test: (d) => !!d.worker?.report },
+  { id: "review", label: "🎤 To review", test: (d, ready) => ready.has(d.id) },
   { id: "working", label: "⚙️ Working", test: (d) => d.worker?.status === "working" || d.worker?.status === "booting" },
-  { id: "free", label: "💤 Free", test: (d) => ["idle", "done", "asleep"].includes(d.worker?.status ?? "") && !d.worker?.report },
+  { id: "free", label: "💤 Free", test: (d, ready) => ["idle", "done", "asleep"].includes(d.worker?.status ?? "") && !ready.has(d.id) },
 ];
+
+/** The desks whose work is in your line, ready for you. */
+function readyDesks(office: OfficeState): Set<string> {
+  return new Set(office.presentations.filter((p) => p.report).map((p) => p.deskId));
+}
 
 /** Raw keys for whatever the CLI is asking: its numbered choices, Enter, and Esc to stop it. */
 const KEYS: { label: string; data: string; title: string }[] = [
@@ -131,13 +138,14 @@ export class MonitorView {
   /** The office or the goals changed: tiles come and go, headers update (typing is never disturbed). */
   refresh(): void {
     const staffed = monitorOrder(this.a.office().desks);
+    const ready = readyDesks(this.a.office());
     // Chips with counts.
     this.chips.innerHTML = FILTERS.map((f) => {
-      const n = staffed.filter(f.test).length;
+      const n = staffed.filter((d) => f.test(d, ready)).length;
       return `<button class="mon-chip ${f.id === this.filter ? "on" : ""} ${(f.id === "waiting" || f.id === "review") && n ? "hot" : ""}" data-filter="${f.id}">${f.label} <b>${n}</b></button>`;
     }).join("");
     const test = FILTERS.find((f) => f.id === this.filter)!.test;
-    let shown = staffed.filter(test);
+    let shown = staffed.filter((d) => test(d, ready));
     if (this.focused) shown = shown.filter((d) => d.id === this.focused);
     if (this.focused && !shown.length) this.focused = null;
 
@@ -269,8 +277,10 @@ export class MonitorView {
     const w = d.worker!;
     const task = currentTask(this.a.progress(), d.id);
     const doing = w.status === "working" && w.doing ? doingLabel(w.doing) : w.activity;
-    const report = this.a.office().presentations.find((p) => p.deskId === d.id)?.report ?? w.report;
-    const head = JSON.stringify([w.status, workerName(w), w.agent, w.model, d.label, task, doing, w.branch, report?.at, report?.check?.status]);
+    // Only work that has reached your line can be reviewed here (a report still with its auditor isn't yours yet).
+    const report = this.a.office().presentations.find((p) => p.deskId === d.id)?.report ?? null;
+    const auditing = !report && !!w.report;
+    const head = JSON.stringify([w.status, workerName(w), w.agent, w.model, d.label, task, doing, w.branch, report?.at, report?.check?.status, auditing]);
     if (head === t.head) return;
     t.head = head;
     t.el.classList.toggle("waiting", w.status === "waiting");
@@ -285,6 +295,10 @@ export class MonitorView {
     rv.classList.remove("sent");
     t.el.classList.toggle("ready", !!report);
     rv.innerHTML = report ? reviewHtml(report, this.a.canType()) : "";
+    if (auditing) {
+      rv.classList.remove("hidden");
+      rv.innerHTML = `<div class="mon-rv-head"><b>🔍 Being audited:</b> <span class="mon-rv-title">${esc(w.report!.title)}</span></div><p class="mon-rv-hint">A teammate is checking it first — it comes to you when they're done.</p>`;
+    }
   }
 
   /** Just this one, big, with its box ready to type in (N: the next one that needs you). */
@@ -337,7 +351,7 @@ function reviewHtml(r: Report, canReview: boolean): string {
   return `<div class="mon-rv-head"><b>${kind}:</b> <span class="mon-rv-title">${esc(r.title)}</span>${check}${acts}</div>
     ${r.question ? `<p class="mon-rv-q">❓ ${esc(r.question)}</p>` : ""}
     <p class="mon-rv-sum">${esc(r.summary)}</p>
-    ${r.slides.length ? `<ul class="mon-rv-slides">${r.slides.slice(0, 4).map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}
+    ${r.slides.length ? `<ul class="mon-rv-slides">${deckOf(r).slice(0, 7).map((x) => { const p = parseSlide(x); return `<li>${esc(p.heading || p.bullets[0] || "")}</li>`; }).join("")}</ul>` : ""}
     ${canReview ? `<p class="mon-rv-hint">A note in the box below goes with it · or hold office hours (O) to hear it presented</p>` : ""}`;
 }
 

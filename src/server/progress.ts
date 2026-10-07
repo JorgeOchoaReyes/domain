@@ -67,6 +67,15 @@ export class Progress {
   }
 
   /** What clients see. MCP secrets (env values, headers) never leave the server: they show as SECRET_MASK. */
+  /** A worker offered to take this task (null: the offer's settled): it waits for your answer. */
+  setOffered(goalId: string, taskId: string, deskId: string | null): boolean {
+    const t = this.goal(goalId)?.tasks.find((x) => x.id === taskId);
+    if (!t) return false;
+    t.offered = deskId;
+    this.changed();
+    return true;
+  }
+
   /** Save a waiting task for one worker (null: anyone). */
   reserve(goalId: string, taskId: string, deskId: string | null): boolean {
     const t = this.goal(goalId)?.tasks.find((x) => x.id === taskId);

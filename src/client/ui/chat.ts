@@ -1,5 +1,5 @@
 import { doingLabel } from "../../shared/protocol.js";
-import type { ChatPeek, ChatThread, ChatWork } from "../../shared/chat.js";
+import type { ChatMessage, ChatPeek, ChatThread, ChatWork } from "../../shared/chat.js";
 import { PEOPLE_THREAD, TEAM_THREAD } from "../../shared/chat.js";
 import type { ClientMessage, Desk } from "../../shared/protocol.js";
 import { AGENT_COLOR } from "../scene/characters.js";
@@ -17,6 +17,31 @@ import "../styles/chat.css";
 
 
 /** What "Ask for an update" says. */
+/** The buttons under a worker's "I'll take it" (or what you answered). */
+export function offerHtml(m: ChatMessage): string {
+  const o = m.offer;
+  if (!o) return "";
+  if (o.state === "taken") return `<div class="offer done">✅ You said yes</div>`;
+  if (o.state === "passed") return `<div class="offer done">🔁 Asked someone else</div>`;
+  if (o.state === "anyone") return `<div class="offer done">🙋 Left for whoever's free</div>`;
+  const first = m.who.split(" ")[0];
+  return `<div class="offer">
+    <button class="btn small primary" data-offer="${esc(o.taskId)}" data-answer="take">✅ Let ${esc(first)} take it</button>
+    <button class="btn small" data-offer="${esc(o.taskId)}" data-answer="next">🔁 Someone else</button>
+    <button class="btn small" data-offer="${esc(o.taskId)}" data-answer="anyone">Whoever's free</button>
+  </div>`;
+}
+
+/** Answer offers clicked inside this element. */
+export function wireOffers(el: HTMLElement, send: (m: ClientMessage) => void): void {
+  el.addEventListener("click", (e) => {
+    const b = (e.target as HTMLElement).closest<HTMLElement>("[data-offer]");
+    if (!b) return;
+    send({ t: "offerAnswer", taskId: b.dataset.offer!, answer: b.dataset.answer as "take" | "next" | "anyone" });
+    b.closest(".offer")?.classList.add("sent");
+  });
+}
+
 export const UPDATE_ASK = "Quick update, please: what are you on, how far along is it, and is anything blocking you? Two or three lines.";
 
 export interface ChatActions {
@@ -109,6 +134,7 @@ export class TeamChat {
     if (threadId) this.selected = threadId;
     const body = document.createElement("div");
     body.className = "chat";
+    wireOffers(body, (m) => this.actions.send(m));
     this.modal = openModal({
       title: "Team chat",
       icon: "💬",
@@ -305,6 +331,7 @@ export class TeamChat {
     return `<div class="ch-msg ${side}${m.raw ? " raw" : ""}">
       <div class="ch-msg-head"><b>${esc(m.who)}</b><span>${time}${m.raw ? " · typed in its terminal" : ""}</span></div>
       <div class="ch-msg-text">${m.raw ? `<code>${esc(m.text)}</code>` : esc(m.text)}</div>
+      ${offerHtml(m)}
     </div>`;
   }
 

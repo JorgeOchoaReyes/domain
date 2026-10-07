@@ -30,7 +30,10 @@ import {
 } from "../../shared/layout.js";
 import { Bot, Person } from "./characters.js";
 import { Laptop } from "./laptop.js";
-import { paintMonitorWall } from "./monitorwall.js";
+import { paintMonitorWall, stepCamera, type WallView } from "./monitorwall.js";
+
+/** How long each camera stays up when the monitor wall cycles. */
+const CCTV_CYCLE_MS = 8000;
 import { buildOffice, type Collider, type LiveBoard, type Office } from "./office.js";
 import { buildRooms, type Rooms } from "./rooms.js";
 import { buildGameRoom, type GameRoom } from "./gameroom.js";
@@ -375,6 +378,26 @@ export class World {
   /** Goes up whenever a worker's terminal shows something new (0 for no laptop). */
   terminalVersion(deskId: string): number {
     return this.laptops.get(deskId)?.version ?? 0;
+  }
+
+  /** What the monitor wall shows: all the cameras or one, which, cycling or not, and whether you're in its chair. */
+  readonly cctv: WallView = { mode: "grid", cam: null, cycle: false, seated: false };
+  private cctvNext = 0;
+
+  /** Change what the wall shows (and repaint it now). */
+  setCctv(change: Partial<WallView>): void {
+    Object.assign(this.cctv, change);
+    if (change.cycle) this.cctvNext = performance.now() + CCTV_CYCLE_MS;
+    this.markBoards("monitorWall");
+    const b = this.boards().find((x) => x.name === "monitorWall");
+    if (b) b.lastAt = 0;
+  }
+
+  /** The next (or previous) camera. */
+  stepCctv(by: number): string | null {
+    const cam = stepCamera(this.desks, this.cctv.cam, by);
+    this.setCctv({ cam });
+    return cam;
   }
 
   /** Whether you're standing at the monitor wall in your office. */
@@ -861,6 +884,13 @@ export class World {
       this.laptops.get(id)?.update(now, near);
     }
 
+    // The monitor wall cycles its cameras, and its clock ticks.
+    if (this.cctv.cycle && now >= this.cctvNext) {
+      this.cctvNext = now + CCTV_CYCLE_MS;
+      this.cctv.cam = stepCamera(this.desks, this.cctv.cam, 1);
+    }
+    this.markBoards("monitorWall");
+
     // The gong swings and settles.
     if (this.gongT > 0) {
       this.gongT = Math.max(0, this.gongT - dt);
@@ -917,8 +947,9 @@ export class World {
         name: "monitorWall",
         tex: this.office.monitorWall.texture,
         visible: () => onFloor() && here() === "office",
-        key: () => `${desksKey()}|${goalsKey()}|${this.desks.map((d) => this.terminalVersion(d.id)).join(",")}`,
-        paint: () => paintMonitorWall(this.office.monitorWall.canvas, this.desks, this.progress, (id, g, x, y, w, h) => this.paintTerminal(id, g, x, y, w, h)),
+        // The clock on it ticks, so it changes every second while you're there.
+        key: () => `${desksKey()}|${goalsKey()}|${this.desks.map((d) => this.terminalVersion(d.id)).join(",")}|${JSON.stringify(this.cctv)}|${Math.floor(Date.now() / 1000)}`,
+        paint: () => paintMonitorWall(this.office.monitorWall.canvas, this.desks, this.progress, (id, g, x, y, w, h) => this.paintTerminal(id, g, x, y, w, h), this.cctv),
         every: 1000,
       },
       { name: "workers", tex: b.workers.texture, visible: onFloor, key: desksKey, paint: () => paintWorkersBoard(b.workers.canvas, this.desks) },

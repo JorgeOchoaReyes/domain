@@ -208,7 +208,8 @@ export const PROPS = {
   radio: { x: LOBBY.desk.x + 0.15, z: 22.75, spot: { x: LOBBY.desk.x + 1.25, z: 22.75 } },
   lamp: { x: LOBBY.couch.x + 0.2, z: LOBBY.couch.z + 1.75, spot: { x: LOBBY.couch.x - 0.8, z: LOBBY.couch.z + 1.9 } },
   bear: { x: LOBBY.couch.x - 0.05, z: LOBBY.couch.z + 0.5, spot: { x: LOBBY.couch.x - 1.05, z: LOBBY.couch.z + 0.5 } },
-  bin: { x: 8.6, z: 9.6 },
+  // Your office's bin: by the south wall, clear of the monitor wall and your desk.
+  bin: { x: 9.4, z: 12.5 },
 } as const;
 
 /** The cat's rounds in the lobby: clear of the desk and the couch. */
@@ -395,7 +396,7 @@ export function buildProps(): Props {
       key: { x: c.x, y: 0.95, z: c.z },
     }));
     const db = dist(x, z, bn);
-    if (db > 0.7 && db < 3.4)
+    if (db > 0.7 && db < 2.6)
       spots.push({
         d: db + 0.5, // the bin's a long way off: anything close by comes first
         s: () => ({

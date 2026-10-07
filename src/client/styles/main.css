@@ -773,3 +773,12 @@ button.link { border: 0; background: none; color: var(--accent); font: inherit; 
 .su-row-x { border: 0; background: none; cursor: pointer; font-size: 14px; color: var(--muted); }
 .su-row-why { grid-column: 1 / -1; margin: -2px 0 2px 4px; font-size: 11px; font-weight: 700; color: var(--muted); }
 .su-row-why::before { content: "↳ "; }
+
+/* A real slide: heading, points, code */
+.rich-slide { justify-content: flex-start !important; gap: 14px; overflow: auto; }
+.rich-slide h2 { margin: 0; font-size: clamp(24px, 2.6vw, 38px); font-weight: 900; line-height: 1.15; }
+.rich-slide ul { margin: 0; padding-left: 1.1em; display: flex; flex-direction: column; gap: 8px; font-size: clamp(16px, 1.6vw, 22px); font-weight: 700; line-height: 1.35; }
+.rich-slide li::marker { color: var(--agent); }
+.rich-slide code { font: 600 .9em ui-monospace, Consolas, monospace; background: #f1ecff; border-radius: 6px; padding: 0 5px; }
+.rich-slide pre { margin: 0; padding: 12px 14px; background: #1e1f2e; color: #cdd6f4; border-radius: 12px; border: 3px solid var(--ink); overflow: auto; max-height: 40%; }
+.rich-slide pre code { background: none; padding: 0; color: inherit; font-size: clamp(12px, 1.1vw, 15px); }

@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { MAX_CHAT_MESSAGES, PEOPLE_THREAD, TEAM_THREAD, type ChatMessage, type ChatThread, type ChatWork } from "../shared/chat.js";
+import { MAX_CHAT_MESSAGES, PEOPLE_THREAD, TEAM_THREAD, pickVolunteer, type ChatMessage, type ChatThread, type ChatWork } from "../shared/chat.js";
 import { AGENT_LABELS } from "../shared/protocol.js";
 import type { Routes, ServerCtx } from "./ctx.js";
 import { plain } from "./ptyWorker.js";
@@ -33,6 +33,11 @@ export class ChatStore {
 
   get(key: string): ChatMessage[] {
     return this.threads.get(key)?.messages ?? [];
+  }
+
+  /** A message changed in place (an offer answered): save it. */
+  touch(): void {
+    this.save();
   }
 
   add(key: string, m: ChatMessage): void {
@@ -126,7 +131,75 @@ export function chatModule(ctx: ServerCtx, store = new ChatStore(join(ctx.cwd, "
     push();
   };
 
+  // --- "I'll take it" ---------------------------------------------------------------
+  /** What each worker is on (its open task's title). */
+  const onTask = () => {
+    const m = new Map<string, string>();
+    for (const g of ctx.progress.snapshot().goals) for (const t of g.tasks) if (t.deskId && t.status !== "done") m.set(t.deskId, t.title);
+    return m;
+  };
+  /** A task given to everyone: the best-placed worker offers to take it, in #team, and waits for your OK. */
+  ctx.offerTask = (goalId, taskId, title, skip = []) => {
+    const pick = pickVolunteer(desks(), onTask(), skip);
+    if (!pick) {
+      ctx.progress.setOffered(goalId, taskId, null);
+      store.add(TEAM_THREAD, { from: "agent", who: "Office", text: `${skip.length ? "Nobody else can" : "Nobody on the team can"} take “${title}” yet — it's waiting for the next one free${skip.length ? "" : " (or hire someone)"}.`, at: Date.now() });
+      push();
+      return;
+    }
+    ctx.progress.setOffered(goalId, taskId, pick.deskId);
+    const w = who(pick.deskId)!;
+    const text = pick.free ? `🙋 I'll take “${title}” — I'm free now.` : `🙋 I can take “${title}” right after I finish “${pick.after}”.`;
+    store.add(TEAM_THREAD, {
+      from: "agent",
+      who: w.name,
+      text,
+      at: Date.now(),
+      offer: { goalId, taskId, title, deskId: pick.deskId, free: pick.free, state: "open", asked: [...skip, pick.deskId] },
+    });
+    push();
+  };
+
   return {
+    // Your answer to "I'll take it".
+    offerAnswer: (msg, client) => {
+      const taskId = typeof msg.taskId === "string" ? msg.taskId : "";
+      const m = store.get(TEAM_THREAD).find((x) => x.offer?.taskId === taskId && x.offer.state === "open");
+      const o = m?.offer;
+      if (!m || !o) return;
+      const task = ctx.progress.snapshot().goals.find((g) => g.id === o.goalId)?.tasks.find((t) => t.id === taskId);
+      ctx.progress.setOffered(o.goalId, taskId, null);
+      if (!task || task.status !== "todo" || task.deskId) {
+        o.state = "anyone";
+        store.touch();
+        push();
+        return;
+      }
+      if (msg.answer === "next") {
+        o.state = "passed";
+        store.touch();
+        ctx.offerTask!(o.goalId, taskId, o.title, o.asked);
+        return;
+      }
+      if (msg.answer === "anyone") {
+        o.state = "anyone";
+        store.add(TEAM_THREAD, { from: "you", who: client.name, text: `“${o.title}” is up for whoever's free next.`, at: Date.now() });
+        push();
+        return;
+      }
+      o.state = "taken";
+      const w = who(o.deskId);
+      const free = !onTask().has(o.deskId) && ["idle", "done"].includes(desks().find((d) => d.id === o.deskId)?.worker?.status ?? "");
+      if (w && free && ctx.assignTask(client.name, o.goalId, taskId, o.deskId)) {
+        store.add(TEAM_THREAD, { from: "agent", who: w.name, text: "🚀 On it.", at: Date.now() });
+      } else if (w) {
+        // Busy: it's saved for them, and they pick it up the moment they're done.
+        ctx.progress.reserve(o.goalId, taskId, o.deskId);
+        store.add(TEAM_THREAD, { from: "agent", who: w.name, text: "👍 It's mine — I'll start as soon as I'm done with this one.", at: Date.now() });
+      }
+      store.touch();
+      push();
+    },
     chatGet: (_msg, _client, ws) => ctx.send(ws, { t: "chat", threads: threads() }),
     // The people here, among themselves: everyone sees it, no worker hears it, and it's not feedback to learn from.
     peopleSend: (msg, client) => {

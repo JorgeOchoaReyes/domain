@@ -136,7 +136,8 @@ export class Autopilot {
       // A task saved for someone (at the stand-up) waits for them while they're on the team.
       const staffed = new Set(this.d.desks().filter((d) => d.worker).map((d) => d.id));
       const savedFor = (t: Goal["tasks"][number]) => (t.for && staffed.has(t.for) ? t.for : null);
-      const todo = g.tasks.filter((t) => t.status === "todo" && !t.deskId);
+      // A task someone's offered to take waits for your answer.
+      const todo = g.tasks.filter((t) => t.status === "todo" && !t.deskId && !t.offered);
       // Saved tasks first, to their own worker; then the rest, to whoever's free.
       for (const t of [...todo.filter(savedFor), ...todo.filter((t) => !savedFor(t))]) {
         const mine = savedFor(t);

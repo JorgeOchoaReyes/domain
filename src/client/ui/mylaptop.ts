@@ -1,6 +1,6 @@
 import { copyAll, copyOnSelect } from "./termcopy.js";
 import { TEAM_THREAD, type ChatThread } from "../../shared/chat.js";
-import { UPDATE_ASK } from "./chat.js";
+import { UPDATE_ASK, offerHtml, wireOffers } from "./chat.js";
 import { micButton, wireMic } from "../voice.js";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -237,6 +237,7 @@ export class MyLaptop {
           </div>
         </div>
       </div>`;
+    wireOffers(this.content.querySelector<HTMLElement>(".tm-log")!, (m) => this.actions.send(m));
     const box = this.content.querySelector<HTMLTextAreaElement>(".tm-compose textarea")!;
     wireMic(this.content.querySelector<HTMLButtonElement>(".tm-mic"), box);
     box.addEventListener("keydown", (e) => {
@@ -255,7 +256,7 @@ export class MyLaptop {
     this.content.querySelector(".tm-say")!.addEventListener("click", say);
     this.content.querySelector(".tm-task")!.addEventListener("click", () => {
       if (!text()) return box.focus();
-      // To everyone: the first one who's free takes it (the office says who — or that it's waiting for the next).
+      // To everyone: whoever'd take it offers in #team, and you say yes (or ask someone else).
       this.actions.send({ t: "quickTask", deskId: this.teamTo === TEAM_THREAD ? "any" : this.teamTo, text: text() });
       box.value = "";
     });
@@ -296,7 +297,7 @@ export class MyLaptop {
     const t = this.threads.find((x) => x.id === this.teamTo);
     const msgs = (t?.messages ?? []).slice(-30);
     el.innerHTML = msgs.length
-      ? msgs.map((m) => `<div class="tm-m ${m.from}"><b>${esc(m.who)}</b> <span>${new Date(m.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span><p>${esc(m.text)}</p></div>`).join("")
+      ? msgs.map((m) => `<div class="tm-m ${m.from}"><b>${esc(m.who)}</b> <span>${new Date(m.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span><p>${esc(m.text)}</p>${offerHtml(m)}</div>`).join("")
       : `<p class="tm-none">${this.teamTo === TEAM_THREAD ? "Say something to everyone, or ask for an update." : "No messages yet — message it, give it a task, or ask how it's going."}</p>`;
     el.scrollTop = el.scrollHeight;
   }

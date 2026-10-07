@@ -56,6 +56,8 @@ export interface WorkerIdentity {
 }
 
 export const MAX_TEAM = 24;
+/** How long a character's instructions may be (long enough for a detailed working method). */
+export const MAX_PERSONA = 2000;
 
 function pick<T extends string>(v: unknown, list: readonly T[], fallback: T): T {
   return typeof v === "string" && (list as readonly string[]).includes(v) ? (v as T) : fallback;
@@ -84,7 +86,7 @@ export function coerceCharacter(raw: unknown): Character | null {
   const name = clean(o.name, 24);
   if (!name) return null;
   const agent = pick(o.agent, AGENT_KINDS, "claude");
-  const persona = typeof o.persona === "string" ? o.persona.replace(/\r/g, "").trim().slice(0, 600) : "";
+  const persona = typeof o.persona === "string" ? o.persona.replace(/\r/g, "").trim().slice(0, MAX_PERSONA) : "";
   return {
     id: typeof o.id === "string" && /^[A-Za-z0-9_-]{1,40}$/.test(o.id) ? o.id : Math.random().toString(36).slice(2, 10),
     name,
