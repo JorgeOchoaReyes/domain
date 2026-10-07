@@ -28,7 +28,7 @@ import {
   JUKEBOXES,
   GONG,
 } from "../shared/layout.js";
-import { UPSTAIRS, UP_ELEVATOR, WORK_SPOTS, inUpstairs, TEAM_FLOOR, TEAM_ELEVATOR, inTeamFloor, floorOf, type WorkSpot } from "../shared/layout.js";
+import { ALL_ARCADES, UPSTAIRS, UP_ELEVATOR, WORK_SPOTS, inUpstairs, TEAM_FLOOR, TEAM_ELEVATOR, inTeamFloor, floorOf, type WorkSpot } from "../shared/layout.js";
 import { Activities } from "./ui/activities.js";
 import { myLaptopProp } from "./scene/laptop.js";
 import { Net } from "./net.js";
@@ -1607,9 +1607,9 @@ function atHoopSpot(): boolean {
   const { x, z } = player.position;
   return Math.hypot(x - HOOP.spot.x, z - HOOP.spot.z) < 1.7;
 }
-function nearArcade(): (typeof ARCADES)[number] | null {
+function nearArcade(): (typeof ALL_ARCADES)[number] | null {
   const { x, z } = player.position;
-  return ARCADES.find((a) => {
+  return ALL_ARCADES.find((a) => {
     const s = arcadeSpot(a);
     return Math.hypot(x - s.x, z - s.z) < 0.85;
   }) ?? null;

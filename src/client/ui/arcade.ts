@@ -5,7 +5,8 @@ import { confetti, sound } from "./fx.js";
 import "../styles/arcade.css";
 
 /**
- * The game room's arcade cabinets: Snake, Bug Smash and Brick Breaker, each a
+ * The arcade cabinets: Snake, Bug Smash and Brick Breaker in the game room;
+ * Merge (2048) and Deploy Dash (fly through the CI gates) upstairs. Each a
  * small canvas game in a window. Scores are just for fun — they never turn
  * into XP — and the best one per cabinet is kept in this browser.
  */
@@ -41,7 +42,7 @@ function saveBest(id: ArcadeId, score: number): void {
 }
 
 /** One game: it steps, draws, and takes keys and pointer input while playing. */
-interface Game {
+export interface Game {
   readonly score: number;
   readonly over: boolean;
   /** Shown under the title on the start screen. */
@@ -58,6 +59,8 @@ const MAKERS: Record<ArcadeId, () => Game> = {
   snake: () => new Snake(),
   bugsmash: () => new BugSmash(),
   breakout: () => new Breakout(),
+  merge: () => new Merge(),
+  dash: () => new Dash(),
 };
 
 export function openArcade(id: ArcadeId, onDone: (score: number, best: number) => void): void {
@@ -839,4 +842,292 @@ class Breakout implements Game {
 /** Clamp the paddle offset to -1..1. */
 function clamp1(v: number): number {
   return Math.max(-1, Math.min(1, v));
+}
+
+// ---------------------------------------------------------------------------
+// Merge: slide the tiles, equal ones merge (2048, with commits).
+// ---------------------------------------------------------------------------
+
+const MERGE_N = 4;
+const MERGE_COLORS: Record<number, string> = {
+  2: "#3a3f6b", 4: "#4b4f8c", 8: "#06d6a0", 16: "#1fb98a", 32: "#5bc0eb", 64: "#3a86ff",
+  128: "#ffd166", 256: "#ffb703", 512: "#fb8500", 1024: "#ef476f", 2048: "#c77dff",
+};
+
+export class Merge implements Game {
+  score = 0;
+  over = false;
+  readonly help = "Arrows / WASD or swipe · equal tiles merge · reach 2048";
+  private grid: number[][] = Array.from({ length: MERGE_N }, () => Array(MERGE_N).fill(0));
+  private sparks = new Sparks();
+  private pops = new Pops();
+  private swipe: { x: number; y: number } | null = null;
+  /** Where each tile slid from, for a short slide animation. */
+  private bump = 0;
+
+  constructor(private rand: () => number = Math.random) {
+    this.spawn();
+    this.spawn();
+  }
+
+  /** A 2 (or now and then a 4) on a free square. */
+  private spawn(): void {
+    const free: [number, number][] = [];
+    for (let y = 0; y < MERGE_N; y++) for (let x = 0; x < MERGE_N; x++) if (!this.grid[y][x]) free.push([x, y]);
+    if (!free.length) return;
+    const [x, y] = free[Math.floor(this.rand() * free.length)];
+    this.grid[y][x] = this.rand() < 0.9 ? 2 : 4;
+  }
+
+  /** Slide everything one way; returns whether anything moved. */
+  slide(dx: number, dy: number): boolean {
+    let moved = false;
+    const N = MERGE_N;
+    for (let i = 0; i < N; i++) {
+      // The line, read from the edge it slides toward.
+      const cells: [number, number][] = [];
+      for (let j = 0; j < N; j++) {
+        const k = dx > 0 || dy > 0 ? N - 1 - j : j;
+        cells.push(dx !== 0 ? [k, i] : [i, k]);
+      }
+      const vals = cells.map(([x, y]) => this.grid[y][x]).filter(Boolean);
+      const out: number[] = [];
+      for (let j = 0; j < vals.length; j++) {
+        if (vals[j] === vals[j + 1]) {
+          const v = vals[j] * 2;
+          out.push(v);
+          this.score += v;
+          const [cx, cy] = cells[out.length - 1];
+          this.sparks.burst(BOARD_X + (cx + 0.5) * TILE, BOARD_Y + (cy + 0.5) * TILE, MERGE_COLORS[v] ?? "#ffffff", 10);
+          if (v >= 128) this.pops.add(BOARD_X + (cx + 0.5) * TILE, BOARD_Y + cy * TILE, `+${v}`, "#ffd166");
+          j++;
+        } else out.push(vals[j]);
+      }
+      cells.forEach(([x, y], j) => {
+        const v = out[j] ?? 0;
+        if (this.grid[y][x] !== v) moved = true;
+        this.grid[y][x] = v;
+      });
+    }
+    return moved;
+  }
+
+  private canMove(): boolean {
+    for (let y = 0; y < MERGE_N; y++)
+      for (let x = 0; x < MERGE_N; x++) {
+        const v = this.grid[y][x];
+        if (!v || this.grid[y][x + 1] === v || this.grid[y + 1]?.[x] === v) return true;
+      }
+    return false;
+  }
+
+  private go(dx: number, dy: number): void {
+    if (this.over || !this.slide(dx, dy)) return;
+    this.spawn();
+    this.bump = 0.12;
+    sound.click();
+    if (!this.canMove()) this.over = true;
+  }
+
+  key(code: string): void {
+    if (code === "ArrowUp" || code === "KeyW") this.go(0, -1);
+    else if (code === "ArrowDown" || code === "KeyS") this.go(0, 1);
+    else if (code === "ArrowLeft" || code === "KeyA") this.go(-1, 0);
+    else if (code === "ArrowRight" || code === "KeyD") this.go(1, 0);
+  }
+
+  pointer(x: number, y: number, down: boolean): void {
+    if (down) {
+      this.swipe = { x, y };
+      return;
+    }
+    if (!this.swipe) return;
+    const dx = x - this.swipe.x;
+    const dy = y - this.swipe.y;
+    if (Math.hypot(dx, dy) < 36) return;
+    this.swipe = null;
+    if (Math.abs(dx) > Math.abs(dy)) this.go(Math.sign(dx), 0);
+    else this.go(0, Math.sign(dy));
+  }
+
+  /** The board, for tests. */
+  get cells(): number[][] {
+    return this.grid.map((r) => [...r]);
+  }
+  set cells(g: number[][]) {
+    this.grid = g.map((r) => [...r]);
+  }
+
+  update(dt: number): void {
+    this.bump = Math.max(0, this.bump - dt);
+    this.sparks.update(dt);
+    this.pops.update(dt);
+  }
+
+  draw(g: CanvasRenderingContext2D): void {
+    g.fillStyle = "#0b0a1a";
+    g.fillRect(0, 0, W, H);
+    g.fillStyle = "#1c1a3a";
+    roundRect(g, BOARD_X - 8, BOARD_Y - 8, TILE * MERGE_N + 16, TILE * MERGE_N + 16, 16);
+    g.fill();
+    const s = 1 + this.bump * 0.4;
+    for (let y = 0; y < MERGE_N; y++)
+      for (let x = 0; x < MERGE_N; x++) {
+        const v = this.grid[y][x];
+        const px = BOARD_X + x * TILE + 5;
+        const py = BOARD_Y + y * TILE + 5;
+        const size = TILE - 10;
+        g.fillStyle = v ? (MERGE_COLORS[v] ?? "#ffffff") : "#25234a";
+        if (v) {
+          g.shadowColor = MERGE_COLORS[v] ?? "#ffffff";
+          g.shadowBlur = v >= 128 ? 18 : 6;
+        }
+        const grow = v ? (size * (s - 1)) / 2 : 0;
+        roundRect(g, px - grow, py - grow, size + grow * 2, size + grow * 2, 12);
+        g.fill();
+        g.shadowBlur = 0;
+        if (v) {
+          g.fillStyle = "#ffffff";
+          g.font = `900 ${v >= 1024 ? 30 : v >= 128 ? 36 : 42}px ${F}`;
+          g.textAlign = "center";
+          g.textBaseline = "middle";
+          g.fillText(String(v), px + size / 2, py + size / 2 + 2);
+        }
+      }
+    this.sparks.draw(g);
+    this.pops.draw(g);
+  }
+}
+
+const TILE = 100;
+const BOARD_X = (W - TILE * MERGE_N) / 2;
+const BOARD_Y = (H - TILE * MERGE_N) / 2 + 10;
+
+function roundRect(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
+  g.beginPath();
+  g.moveTo(x + r, y);
+  g.arcTo(x + w, y, x + w, y + h, r);
+  g.arcTo(x + w, y + h, x, y + h, r);
+  g.arcTo(x, y + h, x, y, r);
+  g.arcTo(x, y, x + w, y, r);
+  g.closePath();
+}
+
+// ---------------------------------------------------------------------------
+// Deploy Dash: fly your release through the CI gates (Flappy, with rockets).
+// ---------------------------------------------------------------------------
+
+export class Dash implements Game {
+  score = 0;
+  over = false;
+  readonly help = "Space / click / ↑ to fly · get through the CI gates";
+  private y = H / 2;
+  private vy = 0;
+  private gates: { x: number; gap: number; passed: boolean }[] = [];
+  private next = 0.6;
+  private t = 0;
+  private sparks = new Sparks();
+  private trail: { x: number; y: number; life: number }[] = [];
+  static readonly X = 120;
+  static readonly GAP = 150;
+  static readonly SPEED = 170;
+
+  constructor(private rand: () => number = Math.random) {}
+
+  private flap(): void {
+    if (this.over) return;
+    this.vy = -300;
+    sound.click();
+  }
+
+  key(code: string): void {
+    if (code === "Space" || code === "ArrowUp" || code === "KeyW" || code === "Enter") this.flap();
+  }
+
+  pointer(_x: number, _y: number, down: boolean): void {
+    if (down) this.flap();
+  }
+
+  update(dt: number): void {
+    this.t += dt;
+    this.sparks.update(dt);
+    for (const p of this.trail) p.life -= dt;
+    this.trail = this.trail.filter((p) => p.life > 0);
+    if (this.over) return;
+    this.vy += 900 * dt;
+    this.y += this.vy * dt;
+    this.trail.push({ x: Dash.X - 14, y: this.y + 4, life: 0.35 });
+    this.next -= dt;
+    if (this.next <= 0) {
+      this.next = 1.45;
+      this.gates.push({ x: W + 30, gap: 110 + this.rand() * (H - 220 - Dash.GAP), passed: false });
+    }
+    for (const g of this.gates) {
+      g.x -= Dash.SPEED * dt;
+      if (!g.passed && g.x + 30 < Dash.X) {
+        g.passed = true;
+        this.score++;
+        this.sparks.burst(Dash.X, this.y, "#06d6a0", 8);
+      }
+    }
+    this.gates = this.gates.filter((g) => g.x > -60);
+    // Hit a gate, the ground or the sky: the deploy fails.
+    const hit = this.gates.some((g) => Math.abs(g.x - Dash.X) < 30 + 14 && (this.y - 14 < g.gap || this.y + 14 > g.gap + Dash.GAP));
+    // The top is a soft ceiling (bump and fall); only a gate or the ground ends the run.
+    if (this.y < 16) {
+      this.y = 16;
+      this.vy = Math.max(0, this.vy);
+    }
+    if (hit || this.y > H - 20) {
+      this.over = true;
+      this.sparks.burst(Dash.X, this.y, "#ef476f", 24);
+    }
+  }
+
+  draw(g: CanvasRenderingContext2D): void {
+    g.fillStyle = "#0b0a1a";
+    g.fillRect(0, 0, W, H);
+    // Stars drifting by.
+    g.fillStyle = "#3a3769";
+    for (let i = 0; i < 40; i++) g.fillRect((i * 97 - this.t * 30 * (1 + (i % 3))) % W < 0 ? ((i * 97 - this.t * 30 * (1 + (i % 3))) % W) + W : (i * 97 - this.t * 30 * (1 + (i % 3))) % W, (i * 53) % H, 2, 2);
+    // The CI gates: green pipes with a check mark at the gap.
+    for (const gate of this.gates) {
+      g.fillStyle = "#1fb98a";
+      g.fillRect(gate.x - 30, 0, 60, gate.gap);
+      g.fillRect(gate.x - 30, gate.gap + Dash.GAP, 60, H - gate.gap - Dash.GAP);
+      g.fillStyle = "#06d6a0";
+      g.fillRect(gate.x - 36, gate.gap - 18, 72, 18);
+      g.fillRect(gate.x - 36, gate.gap + Dash.GAP, 72, 18);
+      g.fillStyle = "#0b0a1a";
+      g.font = `900 14px ${F}`;
+      g.textAlign = "center";
+      g.textBaseline = "middle";
+      g.fillText("CI ✓", gate.x, gate.gap - 9);
+    }
+    // The ground.
+    g.fillStyle = "#25234a";
+    g.fillRect(0, H - 20, W, 20);
+    // The rocket's trail and the rocket.
+    for (const p of this.trail) {
+      g.globalAlpha = p.life * 2;
+      g.fillStyle = "#ffd166";
+      g.fillRect(p.x - 3, p.y - 3, 6, 6);
+    }
+    g.globalAlpha = 1;
+    g.save();
+    g.translate(Dash.X, this.y);
+    g.rotate(Math.max(-0.6, Math.min(0.9, this.vy / 500)));
+    g.font = "34px serif";
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    g.fillText("🚀", 0, 0);
+    g.restore();
+    this.sparks.draw(g);
+    glowText(g, String(this.score), W / 2, 50, 40, "#ffffff");
+  }
+
+  /** For tests: where the rocket is and the gates. */
+  get state(): { y: number; gates: number } {
+    return { y: this.y, gates: this.gates.length };
+  }
 }

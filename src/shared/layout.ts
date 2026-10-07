@@ -543,15 +543,31 @@ export const LOBBY = {
 } as const;
 
 /** The arcade cabinets against the game room's south wall, screens facing north. */
-export type ArcadeId = "snake" | "bugsmash" | "breakout";
-export const ARCADES: readonly { id: ArcadeId; name: string; x: number; z: number; color: string }[] = [
-  { id: "snake", name: "Snake", x: 8.6, z: BUILDING.maxZ - 0.55, color: "#06d6a0" },
-  { id: "bugsmash", name: "Bug Smash", x: 10.4, z: BUILDING.maxZ - 0.55, color: "#ef476f" },
-  { id: "breakout", name: "Brick Breaker", x: 12.2, z: BUILDING.maxZ - 0.55, color: "#5bc0eb" },
+export type ArcadeId = "snake" | "bugsmash" | "breakout" | "merge" | "dash";
+/**
+ * The arcade cabinets: three in the game room (screens facing north), and
+ * more upstairs — in floor 2's lounge, against its bookcase, and in the team
+ * floor's break corner. `rotY` turns the cabinet (π: its screen faces -z).
+ */
+export const ARCADES: readonly { id: ArcadeId; name: string; x: number; z: number; color: string; rotY: number }[] = [
+  { id: "snake", name: "Snake", x: 8.6, z: BUILDING.maxZ - 0.55, color: "#06d6a0", rotY: Math.PI },
+  { id: "bugsmash", name: "Bug Smash", x: 10.4, z: BUILDING.maxZ - 0.55, color: "#ef476f", rotY: Math.PI },
+  { id: "breakout", name: "Brick Breaker", x: 12.2, z: BUILDING.maxZ - 0.55, color: "#5bc0eb", rotY: Math.PI },
+  { id: "merge", name: "Merge", x: 85.4, z: -8.2, color: "#c77dff", rotY: -Math.PI / 2 },
+  { id: "dash", name: "Deploy Dash", x: 85.4, z: -10.0, color: "#ffd166", rotY: -Math.PI / 2 },
 ];
-/** Where you stand to play a cabinet. */
-export function arcadeSpot(a: { x: number; z: number }): { x: number; z: number; facing: number } {
-  return { x: a.x, z: a.z - 1.15, facing: Math.PI };
+/** More of the same games, as cabinets of their own on the team floor (they share their best scores). */
+export const TEAM_ARCADES: readonly { id: ArcadeId; name: string; x: number; z: number; color: string; rotY: number }[] = [
+  { id: "merge", name: "Merge", x: 124.4, z: 12.9, color: "#c77dff", rotY: Math.PI },
+  { id: "dash", name: "Deploy Dash", x: 125.7, z: 12.9, color: "#ffd166", rotY: Math.PI },
+  { id: "snake", name: "Snake", x: 115.6, z: 12.9, color: "#06d6a0", rotY: Math.PI },
+];
+/** Every cabinet in the building, wherever it stands. */
+export const ALL_ARCADES = [...ARCADES, ...TEAM_ARCADES];
+/** Where you stand to play a cabinet: in front of its screen, facing it. */
+export function arcadeSpot(a: { x: number; z: number; rotY?: number }): { x: number; z: number; facing: number } {
+  const r = a.rotY ?? Math.PI;
+  return { x: a.x + Math.sin(r) * 1.15, z: a.z + Math.cos(r) * 1.15, facing: r };
 }
 /** The basketball hoop on the game room's east wall, and the free-throw spot. */
 export const HOOP = {

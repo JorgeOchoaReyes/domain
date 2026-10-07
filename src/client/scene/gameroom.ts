@@ -1,6 +1,5 @@
 import * as THREE from "three";
-import {
-  ARCADES,
+import { ALL_ARCADES, floorOf,
   BUILDING,
   GAME_MONITORS,
   HOOP,
@@ -25,6 +24,8 @@ import { box, INK, mesh, noOutline, roundedBox, textPlane, textSprite, toon } fr
 export interface GameRoom {
   group: THREE.Group;
   colliders: Collider[];
+  /** The cabinets upstairs (floor 2's lounge, the team floor's break corner): the world puts each group on its floor. */
+  upstairsCabinets: { 2: THREE.Group; 3: THREE.Group };
   /** Live screens on the west wall (facing +x) at GAME_MONITORS. The world paints workers/goals onto them. */
   monitors: { workers: LiveBoard; goals: LiveBoard };
   /** Repaint a cabinet's screen with its best score. */
@@ -109,12 +110,16 @@ export function buildGameRoom(): GameRoom {
 
   // --- arcade cabinets ---------------------------------------------------------
   const cabinets: Cabinet[] = [];
-  for (const a of ARCADES) {
+  const upstairsCabinets = { 2: new THREE.Group(), 3: new THREE.Group() } as const;
+  for (const a of ALL_ARCADES) {
     const { g, board } = cabinet(a.name, a.color);
     g.position.set(a.x, 0, a.z);
-    g.rotation.y = Math.PI;
-    add(g);
-    solid(a.x, a.z, 0.46, 0.45);
+    g.rotation.y = a.rotY;
+    const floor = floorOf(a.x);
+    if (floor === 1) add(g);
+    else upstairsCabinets[floor].add(g);
+    // Square enough for either way it faces.
+    solid(a.x, a.z, 0.46, 0.46);
     cabinets.push({ id: a.id, name: a.name, color: a.color, best: 0, board });
   }
 
@@ -285,12 +290,14 @@ export function buildGameRoom(): GameRoom {
     group,
     colliders,
     monitors,
+    upstairsCabinets,
     setBest(id, best) {
-      const c = cabinets.find((x) => x.id === id);
-      if (!c) return;
-      c.best = best;
-      paintCabinetScreen(c, performance.now());
-      c.board.texture.needsUpdate = true;
+      // Every cabinet with this game shows the same best.
+      for (const c of cabinets.filter((x) => x.id === id)) {
+        c.best = best;
+        paintCabinetScreen(c, performance.now());
+        c.board.texture.needsUpdate = true;
+      }
     },
     setDisco(on, pulse) {
       discoOn = on;
@@ -503,6 +510,31 @@ function paintCabinetScreen(c: Cabinet, now: number): void {
       g.fillText(i === 1 && Math.sin(t * 0.7) > 0.6 ? "🚀" : "🐛", x, 150 - up * 46);
       g.restore();
     }
+  } else if (c.id === "merge") {
+    // Tiles sliding together.
+    const vals = [2, 4, 8, 16, 32, 64, 128, 256];
+    const colors = ["#3a3f6b", "#4b4f8c", "#06d6a0", "#1fb98a", "#5bc0eb", "#3a86ff", "#ffd166", "#ffb703"];
+    for (let k = 0; k < 4; k++) {
+      const v = (Math.floor(t) + k) % vals.length;
+      const x = 40 + k * 64 + Math.sin(t * 3 + k) * 6;
+      g.fillStyle = colors[v];
+      g.fillRect(x, 70, 54, 54);
+      g.fillStyle = "#fff";
+      g.font = `900 22px ${F}`;
+      g.textAlign = "center";
+      g.textBaseline = "middle";
+      g.fillText(String(vals[v]), x + 27, 98);
+    }
+  } else if (c.id === "dash") {
+    // A rocket bobbing through the CI gates.
+    const gx = W - ((t * 90) % (W + 60));
+    g.fillStyle = "#1fb98a";
+    g.fillRect(gx, 0, 34, 60);
+    g.fillRect(gx, 150, 34, H - 150);
+    g.font = `34px serif`;
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    g.fillText("🚀", 90, 105 + Math.sin(t * 4) * 18);
   } else {
     const cols = 8;
     for (let r = 0; r < 4; r++)

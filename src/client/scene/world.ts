@@ -210,6 +210,9 @@ export class World {
     this.upstairs = buildUpstairs();
     this.teamFloor = buildTeamFloor();
     this.scene.add(this.teamFloor.group);
+    // The arcade cabinets upstairs live on their floors.
+    this.upstairs.group.add(this.gameRoom.upstairsCabinets[2]);
+    this.teamFloor.group.add(this.gameRoom.upstairsCabinets[3]);
     this.teamFloor.group.visible = false;
     // The team floor's desks were built with the rest: up they go.
     for (const id of TEAM_DESK_IDS) {
