@@ -1,3 +1,4 @@
+import { eodRecap } from "../../shared/standupDraft.js";
 import { SESSION_LENGTHS, XP, clock, goalProgress, sessionLength, type ProgressState, type SessionSummary } from "../../shared/progress.js";
 import { confetti, sound } from "./fx.js";
 import { esc, openModal } from "./modal.js";
@@ -122,7 +123,29 @@ export function showSessionSummary(s: SessionSummary): void {
           <div><b>${s.reviews}</b><span>reviews</span></div>
           <div><b>+${s.xp}</b><span>XP earned</span></div>
         </div>
+        ${recapHtml(s)}
       </div>`,
-    footer: `<span class="grow">Take a short break, then go again 💪</span>`,
+    footer: `<span class="grow">${s.open?.length ? "What's open carries over: Resume yesterday at the next stand-up picks it up" : "Take a short break, then go again 💪"}</span>`,
   });
+  // The end-of-day recap, out loud.
+  if (s.eod?.length || s.done?.length || s.open?.length) onRecap?.(eodRecap(s.eod ?? [], s.done ?? [], s.open ?? []));
+}
+
+let onRecap: ((text: string) => void) | null = null;
+/** Hear the end-of-day recap (to read it aloud). */
+export function listenForRecap(fn: (text: string) => void): void {
+  onRecap = fn;
+}
+
+function recapHtml(s: SessionSummary): string {
+  const eod = s.eod ?? [];
+  const done = s.done ?? [];
+  const open = s.open ?? [];
+  if (!eod.length && !done.length && !open.length) return "";
+  const list = (xs: string[], icon: string) => xs.map((x) => `<li>${icon} ${esc(x)}</li>`).join("");
+  return `<div class="recap">
+    ${eod.length ? `<h4>🌙 Your end-of-day goals</h4><ul>${list(eod, "•")}</ul>` : ""}
+    ${done.length ? `<h4>Done</h4><ul>${list(done, "✅")}</ul>` : ""}
+    ${open.length ? `<h4>Still open — carried to tomorrow</h4><ul>${list(open, "⏳")}</ul>` : ""}
+  </div>`;
 }

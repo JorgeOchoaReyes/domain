@@ -19,6 +19,7 @@ import {
   type GoalTask,
   type ShipState,
   type ToneId,
+  type LastPlan,
   type PlayerStats,
   type ProgressState,
   type Session,
@@ -66,6 +67,23 @@ export class Progress {
   }
 
   /** What clients see. MCP secrets (env values, headers) never leave the server: they show as SECRET_MASK. */
+  /** Save a waiting task for one worker (null: anyone). */
+  reserve(goalId: string, taskId: string, deskId: string | null): boolean {
+    const t = this.goal(goalId)?.tasks.find((x) => x.id === taskId);
+    if (!t || t.status === "done") return false;
+    t.for = deskId;
+    this.changed();
+    return true;
+  }
+
+  /** The last stand-up's plan, its goal dropped if that's gone or finished. */
+  get lastPlan(): LastPlan | null {
+    const p = this.state.lastPlan;
+    if (!p) return null;
+    const g = p.goalId ? this.goal(p.goalId) : undefined;
+    return { ...p, goalId: g && !g.doneAt && !g.shippedAt ? g.id : null };
+  }
+
   snapshot(): ProgressState {
     const s = structuredClone(this.state);
     for (const m of s.mcp) for (const k of Object.keys(m.env)) m.env[k] = SECRET_MASK;
@@ -262,12 +280,27 @@ export class Progress {
    */
   standup(
     who: string,
-    opts: { goalId: string | null; newGoal?: { title: string; why: string; tasks: string[]; kind: GoalKind; dueAt?: number | null }; tone: ToneId; intention: string; minutes: number },
+    opts: {
+      goalId: string | null;
+      newGoal?: { title: string; why: string; tasks: string[]; kind: GoalKind; dueAt?: number | null };
+      tone: ToneId;
+      intention: string;
+      minutes: number;
+      summary?: string;
+      eod?: string[];
+    },
   ): { goal: Goal | null; started: boolean } {
     let goal: Goal | null = opts.goalId ? (this.goal(opts.goalId) ?? null) : null;
     if (opts.newGoal) goal = this.createGoal(who, opts.newGoal.title, opts.newGoal.why, opts.newGoal.tasks, opts.newGoal.kind, opts.newGoal.dueAt ?? null) ?? goal;
     const intention = clean(opts.intention, 200);
+    const summary = clean(opts.summary, 600);
+    const eod = (opts.eod ?? []).map((e) => clean(e, 200)).filter(Boolean).slice(0, 6);
     const started = this.startSession(who, opts.minutes, goal?.id ?? null, opts.tone, intention);
+    if (started && this.state.session) {
+      if (summary) this.state.session.summary = summary;
+      if (eod.length) this.state.session.eod = eod;
+    }
+    this.state.lastPlan = { goalId: goal?.id ?? null, tone: opts.tone, minutes: opts.minutes, intention, summary, eod, at: Date.now() };
     const what = goal ? goal.title : "no particular goal";
     this.feed(who, `held the stand-up: ${what}${intention ? ` — “${intention}”` : ""}`, XP.standup);
     this.award(who, XP.standup, "Held the stand-up");
@@ -565,7 +598,19 @@ export class Progress {
     } else {
       this.feed(s.startedBy, "ended the focus session early", 0);
     }
-    this.onSessionEnd?.({ minutes: s.minutes, goalTitle: goal?.title ?? null, tasksDone: s.tasksDone, reviews: s.reviews, xp, completed });
+    // The end-of-day recap: the stand-up's goals, and the session goal's tasks done and still open.
+    const tasks = (goal?.tasks ?? []).filter((t) => !t.title.startsWith("Final review:"));
+    this.onSessionEnd?.({
+      minutes: s.minutes,
+      goalTitle: goal?.title ?? null,
+      tasksDone: s.tasksDone,
+      reviews: s.reviews,
+      xp,
+      completed,
+      eod: s.eod ?? [],
+      done: tasks.filter((t) => t.status === "done").map((t) => t.title),
+      open: tasks.filter((t) => t.status !== "done").map((t) => t.title),
+    });
     this.changed();
   }
 
@@ -687,6 +732,7 @@ export class Progress {
             : null,
         players: Array.isArray(raw.players) ? raw.players : [],
         feed: Array.isArray(raw.feed) ? raw.feed.slice(0, FEED_LEN) : [],
+        lastPlan: raw.lastPlan && typeof raw.lastPlan === "object" && typeof raw.lastPlan.minutes === "number" ? raw.lastPlan : null,
       };
       // Workers don't survive a restart, so nobody is on a task any more.
       for (const g of this.state.goals) for (const t of g.tasks) if (t.status !== "done") Object.assign(t, { deskId: null, status: "todo", run: null });

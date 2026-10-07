@@ -1,6 +1,6 @@
 import type { AgentKind, Desk, Presentation } from "../shared/protocol.js";
 import type { Goal } from "../shared/progress.js";
-import type { Leash, TaskBrief, TeamPolicy } from "../shared/policy.js";
+import { GREEN_MAX_LINES, type Leash, type TaskBrief, type TeamPolicy } from "../shared/policy.js";
 
 /**
  * Autopilot: the office runs itself. Goals without tasks get planned; free
@@ -13,6 +13,10 @@ import type { Leash, TaskBrief, TeamPolicy } from "../shared/policy.js";
  * they go home when there's nothing left for them. Questions, plans and
  * anything an audit couldn't settle still come to you. At the end of the day
  * it runs the sync.
+ *
+ * Two things run even with autopilot off, when the policy says so: free
+ * workers keep picking up the session goal's next tasks (keepBusy), and small
+ * work whose checks passed is approved without you (approveGreen).
  */
 
 export const FINAL_REVIEW = "Final review:";
@@ -40,6 +44,10 @@ export interface AutopilotDeps {
   internDesks(): string[];
   eod(): void;
   note(text: string, deskId?: string): void;
+  /** The goal of the focus session running now (chosen at the stand-up), if any. */
+  sessionGoal?(): string | null;
+  /** How many lines a worker's work adds and removes, against your branch (null: can't tell). */
+  diffLines?(deskId: string): number | null;
   now?(): number;
 }
 
@@ -71,7 +79,13 @@ export class Autopilot {
     // Interns can be asked for whether or not autopilot's on (the policy says whether they're allowed).
     this.takeInternRequests(policy);
     this.sendInternsHome();
-    if (!policy.autopilot.on) return;
+    if (policy.autopilot.approveGreen) this.approveGreen();
+    if (!policy.autopilot.on) {
+      // Off: free workers still keep going on the session's goal.
+      const goal = this.d.sessionGoal?.() ?? null;
+      if (policy.autopilot.keepBusy && goal) this.handOut(goal);
+      return;
+    }
     this.approveAudited(policy);
     this.handOut();
     this.wrapUp();
@@ -95,9 +109,17 @@ export class Autopilot {
       .sort((a, b) => (a.dueAt ?? Infinity) - (b.dueAt ?? Infinity) || a.createdAt - b.createdAt);
   }
 
-  private handOut(): void {
+  /** Hand a goal's waiting tasks to whoever's free, now (after the stand-up). Returns how many went out. */
+  dispatch(goalId: string): number {
+    const before = this.free().length;
+    this.handOut(goalId);
+    return before - this.free().length;
+  }
+
+  /** Free workers get the next tasks: of every open goal, or just one. */
+  private handOut(only?: string): void {
     const free = this.free().filter((d) => !this.interns.has(d));
-    for (const g of this.openGoals()) {
+    for (const g of this.openGoals().filter((g) => !only || g.id === only)) {
       if (!free.length) return;
       // A group's goal goes to its members only.
       const pool = g.group?.length ? free.filter((d) => g.group!.includes(d)) : free;
@@ -111,9 +133,18 @@ export class Autopilot {
         }
         continue;
       }
-      for (const t of g.tasks.filter((t) => t.status === "todo" && !t.deskId)) {
-        const who = pool.find((d) => free.includes(d));
-        if (!who) break;
+      // A task saved for someone (at the stand-up) waits for them while they're on the team.
+      const staffed = new Set(this.d.desks().filter((d) => d.worker).map((d) => d.id));
+      const savedFor = (t: Goal["tasks"][number]) => (t.for && staffed.has(t.for) ? t.for : null);
+      const todo = g.tasks.filter((t) => t.status === "todo" && !t.deskId);
+      // Saved tasks first, to their own worker; then the rest, to whoever's free.
+      for (const t of [...todo.filter(savedFor), ...todo.filter((t) => !savedFor(t))]) {
+        const mine = savedFor(t);
+        const who = mine ? (free.includes(mine) && pool.includes(mine) ? mine : undefined) : pool.find((d) => free.includes(d));
+        if (!who) {
+          if (mine) continue;
+          break;
+        }
         free.splice(free.indexOf(who), 1);
         const auditor = this.auditorFor(who, free);
         this.d.assign(g.id, t.id, who, auditor ? { auditor, auditWhen: "end" } : {});
@@ -134,6 +165,19 @@ export class Autopilot {
       if (!audited) continue;
       this.d.approve(p.deskId);
       this.d.note(`Autopilot approved “${r.title}” (checks passed, audit approved)`, p.deskId);
+    }
+  }
+
+  /** Small work that passed its checks needs no more from you: it merges, and you hear about it. */
+  private approveGreen(): void {
+    for (const p of this.d.line()) {
+      const r = p.report;
+      if (!r || r.status !== "ready" || r.check?.status !== "pass") continue;
+      if (/^\s*Final review/i.test(r.title) || this.isFinalReview(p.deskId)) continue;
+      const lines = this.d.diffLines?.(p.deskId) ?? null;
+      if (lines === null || lines > GREEN_MAX_LINES) continue;
+      this.d.approve(p.deskId);
+      this.d.note(`Approved “${r.title}” on green: checks passed, ${lines} line${lines === 1 ? "" : "s"} changed`, p.deskId);
     }
   }
 

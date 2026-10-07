@@ -74,3 +74,6 @@ button.ph-card { cursor: pointer; }
 .ph-quick button { border: 2px solid var(--ink); border-radius: 12px; background: #fff; font: 800 11px var(--font); padding: 6px 2px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 2px; color: var(--ink); }
 .ph-quick button span { font-size: 18px; }
 .ph-quick button i { font-style: normal; background: #ef476f; color: #fff; border-radius: 8px; padding: 0 5px; }
+.ph-rv-note { margin-top: 4px; font: 600 12px var(--font); border: 2px solid #eadfce; border-radius: 10px; padding: 5px 8px; outline: none; }
+.ph-rv-note:focus { border-color: var(--accent); }
+.ph-card.done { opacity: .45; pointer-events: none; }

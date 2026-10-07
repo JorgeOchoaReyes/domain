@@ -15,6 +15,7 @@ import {
   IDEA_BOARDS,
   type IdeaBoardId,
   REVIEW_SPOT,
+  MONITOR_WALL,
   WALL_HEIGHT,
   WORLD_BOUNDS,
   cameraOccluders,
@@ -29,6 +30,7 @@ import {
 } from "../../shared/layout.js";
 import { Bot, Person } from "./characters.js";
 import { Laptop } from "./laptop.js";
+import { paintMonitorWall } from "./monitorwall.js";
 import { buildOffice, type Collider, type LiveBoard, type Office } from "./office.js";
 import { buildRooms, type Rooms } from "./rooms.js";
 import { buildGameRoom, type GameRoom } from "./gameroom.js";
@@ -357,6 +359,27 @@ export class World {
     if (!laptop) return;
     if (fresh) laptop.reset();
     laptop.write(data);
+    this.markBoards("monitorWall");
+  }
+
+  /** A worker's terminal was resized: its laptop follows, so lines wrap as they do there. */
+  resizeTerminal(deskId: string, cols: number, rows: number): void {
+    this.laptops.get(deskId)?.resize(cols, rows);
+  }
+
+  /** Draw a worker's live terminal into a box on any canvas (the Agent monitor's tiles). */
+  paintTerminal(deskId: string, g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number): void {
+    this.laptops.get(deskId)?.paintInto(g, x, y, w, h);
+  }
+
+  /** Goes up whenever a worker's terminal shows something new (0 for no laptop). */
+  terminalVersion(deskId: string): number {
+    return this.laptops.get(deskId)?.version ?? 0;
+  }
+
+  /** Whether you're standing at the monitor wall in your office. */
+  nearMonitorWall(x: number, z: number): boolean {
+    return inMyOffice({ x, z }) && Math.hypot(x - MONITOR_WALL.spot.x, z - MONITOR_WALL.spot.z) < MONITOR_WALL.r;
   }
 
   /** Goals and the focus session changed: repaint the Goals board (and the TV). */
@@ -875,7 +898,7 @@ export class World {
   // when what it shows has changed, only while you can see it, and at most one
   // a frame.
 
-  private boardList: { name: string; tex: THREE.Texture; visible: () => boolean; key: () => string; paint: () => void; dirty: boolean; lastKey: string; lastAt: number }[] | null = null;
+  private boardList: { name: string; tex: THREE.Texture; visible: () => boolean; key: () => string; paint: () => void; every?: number; dirty: boolean; lastKey: string; lastAt: number }[] | null = null;
 
   private boards() {
     if (this.boardList) return this.boardList;
@@ -888,7 +911,16 @@ export class World {
     const current = () => this.line.find((l) => l.deskId === this.presenting) ?? null;
     const desksKey = () => JSON.stringify(this.desks);
     const goalsKey = () => JSON.stringify(this.progress?.goals ?? null) + JSON.stringify(session());
-    const list = [
+    const list: { name: string; tex: THREE.Texture; visible: () => boolean; key: () => string; paint: () => void; every?: number }[] = [
+      {
+        // Every terminal on one big screen: only while you're in your office, about once a second.
+        name: "monitorWall",
+        tex: this.office.monitorWall.texture,
+        visible: () => onFloor() && here() === "office",
+        key: () => `${desksKey()}|${goalsKey()}|${this.desks.map((d) => this.terminalVersion(d.id)).join(",")}`,
+        paint: () => paintMonitorWall(this.office.monitorWall.canvas, this.desks, this.progress, (id, g, x, y, w, h) => this.paintTerminal(id, g, x, y, w, h)),
+        every: 1000,
+      },
       { name: "workers", tex: b.workers.texture, visible: onFloor, key: desksKey, paint: () => paintWorkersBoard(b.workers.canvas, this.desks) },
       { name: "line", tex: b.line.texture, visible: onFloor, key: () => JSON.stringify(this.line), paint: () => paintLineBoard(b.line.canvas, this.line) },
       { name: "goals", tex: b.goals.texture, visible: onFloor, key: goalsKey, paint: () => this.progress && paintGoalsBoard(b.goals.canvas, this.progress) },
@@ -926,7 +958,7 @@ export class World {
   /** Repaint one board that changed and that you can see (the rest wait their turn). */
   private paintABoard(now: number): void {
     for (const b of this.boards()) {
-      if (!b.dirty || now - b.lastAt < 250 || !b.visible()) continue;
+      if (!b.dirty || now - b.lastAt < (b.every ?? 250) || !b.visible()) continue;
       b.dirty = false;
       const key = b.key();
       if (key === b.lastKey) continue;

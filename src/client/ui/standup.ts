@@ -12,6 +12,8 @@ import {
   type ToneId, sessionLength } from "../../shared/progress.js";
 import { AGENT_COLOR, STATUS_BULB } from "../scene/characters.js";
 import { esc, openModal } from "./modal.js";
+import { micButton, wireMic } from "../voice.js";
+import { simpleDraft, type StandupDraft, type TeamMember } from "../../shared/standupDraft.js";
 
 /**
  * The stand-up that opens every session. On the left, where things stand:
@@ -20,6 +22,14 @@ import { esc, openModal } from "./modal.js";
  * set) today's goal, choose its tone, say what would make it a win, and pick
  * a length. "Start the day" kicks off a focus session with all of that. If a
  * session is already on, it shows you the plan and lets you join in.
+ *
+ * Or just say it: 🎤 at the top takes what you want done, out loud, and
+ * Claude outlines the plan like a team lead — the summary (read back to you),
+ * end-of-day goals, the tasks, and who on your team should take each one and
+ * why. You change any of it (the tasks, who gets them) and start the day:
+ * each task goes to its worker — straight away if they're free, as soon as
+ * they are if not. "Resume yesterday" skips all of it: same goal, tone and
+ * length, team woken.
  */
 
 export interface StandupPlan {
@@ -28,6 +38,30 @@ export interface StandupPlan {
   tone: ToneId;
   intention: string;
   minutes: number;
+  summary?: string;
+  eod?: string[];
+  /** Hand the goal's tasks to free workers as soon as it starts. */
+  dispatch?: boolean;
+  /** The tasks as planned, and who takes each ("" = whoever's free). */
+  assign?: { task: string; deskId: string }[];
+}
+
+/** What the stand-up needs for the spoken plan and for resuming. */
+export interface StandupVoice {
+  /** Turn what you said into a plan (the answer comes back through standupDraftArrived). */
+  draft(text: string): void;
+  /** Say the summary out loud. */
+  speak(text: string): void;
+  /** Resume the last stand-up's plan. */
+  resume(): void;
+}
+
+/** The open stand-up, waiting for its spoken plan. */
+let fillDraft: ((draft: StandupDraft, via: "claude" | "simple") => void) | null = null;
+
+/** The plan for a spoken stand-up came back: fill it into the open stand-up. */
+export function standupDraftArrived(draft: StandupDraft, via: "claude" | "simple"): void {
+  fillDraft?.(draft, via);
 }
 
 const STAGE_LABEL: Record<LoopStage, [string, string]> = {
@@ -61,6 +95,7 @@ export function openStandup(
   myName: string,
   onStart: (plan: StandupPlan) => void,
   onSkip: () => void,
+  voice?: StandupVoice,
 ): void {
   const session = progress.session;
   const open = progress.goals.filter((g) => !g.doneAt);
@@ -110,6 +145,8 @@ export function openStandup(
             <h3>${esc(tone?.label ?? "Focus session")}</h3>
             ${session.intention ? `<p class="su-quote">“${esc(session.intention)}”</p>` : ""}
             ${goal ? `<p class="su-goal">🎯 ${esc(goal.title)} · ${stageLabel(goalStage(goal), goal.kind)}</p>` : ""}
+            ${session.summary ? `<p class="su-summary">${esc(session.summary)}</p>` : ""}
+            ${session.eod?.length ? `<div class="su-eod-list"><b>🌙 Done by end of day</b><ul>${session.eod.map((e) => `<li>${esc(e)}</li>`).join("")}</ul></div>` : ""}
           </div>
         </div>
       </section>`;
@@ -131,6 +168,25 @@ export function openStandup(
       <h3>📣 Since last time</h3><ul class="su-list">${sinceHtml}</ul>
     </section>
     <section class="su-col su-plan">
+      ${
+        voice
+          ? `<div class="su-voice">
+        <div class="su-voice-head"><b>🎤 Say your stand-up</b><span>What you want done today and what done looks like by tonight — it fills in everything below.</span></div>
+        <div class="su-voice-box"><textarea class="su-said" rows="3" placeholder="e.g. Today I want dark mode shipped and the login bug fixed. By end of day the PR should be open. About three hours."></textarea>${micButton("su-mic")}</div>
+        <div class="su-voice-acts"><button class="btn small primary su-make">✨ Make my plan</button><span class="su-voice-status"></span></div>
+        <div class="su-drafted hidden">
+          <p class="su-summary"></p>
+          <label class="su-eod-label">🌙 Done by end of day <span>(one per line)</span></label>
+          <textarea class="su-eod" rows="2"></textarea>
+          <div class="su-who">
+            <label class="su-eod-label">👥 Who does what <span>— Claude's picks; change any</span></label>
+            <div class="su-rows"></div>
+            <button type="button" class="btn small su-add">＋ Add a task</button>
+          </div>
+        </div>
+      </div>`
+          : ""
+      }
       <div class="su-step"><span class="su-n">1</span><h3>Today's goal</h3></div>
       <div class="su-goals">
         ${open.map((g) => `<button class="su-goal-pick" data-g="${g.id}"><b>${esc(g.title)}</b><span>${stageLabel(goalStage(g), g.kind)}</span></button>`).join("")}
@@ -161,7 +217,12 @@ export function openStandup(
 
   const footer = document.createElement("div");
   footer.style.display = "contents";
-  footer.innerHTML = `<button class="btn skip">Skip stand-up</button><span class="grow">+${XP.standup} XP for the stand-up · the session pays ${XP.sessionMinute} XP a minute when it finishes</span><button class="btn primary go">🔔 Start the day</button>`;
+  const last = progress.lastPlan;
+  const lastGoal = last?.goalId ? progress.goals.find((g) => g.id === last.goalId && !g.doneAt && !g.shippedAt) : undefined;
+  const canResume = !!voice && !!last && (!!lastGoal || !!last.intention || !!last.eod.length);
+  footer.innerHTML = `<button class="btn skip">Skip stand-up</button>${
+    canResume ? `<button class="btn su-resume" title="Same goal, tone and length as last time; the team wakes and the open tasks go out">↺ Resume yesterday${lastGoal ? `: ${esc(lastGoal.title.slice(0, 40))}` : ""}</button>` : ""
+  }<label class="su-dispatch" title="The goal's tasks go to free workers the moment the day starts (a goal without tasks gets planned first)"><input type="checkbox" class="su-dispatch-on" checked /> 🚀 Hand out tasks</label><span class="grow">+${XP.standup} XP for the stand-up · the session pays ${XP.sessionMinute} XP a minute</span><button class="btn primary go">🔔 Start the day</button>`;
 
   let started = false;
   const modal = openModal({
@@ -171,6 +232,7 @@ export function openStandup(
     body,
     footer,
     onClose: () => {
+      fillDraft = null;
       if (!started) onSkip();
     },
   });
@@ -230,6 +292,126 @@ export function openStandup(
     }),
   );
 
+  // --- the spoken stand-up -------------------------------------------------------
+  let drafted: { summary: string } | null = null;
+  const eodBox = body.querySelector<HTMLTextAreaElement>(".su-eod");
+  const eodLines = () => (eodBox?.value ?? "").split("\n").map((x) => x.trim()).filter(Boolean);
+  // The team as the quick plan sees it (Claude's plan gets more from the server).
+  const teamNow = (): TeamMember[] =>
+    staffed.map((d) => {
+      const w = d.worker!;
+      const on = progress.goals.flatMap((g) => g.tasks).find((t) => t.deskId === d.id && t.status !== "done");
+      return { deskId: d.id, name: w.identity?.name ?? AGENT_LABELS[w.agent], agent: AGENT_LABELS[w.agent], model: w.model, status: w.status, doing: on?.title ?? "", persona: "", done: [] };
+    });
+  // Who does what: a row per task, with who takes it and why.
+  const rowsEl = body.querySelector<HTMLElement>(".su-rows");
+  const people = staffed.map((d) => {
+    const w = d.worker!;
+    return { id: d.id, label: `${w.identity?.name ?? AGENT_LABELS[w.agent]} · ${d.label}${w.status === "idle" ? "" : w.status === "asleep" ? " (asleep)" : " (busy)"}` };
+  });
+  const rowHtml = (task: string, deskId: string | null, why: string) => `
+    <div class="su-row">
+      <input type="text" class="su-row-task" maxlength="200" value="${esc(task)}" placeholder="A task" />
+      <select class="su-row-who">
+        <option value="">🙋 Whoever's free</option>
+        ${people.map((p) => `<option value="${p.id}" ${p.id === deskId ? "selected" : ""}>${esc(p.label)}</option>`).join("")}
+      </select>
+      <button type="button" class="su-row-x" title="Drop this task">✕</button>
+      ${why ? `<span class="su-row-why">${esc(why)}</span>` : ""}
+    </div>`;
+  const readRows = () =>
+    [...(rowsEl?.querySelectorAll<HTMLElement>(".su-row") ?? [])]
+      .map((r) => ({ task: r.querySelector<HTMLInputElement>(".su-row-task")!.value.trim(), deskId: r.querySelector<HTMLSelectElement>(".su-row-who")!.value }))
+      .filter((r) => r.task);
+  rowsEl?.addEventListener("click", (e) => (e.target as HTMLElement).closest(".su-row-x")?.closest(".su-row")?.remove());
+  rowsEl?.addEventListener("keydown", (e) => e.key !== "Escape" && e.stopPropagation());
+  // Changing who does what by hand drops Claude's reason for it.
+  rowsEl?.addEventListener("change", (e) => (e.target as HTMLElement).closest(".su-row")?.querySelector(".su-row-why")?.remove());
+  body.querySelector(".su-add")?.addEventListener("click", () => {
+    rowsEl!.insertAdjacentHTML("beforeend", rowHtml("", null, ""));
+    rowsEl!.querySelector<HTMLInputElement>(".su-row:last-child .su-row-task")?.focus();
+  });
+  if (voice) {
+    const said = $<HTMLTextAreaElement>(".su-said");
+    const status = $(".su-voice-status");
+    const make = $<HTMLButtonElement>(".su-make");
+    for (const el of [said, eodBox!]) el.addEventListener("keydown", (e) => (e as KeyboardEvent).key !== "Escape" && e.stopPropagation());
+    wireMic(body.querySelector<HTMLButtonElement>(".su-mic"), said);
+    // The plan from your own sentences shows at once; Claude's (a better one) replaces it when it
+    // arrives — unless you've started changing things, then it waits for you to take it.
+    let asked = 0;
+    let touched = false;
+    const apply = (d: StandupDraft) => {
+      drafted = { summary: d.summary };
+      $(".su-drafted").classList.remove("hidden");
+      $(".su-summary").textContent = d.summary;
+      eodBox!.value = d.eod.join("\n");
+      // The list below is the task list now (no second one to keep in step).
+      tasks.classList.add("hidden");
+      rowsEl!.innerHTML = (d.assign.length ? d.assign : d.goal.tasks.map((task) => ({ task, deskId: null, why: "" }))).map((a) => rowHtml(a.task, a.deskId, a.why)).join("");
+      // The plan goes into the form: a new goal with its tasks (or the open one it's about), the tone, the length, the win.
+      const existing = open.find((g) => g.title.toLowerCase() === d.goal.title.toLowerCase());
+      if (existing) goalChoice = existing.id;
+      else {
+        goalChoice = "new";
+        title.value = d.goal.title;
+        tasks.value = d.goal.tasks.join("\n");
+        kind = d.goal.kind;
+        body.querySelectorAll<HTMLElement>(".su-kind button").forEach((x) => x.classList.toggle("on", x.dataset.k === kind));
+      }
+      syncGoal();
+      tone = d.tone;
+      body.querySelectorAll<HTMLElement>(".su-tone").forEach((x) => x.classList.toggle("on", x.dataset.tone === tone));
+      minutes = d.minutes;
+      syncLen();
+      intent.value = d.intention;
+      touched = false;
+    };
+    for (const el of [title, tasks, intent, eodBox!, rowsEl!]) {
+      el.addEventListener("input", () => (touched = true));
+      el.addEventListener("change", () => (touched = true));
+    }
+    make.addEventListener("click", () => {
+      const text = said.value.trim();
+      if (!text) {
+        said.focus();
+        status.textContent = "Say (or type) what you want done today first";
+        return;
+      }
+      asked++;
+      apply(simpleDraft(text, teamNow()));
+      status.textContent = "⚡ Quick plan ready — ✨ Claude is making it better (you can start now)…";
+      voice.draft(text);
+    });
+    fillDraft = (d, via) => {
+      if (!asked) return;
+      if (via === "simple") {
+        status.textContent = "✅ Planned from your sentences (Claude Code wasn't available) — change anything you like";
+        voice.speak(d.summary);
+        return;
+      }
+      if (!touched) {
+        apply(d);
+        status.textContent = "✅ Claude's plan — change anything you like";
+        voice.speak(d.summary);
+        return;
+      }
+      // You've been editing: don't overwrite it.
+      status.innerHTML = `✨ Claude's plan is ready <button class="btn small su-take">Use it</button>`;
+      status.querySelector(".su-take")!.addEventListener("click", () => {
+        apply(d);
+        status.textContent = "✅ Claude's plan — change anything you like";
+        voice.speak(d.summary);
+      });
+    };
+    footer.querySelector(".su-resume")?.addEventListener("click", () => {
+      started = true;
+      modal.close();
+      voice.resume();
+    });
+  }
+  const dispatchOn = () => footer.querySelector<HTMLInputElement>(".su-dispatch-on")!.checked;
+
   footer.querySelector(".skip")!.addEventListener("click", () => modal.close());
   const go = footer.querySelector<HTMLButtonElement>(".go")!;
   go.addEventListener("click", () => {
@@ -261,6 +443,17 @@ export function openStandup(
     } else {
       plan = { goalId: goalChoice, tone, intention: intent.value.trim(), minutes };
     }
+    plan.dispatch = dispatchOn();
+    if (drafted) {
+      plan.summary = drafted.summary;
+      // Who does what is the plan's task list.
+      const rows = readRows();
+      if (rows.length) {
+        plan.assign = rows;
+        if (plan.newGoal) plan.newGoal.tasks = rows.map((r) => r.task);
+      }
+    }
+    if (eodLines().length) plan.eod = eodLines();
     started = true;
     modal.close();
     onStart(plan);

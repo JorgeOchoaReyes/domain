@@ -22,6 +22,8 @@ export interface GoalTask {
   brief?: TaskBrief | null;
   /** How it's going against them (the clock, whether the plan was approved). */
   run?: TaskRun | null;
+  /** Saved for this desk's worker (picked at the stand-up): it waits for them rather than going to whoever's free. */
+  for?: string | null;
 }
 
 /** What a goal produces: working software, or a research deck. */
@@ -113,6 +115,20 @@ export interface Session {
   /** The tone set at the stand-up, and the line the team works toward. */
   tone: ToneId | null;
   intention: string;
+  /** The stand-up in a few lines (said aloud when it starts), and what done looks like by the end of the day. */
+  summary?: string;
+  eod?: string[];
+}
+
+/** The last stand-up's plan, so tomorrow can pick up where today left off ("Resume yesterday"). */
+export interface LastPlan {
+  goalId: string | null;
+  tone: ToneId | null;
+  minutes: number;
+  intention: string;
+  summary: string;
+  eod: string[];
+  at: number;
 }
 
 /** The tone you set for a session at the stand-up. */
@@ -137,6 +153,10 @@ export interface SessionSummary {
   xp: number;
   /** True when it ran to the end (not stopped early). */
   completed: boolean;
+  /** The end-of-day goals set at the stand-up, and the session goal's tasks: done, and still open (they carry over). */
+  eod?: string[];
+  done?: string[];
+  open?: string[];
 }
 
 /** One person's score. Keyed by name, so it follows you between visits. */
@@ -175,6 +195,8 @@ export interface ProgressState {
   team: Character[];
   /** The MCP servers the office gives its workers. */
   mcp: McpServer[];
+  /** The last stand-up's plan (for "Resume yesterday"). */
+  lastPlan?: LastPlan | null;
 }
 
 export const EMPTY_PROGRESS: ProgressState = { goals: [], session: null, players: [], feed: [], policy: DEFAULT_POLICY, team: [], mcp: [] };

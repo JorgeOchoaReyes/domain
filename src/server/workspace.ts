@@ -104,6 +104,32 @@ export class Workspaces {
   }
 
   /**
+   * How many lines a worker's work adds and removes against your branch:
+   * committed and uncommitted changes, plus the new files it hasn't added yet.
+   * Null when it can't tell (no base, git failed, or too many new files to count).
+   */
+  diffLines(path: string): number | null {
+    const base = this.base();
+    if (!base) return null;
+    const stat = this.git(path, ["diff", "--shortstat", base]);
+    if (stat === null) return null;
+    let n = 0;
+    for (const m of stat.matchAll(/(\d+) (?:insertion|deletion)/g)) n += Number(m[1]);
+    const untracked = this.git(path, ["ls-files", "--others", "--exclude-standard"]);
+    if (untracked === null) return null;
+    const files = untracked.split("\n").filter(Boolean);
+    if (files.length > 40) return null;
+    for (const f of files) {
+      try {
+        n += readFileSync(join(path, f), "utf8").split("\n").length;
+      } catch {
+        return null;
+      }
+    }
+    return n;
+  }
+
+  /**
    * Bring your branch's latest into a worker's branch before its next task,
    * when its worktree is clean and it merges without conflicts.
    */

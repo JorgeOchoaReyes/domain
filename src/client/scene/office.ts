@@ -8,6 +8,7 @@ import {
   FLOOR,
   GONG,
   LOUNGE,
+  MONITOR_WALL,
   MY_OFFICE,
   OFFICE_DOOR,
   PLANTS,
@@ -18,6 +19,7 @@ import {
   WALL_HEIGHT,
   WHITEBOARD,
   WINDOWS,
+  myOfficeWalls,
   type DeskDef,
 } from "../../shared/layout.js";
 import { box, INK, mesh, noOutline, roundedBox, textPlane, textSprite, toon } from "./toon.js";
@@ -25,7 +27,7 @@ import { box, INK, mesh, noOutline, roundedBox, textPlane, textSprite, toon } fr
 /**
  * Builds the office: the planked floor and tiled ceiling, the walls with their
  * trim and windows, the boards along the north wall, the elevator and gong,
- * the desk pods, the lounge round the TV, the glass meeting room with the loft
+ * the desk pods, the lounge round the TV, your office (walled, with the monitor wall), the loft
  * over it and the stairs up, plants, lamps and the odd knick-knack.
  *
  * It returns the scene graph plus what the world needs to keep alive: the
@@ -90,6 +92,8 @@ export interface Office {
   screen: LiveBoard;
   /** The review whiteboard in your office. */
   reviewBoard: LiveBoard;
+  /** The monitor wall in your office: every worker's terminal. */
+  monitorWall: LiveBoard;
   /** The whiteboard on wheels: an idea board. */
   ideaBoard: LiveBoard;
 }
@@ -145,13 +149,8 @@ export function buildOffice(): Office {
   add(pendant(LOUNGE.table.x, LOUNGE.table.z, 2.4));
 
   // --- your office --------------------------------------------------------------
-  const { screen, reviewBoard } = buildMyOffice(add);
-  const glassT = 0.12;
-  const wallZ = MY_OFFICE.minZ;
-  const wallX = MY_OFFICE.minX;
-  solid((wallX + OFFICE_DOOR.x0) / 2, wallZ, (OFFICE_DOOR.x0 - wallX) / 2, glassT);
-  solid((OFFICE_DOOR.x1 + FLOOR.maxX) / 2, wallZ, (FLOOR.maxX - OFFICE_DOOR.x1) / 2, glassT);
-  solid(wallX, (wallZ + FLOOR.maxZ) / 2, glassT, (FLOOR.maxZ - wallZ) / 2);
+  const { screen, reviewBoard, monitorWall } = buildMyOffice(add);
+  for (const r of myOfficeWalls()) colliders.push({ ...r, tall: true });
   solid(REVIEW_DESK.x, REVIEW_DESK.z, 1.3, 0.55);
 
   // --- odds and ends ----------------------------------------------------------------
@@ -170,7 +169,7 @@ export function buildOffice(): Office {
   });
 
   noOutline(group);
-  return { group, colliders, desks, boards, tv, screen, reviewBoard, ideaBoard, gong };
+  return { group, colliders, desks, boards, tv, screen, reviewBoard, monitorWall, ideaBoard, gong };
 }
 
 // ---------------------------------------------------------------------------
@@ -591,7 +590,7 @@ export function jukebox(): THREE.Group {
 }
 
 // ---------------------------------------------------------------------------
-// Your office: glass walls, the presentation screen, your desk, the whiteboard
+// Your office: solid walls, the monitor wall, the presentation screen, your desk, the whiteboard
 // ---------------------------------------------------------------------------
 
 function canvasFace(width: number, height: number, px = 1024): LiveBoard & { face: THREE.Mesh } {
@@ -605,50 +604,41 @@ function canvasFace(width: number, height: number, px = 1024): LiveBoard & { fac
   return { canvas, texture, face };
 }
 
-function buildMyOffice(add: (o: THREE.Object3D) => void): { screen: LiveBoard; reviewBoard: LiveBoard } {
+function buildMyOffice(add: (o: THREE.Object3D) => void): { screen: LiveBoard; reviewBoard: LiveBoard; monitorWall: LiveBoard } {
   const { minX, maxX, minZ, maxZ, height } = MY_OFFICE;
-  const glass = new THREE.MeshBasicMaterial({ color: "#d6f1ff", transparent: true, opacity: 0.2, depthWrite: false, side: THREE.DoubleSide });
   const post = toon("#e8e2d6");
   const trim = toon(PALETTE.trim);
+  const wall = toon("#efe6ff");
 
-  // A carpet inside, and a wood header band along the top of the glass.
+  // A carpet inside.
   add(mesh(roundedBox(maxX - minX - 0.3, 0.02, maxZ - minZ - 0.3, 0.3), toon("#d8e2ff"), (minX + maxX) / 2, 0.012, (minZ + maxZ) / 2, false));
 
-  const pane = (cx: number, cz: number, len: number, rotY: number) => {
-    const p = new THREE.Mesh(new THREE.PlaneGeometry(len, height), glass);
-    p.position.set(cx, height / 2, cz);
-    p.rotation.y = rotY;
-    add(p);
-    for (const [y, h] of [
-      [0.05, 0.1],
-      [height + 0.08, 0.16],
-    ]) {
-      const band = mesh(box(len, h, 0.16), y > 1 ? trim : post, cx, y, cz, false);
-      band.rotation.y = rotY;
-      add(band);
-    }
-  };
-  pane((minX + OFFICE_DOOR.x0) / 2, minZ, OFFICE_DOOR.x0 - minX, 0);
-  pane((OFFICE_DOOR.x1 + maxX) / 2, minZ, maxX - OFFICE_DOOR.x1, 0);
-  pane(minX, (minZ + maxZ) / 2, maxZ - minZ, Math.PI / 2);
-  // A lintel over the open doorway.
-  add(mesh(box(OFFICE_DOOR.x1 - OFFICE_DOOR.x0, 0.16, 0.16), trim, (OFFICE_DOOR.x0 + OFFICE_DOOR.x1) / 2, height + 0.08, minZ, false));
-  for (const px of [minX, OFFICE_DOOR.x0, OFFICE_DOOR.x1, 13.3, 15.7, maxX - 0.06]) {
-    add(mesh(box(0.14, height, 0.14), post, px, height / 2, minZ, false));
+  // Solid walls (nobody sees in), with a baseboard and a wood band along the top.
+  for (const r of myOfficeWalls()) {
+    const cx = (r.minX + r.maxX) / 2;
+    const cz = (r.minZ + r.maxZ) / 2;
+    const w = r.maxX - r.minX;
+    const d = r.maxZ - r.minZ;
+    add(mesh(box(w, height, d), wall, cx, height / 2, cz));
+    add(mesh(box(w + 0.04, 0.12, d + 0.04), post, cx, 0.06, cz, false));
+    add(mesh(box(w + 0.04, 0.16, d + 0.04), trim, cx, height + 0.08, cz, false));
   }
-  for (const pz of [8.4, 10.8, maxZ - 0.06]) add(mesh(box(0.14, height, 0.14), post, minX, height / 2, pz, false));
-  // Frosted stripes across the glass at eye height.
-  const frost = new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.35, depthWrite: false, side: THREE.DoubleSide });
-  for (const [cx, cz, len, rotY] of [
-    [(OFFICE_DOOR.x1 + maxX) / 2, minZ, maxX - OFFICE_DOOR.x1, 0],
-    [(minX + OFFICE_DOOR.x0) / 2, minZ, OFFICE_DOOR.x0 - minX, 0],
-    [minX, (minZ + maxZ) / 2, maxZ - minZ, Math.PI / 2],
-  ] as const) {
-    const f = new THREE.Mesh(new THREE.PlaneGeometry(len, 0.14), frost);
-    f.position.set(cx, 1.45, cz);
-    f.rotation.y = rotY;
-    add(f);
-  }
+  // The doorway: a lintel and a frame.
+  add(mesh(box(OFFICE_DOOR.x1 - OFFICE_DOOR.x0, 0.16, 0.2), trim, (OFFICE_DOOR.x0 + OFFICE_DOOR.x1) / 2, height + 0.08, minZ, false));
+  for (const px of [OFFICE_DOOR.x0, OFFICE_DOOR.x1]) add(mesh(box(0.12, height, 0.22), post, px, height / 2, minZ, false));
+  add(mesh(box(0.2, height, 0.2), post, minX, height / 2, minZ, false));
+
+  // The monitor wall: every worker's terminal, live, on the west wall.
+  const mw = new THREE.Group();
+  mw.position.set(MONITOR_WALL.x, MONITOR_WALL.y, MONITOR_WALL.z);
+  mw.rotation.y = Math.PI / 2;
+  const mwBezel = mesh(roundedBox(MONITOR_WALL.width + 0.18, 0.08, MONITOR_WALL.height + 0.18, 0.06), toon("#1b1d2e"), 0, 0, -0.02, false);
+  mwBezel.rotation.x = Math.PI / 2;
+  mw.add(mwBezel);
+  const monitorWall = canvasFace(MONITOR_WALL.width, MONITOR_WALL.height, 2048);
+  monitorWall.face.position.z = 0.03;
+  mw.add(monitorWall.face);
+  add(mw);
   // The sign over the door: readable from the office floor.
   const sign = textPlane("⭐ Your office", { bg: "#ffd166", size: 46 });
   sign.position.set(OFFICE_DOOR.x1 + 1.6, height + 0.5, minZ - 0.1);
@@ -728,11 +718,11 @@ function buildMyOffice(add: (o: THREE.Object3D) => void): { screen: LiveBoard; r
   p.position.set(maxX - 0.6, 0, minZ + 0.7);
   add(p);
   const p2 = plant(2, 1.1);
-  p2.position.set(minX + 0.7, 0, maxZ - 0.7);
+  p2.position.set(minX + 0.6, 0, maxZ - 0.5);
   add(p2);
   for (const x of [11.2, 16]) add(pendantAt(x, 9.8, WALL_HEIGHT, 2.4));
 
-  return { screen, reviewBoard };
+  return { screen, reviewBoard, monitorWall };
 }
 
 function armchair(color: string): THREE.Group {
