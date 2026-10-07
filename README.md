@@ -959,6 +959,25 @@ Next up, after v1.0:
 - **More of the team loop**: a real team huddle at the start of a goal
   (everyone weighs in on the plan), and a shared screenshot/demo of the
   finished result in the final review.
+- **A repo per agent.** Today the office works on one project at a time
+  (switching restarts it). Next: open several repos at once and pick one per
+  agent or per task — each with its own worktrees, checks, merges and pull
+  requests — and see them all in the Repo view and `nou repo`.
+- **A design cleanup.** The HUD has grown: fewer, clearer dock buttons, one
+  place for what needs you (questions, reviews, offers), quieter toasts, and
+  a consistent look across the monitor, laptop, phone and windows.
+- **Voice in the desktop app, tested.** The 🎤 button now starts Windows
+  voice typing (Win+H) in the desktop app; it needs testing on real machines,
+  and macOS still only shows how to start dictation.
+- **GitHub, against the real thing.** The whole loop — sign-in, issues,
+  pushing, pull requests and their checks — is tested end to end against a
+  stand-in for GitHub's API (`npm run e2e:real`); next, a run against a real
+  test repository, and opening pull requests per agent as well as per goal.
+- **Pods for people.** In a shared office, give each person a pod on the team
+  floor, and let a teammate ask to borrow someone's agent (the owner says yes
+  or no, like an agent's "I'll take it").
+- **More floors and games.** More team floors as teams grow, and more to play
+  between tasks (a pool table, multiplayer arcade high scores).
 
 ## Credits
 
