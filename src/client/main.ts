@@ -28,7 +28,7 @@ import {
   JUKEBOXES,
   GONG,
 } from "../shared/layout.js";
-import { UPSTAIRS, UP_ELEVATOR, WORK_SPOTS, inUpstairs, type WorkSpot } from "../shared/layout.js";
+import { UPSTAIRS, UP_ELEVATOR, WORK_SPOTS, inUpstairs, TEAM_FLOOR, TEAM_ELEVATOR, inTeamFloor, floorOf, type WorkSpot } from "../shared/layout.js";
 import { Activities } from "./ui/activities.js";
 import { myLaptopProp } from "./scene/laptop.js";
 import { Net } from "./net.js";
@@ -1676,10 +1676,10 @@ function atElevator(): boolean {
   const { x, z } = player.position;
   return Math.abs(x - ELEVATOR.x) < 1.6 && z < FLOOR.minZ + ELEVATOR.depth + 1.6 && z > FLOOR.minZ;
 }
-/** Floor 2's elevator doors: back down (or anywhere). */
+/** The elevator doors upstairs (floor 2 or 3): back down, or anywhere. */
 function atUpElevator(): boolean {
   const { x, z } = player.position;
-  return inUpstairs(x) && Math.abs(x - UP_ELEVATOR.x) < 1.7 && z < UPSTAIRS.minZ + 3;
+  return (inUpstairs(x) && Math.abs(x - UP_ELEVATOR.x) < 1.7 && z < UPSTAIRS.minZ + 3) || (inTeamFloor(x) && Math.abs(x - TEAM_ELEVATOR.x) < 1.7 && z < TEAM_FLOOR.minZ + 3);
 }
 
 // --- things to do: darts, piano, treadmill, fishing, laps, the garden… ------------------------
@@ -1841,7 +1841,7 @@ function promptTarget(): { x: number; y: number; z: number } | null {
   if (act) return act.key;
   const prop = world.props.near(x, z);
   if (prop) return prop.key;
-  if (atUpElevator()) return { x: UP_ELEVATOR.x, y: 3.0, z: UPSTAIRS.minZ + 0.4 };
+  if (atUpElevator()) return inTeamFloor(x) ? { x: TEAM_ELEVATOR.x, y: 3.0, z: TEAM_FLOOR.minZ + 0.4 } : { x: UP_ELEVATOR.x, y: 3.0, z: UPSTAIRS.minZ + 0.4 };
   const arcade = nearArcade();
   if (arcade) return { x: arcade.x, y: 2.35, z: arcade.z };
   if (atHoopSpot()) return { x: HOOP.rim.x, y: HOOP.rim.y + 0.7, z: HOOP.rim.z };
@@ -1872,7 +1872,7 @@ function hintFun(): string | null {
   if (act) return `<span class="title">${act.title}</span> ${act.id === "tread" ? "" : '<span class="key">E</span> '}${act.hint}`;
   const prop = world.props.near(player.position.x, player.position.z);
   if (prop) return `<span class="title">${prop.title}</span> <span class="key">E</span> ${prop.hint}`;
-  if (atUpElevator()) return `<span class="title">🛗 Elevator · Floor 2</span> <span class="key">E</span> Down to the office, or anywhere`;
+  if (atUpElevator()) return `<span class="title">🛗 Elevator · Floor ${floorOf(player.position.x)}</span> <span class="key">E</span> Down to the office, or anywhere`;
   const arcade = nearArcade();
   if (arcade) {
     const best = arcadeBest(arcade.id);
@@ -2125,7 +2125,7 @@ let sentX = NaN;
 let sentZ = NaN;
 let sentFacing = NaN;
 /** Which floor you were on last frame (null before the first). */
-let wasUpstairs: boolean | null = null;
+let wasUpstairs: number | null = null;
 
 function frame(now: number): void {
   const dt = Math.min((now - last) / 1000, 0.05);
@@ -2161,7 +2161,7 @@ function frame(now: number): void {
   const { x: px, z: pz } = player.position;
   ambience.update({ x: px, z: pz, look: player.lookDir, indoors: isIndoors(px, pz), daylight: world.dayLevel, workers });
   // Changing floors: the elevator's ding.
-  const upNow = inUpstairs(px, pz);
+  const upNow = floorOf(px);
   if (upNow !== wasUpstairs) {
     if (wasUpstairs !== null) sound.elevator();
     wasUpstairs = upNow;

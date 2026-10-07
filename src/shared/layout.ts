@@ -76,9 +76,50 @@ function buildBay(): DeskDef[] {
   return desks;
 }
 
-export const DESKS: DeskDef[] = [...buildDesks(), ...buildBay()];
+/**
+ * Floor 3, the team floor: four pods of four desks (back-to-back pairs),
+ * room for a bigger team — or a pod each when people share the office. It's
+ * built further east, like floor 2, up the elevator.
+ */
+export const TEAM_FLOOR = { minX: 102, maxX: 138, minZ: -14, maxZ: 14 } as const;
+/** Its elevator doors in the north wall, and where it lets you out. */
+export const TEAM_ELEVATOR = { x: 120, width: 2.6 } as const;
+export const TEAM_ARRIVE = { x: 120, z: TEAM_FLOOR.minZ + 2.6, facing: 0 } as const;
+/** The aisle across the floor between the pods (and the corridor down from the elevator). */
+export const TEAM_AISLE_Z = 1.5;
+/** The pods: their centers and names. */
+export const TEAM_PODS = [
+  { name: "A", x: 109, z: -5 },
+  { name: "B", x: 131, z: -5 },
+  { name: "C", x: 109, z: 8 },
+  { name: "D", x: 131, z: 8 },
+] as const;
+export const FIRST_TEAM_DESK = 25;
+
+function buildTeamDesks(): DeskDef[] {
+  const desks: DeskDef[] = [];
+  let n = FIRST_TEAM_DESK;
+  for (const pod of TEAM_PODS) {
+    let i = 1;
+    for (const [z, rotY] of [
+      [pod.z - DESK_SIZE.depth / 2, Math.PI],
+      [pod.z + DESK_SIZE.depth / 2, 0],
+    ] as const) {
+      for (const dx of [-DESK_SIZE.width / 2, DESK_SIZE.width / 2]) {
+        desks.push({ id: `desk-${n}`, label: `Pod ${pod.name}${i}`, x: pod.x + dx, z, rotY });
+        n++;
+        i++;
+      }
+    }
+  }
+  return desks;
+}
+
+export const DESKS: DeskDef[] = [...buildDesks(), ...buildBay(), ...buildTeamDesks()];
 /** The bay's desks (where interns sit). */
-export const BAY_DESK_IDS: readonly string[] = DESKS.filter((d) => Number(d.id.slice(5)) >= FIRST_BAY_DESK).map((d) => d.id);
+export const BAY_DESK_IDS: readonly string[] = DESKS.filter((d) => Number(d.id.slice(5)) >= FIRST_BAY_DESK && Number(d.id.slice(5)) < FIRST_TEAM_DESK).map((d) => d.id);
+/** The team floor's desks. */
+export const TEAM_DESK_IDS: readonly string[] = DESKS.filter((d) => Number(d.id.slice(5)) >= FIRST_TEAM_DESK).map((d) => d.id);
 export const DESK_BY_ID = new Map(DESKS.map((d) => [d.id, d]));
 
 /** Where a desk's worker (and a player using the desk) stands or sits. */
@@ -212,6 +253,8 @@ export const WINDOWS: readonly { wall: "south" | "west"; u: number; width: numbe
 ];
 
 type Pt = { x: number; z: number };
+/** A point on a walk; `lift` means take the elevator there (a jump to another floor). */
+export type WalkPt = Pt & { lift?: boolean };
 
 /** The open floor east of the desks every route passes through. */
 const HUB: Pt = { x: 7.6, z: 0.6 };
@@ -260,7 +303,59 @@ function outOfPod(seat: Pt): Pt[] {
  * office, or the podium inside — round the desks and through the office door.
  * Returns the points to walk through after `from`, ending at `to`.
  */
-export function route(from: Pt, to: Pt): Pt[] {
+export function route(from: Pt, to: Pt): WalkPt[] {
+  const a = floorOf(from.x);
+  const b = floorOf(to.x);
+  if (a === b) return a === 1 ? routeGround(from, to) : routeUpstairs(a, from, to);
+  // Another floor: to the elevator, ride it, and on from its doors there.
+  const out = a === 1 ? routeGround(from, GROUND_LIFT) : routeUpstairs(a, from, liftOf(a));
+  const arrive = liftOf(b);
+  return [...out, { ...arrive, lift: true }, ...(b === 1 ? routeGround(arrive, to) : routeUpstairs(b, arrive, to))];
+}
+
+/** Where the elevator lets you out on each floor. */
+const GROUND_LIFT: Pt = { x: ELEVATOR.x, z: FLOOR.minZ + ELEVATOR.depth + 0.9 };
+function liftOf(floor: number): Pt {
+  return floor === 3 ? { x: TEAM_ARRIVE.x, z: TEAM_ARRIVE.z } : floor === 2 ? { x: UP_ARRIVE.x, z: UP_ARRIVE.z } : GROUND_LIFT;
+}
+
+/** Walking about floor 2 or 3: round the pods (3) or through the gap in the bookcases (2). */
+function routeUpstairs(floor: number, from: Pt, to: Pt): Pt[] {
+  if (floor === 3) {
+    const pts: Pt[] = [];
+    const corridor = { x: TEAM_ELEVATOR.x, z: TEAM_AISLE_Z };
+    if (atTeamDesk(from)) pts.push(...outOfTeamPod(from), corridor);
+    else if (from.z < TEAM_AISLE_Z - 1) pts.push(corridor);
+    if (atTeamDesk(to)) pts.push(corridor, ...outOfTeamPod(to).reverse());
+    else if (to.z < TEAM_AISLE_Z - 1) pts.push(corridor);
+    pts.push(to);
+    return pts;
+  }
+  // Floor 2: the bookcases split it, with a gap in the middle.
+  const side = (x: number) => (x < UP_SPLITS_X[0] ? 0 : x < UP_SPLITS_X[1] ? 1 : 2);
+  if (side(from.x) === side(to.x)) return [to];
+  return [{ x: from.x, z: 0 }, { x: to.x, z: 0 }, to];
+}
+
+function atTeamDesk(p: Pt): boolean {
+  return TEAM_PODS.some((pod) => Math.abs(p.x - pod.x) < DESK_SIZE.width + 0.4 && Math.abs(p.z - pod.z) < 2);
+}
+/** From a team-floor seat to the aisle: the far row goes round the pod's end (the one nearer the elevator). */
+function outOfTeamPod(seat: Pt): Pt[] {
+  const pod = TEAM_PODS.reduce((a, b) => (Math.hypot(b.x - seat.x, b.z - seat.z) < Math.hypot(a.x - seat.x, a.z - seat.z) ? b : a));
+  const farSide = Math.abs(seat.z - TEAM_AISLE_Z) > Math.abs(pod.z - TEAM_AISLE_Z);
+  if (!farSide) return [{ x: seat.x, z: TEAM_AISLE_Z }];
+  const end = pod.x + (pod.x < TEAM_ELEVATOR.x ? 1 : -1) * (DESK_SIZE.width + 0.8);
+  return [{ x: end, z: seat.z }, { x: end, z: TEAM_AISLE_Z }];
+}
+
+/** Which floor a point's on: 1 (the building and campus), 2, or 3 (the team floor). */
+export function floorOf(x: number): 1 | 2 | 3 {
+  return x >= TEAM_FLOOR.minX - 2 ? 3 : x >= UPSTAIRS.minX - 2 ? 2 : 1;
+}
+
+/** On the ground floor (the building and the campus round it). */
+function routeGround(from: Pt, to: Pt): Pt[] {
   const pts: Pt[] = [];
   // Out of the stand-up room first (through its door, the hallway and the office's door).
   if (inStandupRoom(from) && !inStandupRoom(to)) pts.push(...TO_STANDUP.slice().reverse());
@@ -384,7 +479,7 @@ export function wallRects(): Rect[] {
   return rects;
 }
 
-export type RoomId = "office" | "floor" | "hall" | "kitchen" | "standup" | "lobby" | "game" | "outside" | "library" | "lounge2" | "gym";
+export type RoomId = "office" | "floor" | "hall" | "kitchen" | "standup" | "lobby" | "game" | "outside" | "library" | "lounge2" | "gym" | "team";
 
 export interface RoomDef extends Rect {
   id: RoomId;
@@ -406,6 +501,7 @@ export const ROOMS: readonly RoomDef[] = [
   { id: "library", name: "Floor 2 · Library", icon: "📚", color: "#d9c5a0", minX: 62, maxX: 74, minZ: -14, maxZ: 14 },
   { id: "lounge2", name: "Floor 2 · Lounge", icon: "🎹", color: "#f7c6d9", minX: 74, maxX: 86, minZ: -14, maxZ: 14 },
   { id: "gym", name: "Floor 2 · Gym", icon: "🏋️", color: "#bfe6ff", minX: 86, maxX: 98, minZ: -14, maxZ: 14 },
+  { id: "team", name: "Floor 3 · Team floor", icon: "🧑‍💻", color: "#d6f5e3", minX: 102, maxX: 138, minZ: -14, maxZ: 14 },
 ];
 export const OUTSIDE: RoomDef = { id: "outside", name: "Outside", icon: "🌳", color: "#a7d98b", ...WORLD_BOUNDS };
 
@@ -415,6 +511,7 @@ export function roomAt(x: number, z: number): RoomDef {
 }
 export function isIndoors(x: number, z: number): boolean {
   if (x >= 62 && x <= 98 && z >= -14 && z <= 14) return true;
+  if (x >= TEAM_FLOOR.minX && x <= TEAM_FLOOR.maxX && z >= TEAM_FLOOR.minZ && z <= TEAM_FLOOR.maxZ) return true;
   return x >= BUILDING.minX && x <= BUILDING.maxX && z >= BUILDING.minZ && z <= BUILDING.maxZ;
 }
 
@@ -614,6 +711,7 @@ export const DOCK_SPOT = { x: 27.2, z: -2, facing: Math.PI / 2 } as const;
 /** Fast-travel destinations beyond the main floor (the travel menu lists them after PLACES). */
 export const MORE_PLACES: readonly { id: string; label: string; icon: string; x: number; z: number; facing: number }[] = [
   { id: "upstairs", label: "Floor 2 — library, lounge, gym", icon: "🛗", ...UP_ARRIVE },
+  { id: "teamfloor", label: "Floor 3 — the team floor (16 more desks)", icon: "🧑‍💻", ...TEAM_ARRIVE },
   { id: "track", label: "Running track", icon: "🏃", x: TRACK.x, z: TRACK.z + TRACK.rz + 1.6, facing: Math.PI },
   { id: "campfire", label: "Campfire", icon: "🔥", x: CAMPFIRE.x, z: CAMPFIRE.z + 3.6, facing: Math.PI },
   { id: "garden", label: "Garden", icon: "🌻", ...GARDEN.spot },
@@ -621,7 +719,12 @@ export const MORE_PLACES: readonly { id: string; label: string; icon: string; x:
 ];
 
 export function inUpstairs(x: number, z?: number): boolean {
-  return x >= UPSTAIRS.minX - 2 && (z === undefined || (z >= UPSTAIRS.minZ - 2 && z <= UPSTAIRS.maxZ + 2));
+  return floorOf(x) === 2 && (z === undefined || (z >= UPSTAIRS.minZ - 2 && z <= UPSTAIRS.maxZ + 2));
+}
+
+/** On floor 3, the team floor. */
+export function inTeamFloor(x: number, z?: number): boolean {
+  return floorOf(x) === 3 && (z === undefined || (z >= TEAM_FLOOR.minZ - 2 && z <= TEAM_FLOOR.maxZ + 2));
 }
 
 /**

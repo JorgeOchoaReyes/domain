@@ -269,7 +269,7 @@ function bookcase(len: number, h: number, x: number, z: number, rotY: number): T
   return g;
 }
 
-function armchair(color: string): THREE.Group {
+export function armchair(color: string): THREE.Group {
   const g = new THREE.Group();
   const cloth = toon(color);
   g.add(mesh(roundedBox(0.95, 0.4, 0.9, 0.12), cloth, 0, 0.28, 0));
@@ -278,7 +278,7 @@ function armchair(color: string): THREE.Group {
   return g;
 }
 
-function sofa(color: string): THREE.Group {
+export function sofa(color: string): THREE.Group {
   const g = new THREE.Group();
   const cloth = toon(color);
   g.add(mesh(roundedBox(3.2, 0.4, 0.95, 0.12), cloth, 0, 0.28, 0));
@@ -403,7 +403,7 @@ function telescope(x: number, z: number): THREE.Group {
 }
 
 /** A painted city skyline across [from, to], `dist` out, facing back in; rotY 0 runs along x. */
-function skyline(from: number, to: number, dist: number, rotY: number): THREE.Mesh {
+export function skyline(from: number, to: number, dist: number, rotY: number): THREE.Mesh {
   const W = 2048;
   const Hc = 512;
   const c = document.createElement("canvas");

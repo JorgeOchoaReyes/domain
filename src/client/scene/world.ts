@@ -1,6 +1,7 @@
 import { buildUpstairs, type Upstairs } from "./upstairs.js";
 import { buildParkland, type Parkland } from "./parkland.js";
-import { UPSTAIRS, UP_HEIGHT, inUpstairs, BREAK_SPOTS, waitSpot } from "../../shared/layout.js";
+import { UPSTAIRS, UP_HEIGHT, BREAK_SPOTS, waitSpot, TEAM_FLOOR, TEAM_DESK_IDS, floorOf, type WalkPt } from "../../shared/layout.js";
+import { buildTeamFloor, type TeamFloor } from "./teamfloor.js";
 import * as THREE from "three";
 // Only what moved gets its matrices recomputed (see there).
 import "./fastMatrices.js";
@@ -126,9 +127,16 @@ export class World {
   /** How far you can walk (and the third-person camera can go): the campus, or floor 2. */
   private groundBounds = { minX: WORLD_BOUNDS.minX + 0.4, maxX: WORLD_BOUNDS.maxX - 0.4, minZ: WORLD_BOUNDS.minZ + 0.4, maxZ: WORLD_BOUNDS.maxZ - 0.4 };
   private upBounds = { minX: UPSTAIRS.minX + 0.4, maxX: UPSTAIRS.maxX - 0.4, minZ: UPSTAIRS.minZ + 0.4, maxZ: UPSTAIRS.maxZ - 0.4 };
+  private teamBounds = { minX: TEAM_FLOOR.minX + 0.4, maxX: TEAM_FLOOR.maxX - 0.4, minZ: TEAM_FLOOR.minZ + 0.4, maxZ: TEAM_FLOOR.maxZ - 0.4 };
   get bounds(): { minX: number; maxX: number; minZ: number; maxZ: number } {
-    return inUpstairs(this.player.position.x) ? this.upBounds : this.groundBounds;
+    return this.boundsAt(this.player.position.x);
   }
+  private boundsAt(x: number): { minX: number; maxX: number; minZ: number; maxZ: number } {
+    const f = floorOf(x);
+    return f === 3 ? this.teamBounds : f === 2 ? this.upBounds : this.groundBounds;
+  }
+  /** Floor 3, the team floor (its desks are the office's, moved up there). */
+  readonly teamFloor: TeamFloor;
   /** Floor 2, up the elevator. */
   readonly upstairs: Upstairs;
   /** Out back: the track, the campfire, the garden, the pond. */
@@ -200,6 +208,14 @@ export class World {
     this.hoops = new Hoops(this.scene);
     this.ball = new SoccerBall(this.scene);
     this.upstairs = buildUpstairs();
+    this.teamFloor = buildTeamFloor();
+    this.scene.add(this.teamFloor.group);
+    this.teamFloor.group.visible = false;
+    // The team floor's desks were built with the rest: up they go.
+    for (const id of TEAM_DESK_IDS) {
+      const view = this.office.desks.get(id);
+      if (view) this.teamFloor.group.add(view.group);
+    }
     this.scene.add(this.upstairs.group);
     this.upstairs.group.visible = false;
     this.park = buildParkland();
@@ -212,8 +228,8 @@ export class World {
     const street = buildCars();
     this.cars = street.cars;
     // The cars' footprints move with them (they're kept up to date in place).
-    this.colliders = [...this.office.colliders, ...this.rooms.colliders, ...this.gameRoom.colliders, ...this.upstairs.colliders, ...this.park.colliders, ...this.props.colliders, ...street.colliders];
-    this.collectOccludable([this.office.group, this.rooms.group, this.gameRoom.group]);
+    this.colliders = [...this.office.colliders, ...this.rooms.colliders, ...this.gameRoom.colliders, ...this.upstairs.colliders, ...this.teamFloor.colliders, ...this.park.colliders, ...this.props.colliders, ...street.colliders];
+    this.collectOccludable([this.office.group, this.rooms.group, this.gameRoom.group, this.teamFloor.group]);
     // Lights in rooms that get hidden (the game room's neon, the pinball's flash) live in the
     // scene itself and are only dimmed while their room is hidden: three.js builds its shaders
     // for an exact number of lights, so a light coming and going recompiled every material on
@@ -237,7 +253,7 @@ export class World {
       this.collectOccludable([m]);
       this.warm(m);
     };
-    this.occluders = [...cameraOccluders(), ...this.upstairs.occluders];
+    this.occluders = [...cameraOccluders(), ...this.upstairs.occluders, ...this.teamFloor.occluders];
     this.occluders.push({
       minX: ELEVATOR.x - ELEVATOR.width / 2,
       maxX: ELEVATOR.x + ELEVATOR.width / 2,
@@ -729,7 +745,7 @@ export class World {
 
   /** How high the camera may go at (x, z): under the ceiling indoors. */
   ceilingAt(x: number, z: number): number {
-    if (inUpstairs(x)) return UP_HEIGHT - 0.4;
+    if (floorOf(x) > 1) return UP_HEIGHT - 0.4;
     return isIndoors(x, z) ? WALL_HEIGHT - 0.4 : 16;
   }
 
@@ -763,7 +779,7 @@ export class World {
 
   resolveCollision(x: number, z: number): [number, number] {
     const r = PLAYER_RADIUS;
-    const b = inUpstairs(x) ? this.upBounds : this.groundBounds;
+    const b = this.boundsAt(x);
     let nx = THREE.MathUtils.clamp(x, b.minX, b.maxX);
     let nz = THREE.MathUtils.clamp(z, b.minZ, b.maxZ);
     for (let pass = 0; pass < 2; pass++) {
@@ -839,7 +855,13 @@ export class World {
     for (const [deskId, view] of this.workers) {
       const walking = view.path.length > 0;
       if (walking) {
-        const next = view.path[0];
+        const next = view.path[0] as WalkPt;
+        if (next.lift) {
+          // Into the elevator here, out of it on the other floor.
+          view.pos.set(next.x, 0, next.z);
+          view.path.shift();
+          continue;
+        }
         const dx = next.x - view.pos.x;
         const dz = next.z - view.pos.z;
         const dist = Math.hypot(dx, dz);
@@ -1202,19 +1224,23 @@ export class World {
     const seeGrounds = [rp, rc].some((r) => r === "outside" || r === "lobby" || r === "hall");
     const a = this.rooms.areas;
     // Upstairs, floor 2 is all there is (the city's painted outside its windows).
-    const up = inUpstairs(p.x);
-    this.upstairs.group.visible = up;
+    // Upstairs, only that floor is there (the city's painted outside its windows).
+    const floor = floorOf(p.x);
+    const up = floor !== 1;
+    this.upstairs.group.visible = floor === 2;
+    this.teamFloor.group.visible = floor === 3;
     this.rooms.group.visible = !up;
     this.park.group.visible = !up && seeGrounds;
     this.extras.grounds.visible = !up && seeGrounds;
-    this.extras.upstairs.visible = up;
+    this.extras.upstairs.visible = floor === 2;
     this.office.group.visible = !outside && !up;
     this.gameRoom.group.visible = !outside && !up;
     this.props.group.visible = !outside && !up;
     a.kitchen.visible = !outside;
     a.standup.visible = !outside;
     a.grounds.visible = seeGrounds;
-    for (const w of this.workers.values()) w.bot.root.visible = !outside && !up;
+    // Workers you can see: the ones on your floor.
+    for (const w of this.workers.values()) w.bot.root.visible = floorOf(w.pos.x) === floor && (floor !== 1 || !outside);
   }
 
   /** Small static things (lamps, signs, plants, furniture) that may be hidden when in the way. */
