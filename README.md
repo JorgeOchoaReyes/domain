@@ -99,6 +99,45 @@ off as you go, with a button on every step that does it for you.
 
 ![Arnold, your assistant, offering the tour](docs/screenshots/pip.jpg)
 
+### The fastest start: ⚡ Quick start
+
+On your first visit, with nobody hired yet, Arnold offers **⚡ Quick start**:
+three ready-made agents (a builder, a tester and a PR reviewer) sit down at
+the first free desks and the stand-up opens. Press 🎤 and say what you want
+done today — Claude outlines the plan, picks who does what (and says why),
+and **Start the day** hands it out. From opening the office to agents at work
+in two clicks and a sentence.
+
+### Your own command line: `nou`
+
+Everything that matters, from a terminal, against the office running on this
+machine (the desktop app or `npm run dev`):
+
+```bash
+npm run build && npm link     # once: puts `nou` on your PATH
+nou                           # what every agent is doing, and what's waiting for you
+nou standup "Today I want dark mode shipped and the login bug fixed"
+nou task "Update the README" --file notes.md   # someone offers to take it: Y / s / a
+nou task "Fix the flaky test" --to Pixel
+nou ask Bolt "How's it going?"                  # waits for the answer
+nou watch                     # live: who's working, what's ready, what they say
+nou watch Bolt                # one agent's terminal, live
+nou review / nou review Grace # what's waiting, or one whole deck
+nou approve Grace "Nice"      # or: nou back Grace "Cover the empty case too"
+nou repo                      # your branch vs GitHub, agents' branches, pull requests
+nou hire reviewer             # a ready-made agent at a free desk (nou roles lists them)
+```
+
+### Test it end to end
+
+```bash
+npm test             # unit tests
+npm run e2e:ui       # the whole office in Chrome, simulated agents (31 checks)
+npm run e2e:team     # a shared office: you and a teammate over the network (19 checks)
+npm run e2e:real     # real Claude Code agents on a throwaway repo, from hire to an
+                     # opened pull request — audits, checks, a merge conflict (42 checks)
+```
+
 ### Try it without any agents
 
 ```bash
