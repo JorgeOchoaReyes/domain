@@ -666,6 +666,9 @@ function applyOffice(): void {
     else terminal.setStatus(desk.worker.status);
   }
 
+  // Office hours you asked for while the work was still being checked: now someone's ready.
+  if (hoursWhenReady && Date.now() < hoursWhenReady && !reviewing() && !modalOpen() && nextReady()) startOfficeHours();
+
   // A review was decided: once that worker has left the line, bring in the next.
   if (awaitingAdvance && !office.presentations.some((p) => p.deskId === awaitingAdvance)) {
     awaitingAdvance = null;
@@ -834,6 +837,9 @@ function openRoundup(): void {
 // --- office hours ---------------------------------------------------------------------------
 
 /** The next worker in line with its report ready, skipping ones you'll see later. */
+/** You asked for office hours before anyone was ready: start them when someone is (until then). */
+let hoursWhenReady = 0;
+
 function nextReady(): Presentation | null {
   return office.presentations.find((p) => p.report && p.report.check?.status !== "running" && !later.has(p.deskId)) ?? null;
 }
@@ -845,15 +851,21 @@ function startOfficeHours(): void {
   later.clear();
   const next = nextReady();
   if (!next) {
-    const preparing = office.presentations.length;
+    const checking = office.presentations.filter((p) => p.report?.check?.status === "running").length;
+    const preparing = office.presentations.length - checking;
+    // Work that's in but still being checked: office hours start by themselves when the first is ready.
+    if (office.presentations.length) hoursWhenReady = Date.now() + 5 * 60_000;
     hud.toast(
-      preparing
-        ? `📝 ${preparing} still preparing their report${preparing === 1 ? "" : "s"} — hang on`
-        : "☕ Nobody in line. Press R to round up workers for a review.",
+      checking
+        ? `🧪 Checking ${checking === 1 ? "their work" : `${checking} pieces of work`} first — office hours start the moment one's ready`
+        : preparing
+          ? `📝 ${preparing} still preparing their report${preparing === 1 ? "" : "s"} — office hours start when one's ready`
+          : "☕ Nobody in line. Press R to round up workers for a review.",
       "warn",
     );
     return;
   }
+  hoursWhenReady = 0;
   // Take your seat: the chair at your desk, facing the screen.
   player.sit(REVIEW_SPOT.x, REVIEW_SPOT.z, 0);
   world.setSeated(true);
