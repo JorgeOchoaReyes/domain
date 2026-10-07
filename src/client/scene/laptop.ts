@@ -33,6 +33,60 @@ function paletteColor(n: number): string {
   return `rgb(${v},${v},${v})`;
 }
 
+/**
+ * Draw a terminal's screen into a box: its background, then each row's text in
+ * runs of one color. The font is sized so the whole screen fits the box.
+ */
+export function paintTerm(g: CanvasRenderingContext2D, term: Terminal, x0: number, y0: number, w: number, h: number): void {
+  const cols = term.cols;
+  const rows = term.rows;
+  g.fillStyle = BG;
+  g.fillRect(x0, y0, w, h);
+  const buf = term.buffer.active;
+  const cw = w / cols;
+  const lh = h / rows;
+  // A monospace glyph is about 0.6em wide: the size that fits both ways.
+  const size = Math.max(4, Math.floor(Math.min(lh * 0.92, cw / 0.6)));
+  g.font = `${size}px ui-monospace, Consolas, Menlo, monospace`;
+  g.textBaseline = "top";
+  g.textAlign = "left";
+  const cell = buf.getNullCell();
+  for (let y = 0; y < rows; y++) {
+    const line = buf.getLine(buf.viewportY + y);
+    if (!line) continue;
+    let run = "";
+    let runColor = FG;
+    let runX = 0;
+    const flush = () => {
+      if (run.trim()) {
+        g.fillStyle = runColor;
+        g.fillText(run, x0 + runX * cw, y0 + y * lh);
+      }
+      run = "";
+    };
+    for (let x = 0; x < cols; x++) {
+      const c = line.getCell(x, cell);
+      if (!c) break;
+      const ch = c.getChars() || " ";
+      let color = FG;
+      if (c.isFgPalette()) color = paletteColor(c.getFgColor());
+      else if (c.isFgRGB()) {
+        const v = c.getFgColor();
+        color = `rgb(${(v >> 16) & 255},${(v >> 8) & 255},${v & 255})`;
+      }
+      if (c.isDim()) color = "#7f849c";
+      if (color !== runColor) {
+        flush();
+        runColor = color;
+        runX = x;
+      }
+      if (!run) runX = x;
+      run += ch;
+    }
+    flush();
+  }
+}
+
 export class Laptop {
   readonly group = new THREE.Group();
   private term = new Terminal({ cols: COLS, rows: ROWS, allowProposedApi: true, scrollback: 0 });
@@ -43,6 +97,8 @@ export class Laptop {
   private nextPaint = 0;
   private status: WorkerStatus | null = null;
   private title = "";
+  /** Goes up whenever what's on its terminal changes (for the monitors that copy it). */
+  version = 0;
 
   constructor() {
     this.canvas.width = W;
@@ -69,12 +125,27 @@ export class Laptop {
   reset(): void {
     this.term.reset();
     this.dirty = true;
+    this.version++;
   }
 
   write(data: string): void {
     this.term.write(data, () => {
       this.dirty = true;
+      this.version++;
     });
+  }
+
+  /** Match the worker's real terminal size (after it was resized), so lines wrap as they do there. */
+  resize(cols: number, rows: number): void {
+    if (cols === this.term.cols && rows === this.term.rows) return;
+    this.term.resize(Math.max(20, cols), Math.max(5, rows));
+    this.dirty = true;
+    this.version++;
+  }
+
+  /** Draw its terminal into a box on any canvas (the monitor wall, the Agent monitor). */
+  paintInto(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number): void {
+    paintTerm(g, this.term, x, y, w, h);
   }
 
   /** The title bar across the top shows who's working here and their status. */
@@ -122,46 +193,7 @@ export class Laptop {
     g.textBaseline = "middle";
     g.fillText(this.title, 8, BAR / 2 + 1);
 
-    const buf = this.term.buffer.active;
-    const cw = W / COLS;
-    const lh = (H - BAR - 4) / ROWS;
-    g.font = `${Math.floor(lh * 0.92)}px ui-monospace, Consolas, Menlo, monospace`;
-    g.textBaseline = "top";
-    const cell = buf.getNullCell();
-    for (let y = 0; y < ROWS; y++) {
-      const line = buf.getLine(buf.viewportY + y);
-      if (!line) continue;
-      let run = "";
-      let runColor = FG;
-      let runX = 0;
-      const flush = () => {
-        if (run.trim()) {
-          g.fillStyle = runColor;
-          g.fillText(run, runX * cw, BAR + 2 + y * lh);
-        }
-        run = "";
-      };
-      for (let x = 0; x < COLS; x++) {
-        const c = line.getCell(x, cell);
-        if (!c) break;
-        const ch = c.getChars() || " ";
-        let color = FG;
-        if (c.isFgPalette()) color = paletteColor(c.getFgColor());
-        else if (c.isFgRGB()) {
-          const v = c.getFgColor();
-          color = `rgb(${(v >> 16) & 255},${(v >> 8) & 255},${v & 255})`;
-        }
-        if (c.isDim()) color = "#7f849c";
-        if (color !== runColor) {
-          flush();
-          runColor = color;
-          runX = x;
-        }
-        if (!run) runX = x;
-        run += ch;
-      }
-      flush();
-    }
+    paintTerm(g, this.term, 0, BAR + 2, W, H - BAR - 4);
     this.texture.needsUpdate = true;
   }
 }

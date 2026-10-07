@@ -134,7 +134,7 @@ export const LOUNGE = {
 } as const;
 
 /**
- * Your office: a big glass-walled room in the south-east corner where workers
+ * Your office: a big walled room in the south-east corner where workers
  * come to present. The door is in its north wall; the presentation screen is
  * on the south wall, the review whiteboard on the east wall, and your desk
  * faces the screen.
@@ -144,6 +144,25 @@ export const OFFICE_DOOR = { x0: 9.3, x1: 10.9 } as const;
 export const DOOR_X = (OFFICE_DOOR.x0 + OFFICE_DOOR.x1) / 2;
 /** The presentation screen on the office's south wall. */
 export const SCREEN = { x: 13.6, y: 1.9, z: FLOOR.maxZ - 0.08, width: 5.2, height: 2.9 } as const;
+/**
+ * The monitor wall: one big screen on the inside of the office's west wall
+ * (facing +x) with every worker's terminal on it, live. `spot` is where you
+ * stand to open the Agent monitor (E); `key` is where its E key floats.
+ */
+export const MONITOR_WALL = { x: MY_OFFICE.minX + 0.12, y: 1.75, z: 9.4, width: 5, height: 2.6, spot: { x: MY_OFFICE.minX + 1.6, z: 9.4 }, r: 2 } as const;
+/** How thick the office's walls are. */
+export const MY_OFFICE_WALL_T = 0.16;
+
+/** Your office's walls (solid, not glass: nobody sees in): the north wall either side of the door, and the west wall. */
+export function myOfficeWalls(): Rect[] {
+  const { minX, maxX, minZ, maxZ } = MY_OFFICE;
+  const t = MY_OFFICE_WALL_T / 2;
+  return [
+    { minX, maxX: OFFICE_DOOR.x0, minZ: minZ - t, maxZ: minZ + t },
+    { minX: OFFICE_DOOR.x1, maxX, minZ: minZ - t, maxZ: minZ + t },
+    { minX: minX - t, maxX: minX + t, minZ, maxZ },
+  ];
+}
 /** Your review desk, facing the screen, and where you stand to hold a review. */
 export const REVIEW_DESK = { x: 13.6, z: 8.6 } as const;
 export const REVIEW_SPOT = { x: 13.6, z: 7.7 } as const;
@@ -152,7 +171,7 @@ export const REVIEW_BOARD = { x: FLOOR.maxX - 0.08, y: 1.8, z: 9.6, width: 3.6, 
 
 /** Where the presenter stands: beside the screen, facing your desk. */
 export const PODIUM = { x: 16.9, z: 11.6, facing: Math.PI } as const;
-/** The line waits outside the office door, along its glass wall. */
+/** The line waits outside the office door, along its wall. */
 const LINE_X = [11.9, 13.1, 14.3, 15.5, 16.7];
 const LINE_Z = [5.0, 3.9];
 
@@ -340,7 +359,7 @@ function wallAlongX(z0: number, z1: number, x0: number, x1: number, gaps: readon
  * outer walls, the open office's south wall with its two doors, the
  * hallway's south wall with the rooms' doors, the partitions between the
  * rooms, and the front wall with the front doors. Drawn and collided with
- * alike. (Your office's glass walls are separate and lower.)
+ * alike. (Your office's walls are separate and lower: see myOfficeWalls.)
  */
 export function wallRects(): Rect[] {
   const T = WALL_T;
@@ -488,6 +507,8 @@ export interface Box3D extends Rect {
 export function cameraOccluders(): Box3D[] {
   const T = WALL_T;
   const boxes: Box3D[] = wallRects().map((r) => ({ ...r, minY: 0, maxY: WALL_HEIGHT }));
+  // Your office's walls are solid: the camera keeps on your side of them.
+  for (const r of myOfficeWalls()) boxes.push({ ...r, minY: 0, maxY: MY_OFFICE.height });
   const header = (g: Gap, z0: number, z1: number, h: number) => boxes.push({ minX: g.x0, maxX: g.x1, minZ: z0, maxZ: z1, minY: h, maxY: WALL_HEIGHT });
   for (const g of OFFICE_HALL_DOORS) header(g, FLOOR.maxZ, FLOOR.maxZ + T, DOOR_HEIGHT);
   for (const [id, g] of Object.entries(ROOM_DOORS)) header(g, HALL.maxZ, HALL.maxZ + T, id === "lobby" ? LOBBY_OPENING_HEIGHT : DOOR_HEIGHT);

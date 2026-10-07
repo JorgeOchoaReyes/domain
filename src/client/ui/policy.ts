@@ -1,5 +1,7 @@
 import { AGENT_KINDS, AGENT_LABELS, type AgentKind } from "../../shared/protocol.js";
 import {
+  GREEN_MAX_LINES,
+  MAX_START_TEAM,
   LEASH_ICON,
   LEASH_LABEL,
   LEASH_RULES,
@@ -30,6 +32,17 @@ export function openPolicy(policy: TeamPolicy, onSave: (p: TeamPolicy) => void):
   const body = document.createElement("div");
   body.className = "policy";
   body.innerHTML = `
+    <section class="po-fast">
+      <h4>⚡ Speed</h4>
+      <label class="as-check"><input type="checkbox" class="po-keep-busy" ${p.autopilot.keepBusy ? "checked" : ""} />
+        <span><b>Keep workers busy</b> — even with autopilot off, a worker that finishes picks up the next task of the goal you chose at the stand-up, instead of waiting for you</span></label>
+      <label class="as-check"><input type="checkbox" class="po-green" ${p.autopilot.approveGreen ? "checked" : ""} />
+        <span><b>Approve on green</b> — small work (up to ${GREEN_MAX_LINES} lines) whose checks passed merges without waiting for you; you hear about it. Needs a check command, so “green” means your tests passed</span></label>
+      <label class="as-check po-start"><span><b>Starting team</b> — when the office opens, last time's workers wake and new ones are hired until there are</span>
+        <select class="po-start-n">${Array.from({ length: MAX_START_TEAM + 1 }, (_, n) => `<option value="${n}" ${n === p.startTeam.count ? "selected" : ""}>${n === 0 ? "none" : n}</option>`).join("")}</select>
+        <select class="po-start-agent">${AGENT_KINDS.map((k) => `<option value="${k}" ${k === p.startTeam.agent ? "selected" : ""}>${esc(AGENT_LABELS[k])}</option>`).join("")}</select>
+        <span class="as-hint">ready by the time the stand-up's done</span></label>
+    </section>
     <section class="po-auto">
       <h4>🤖 Autopilot</h4>
       <label class="as-check"><input type="checkbox" class="po-auto-on" ${p.autopilot.on ? "checked" : ""} />
@@ -166,6 +179,12 @@ export function openPolicy(policy: TeamPolicy, onSave: (p: TeamPolicy) => void):
       approveAudited: body.querySelector<HTMLInputElement>(".po-auto-approve")!.checked,
       interns: body.querySelector<HTMLInputElement>(".po-auto-interns")!.checked,
       eodAt: body.querySelector<HTMLInputElement>(".po-auto-eod")!.value,
+      keepBusy: body.querySelector<HTMLInputElement>(".po-keep-busy")!.checked,
+      approveGreen: body.querySelector<HTMLInputElement>(".po-green")!.checked,
+    };
+    p.startTeam = {
+      agent: body.querySelector<HTMLSelectElement>(".po-start-agent")!.value as AgentKind,
+      count: Number(body.querySelector<HTMLSelectElement>(".po-start-n")!.value),
     };
     modal.close();
     onSave(p);

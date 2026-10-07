@@ -19,7 +19,7 @@ import "../styles/phone.css";
  * button in the corner shows how many things need you even when it's away.
  */
 
-export type PhoneApp = "home" | "alerts" | "chat" | "tasks" | "reviews" | "workers" | "history" | "music" | "travel";
+export type PhoneApp = "home" | "alerts" | "chat" | "monitor" | "tasks" | "reviews" | "workers" | "history" | "music" | "travel";
 
 export interface PhoneActions {
   office(): OfficeState;
@@ -44,6 +44,10 @@ export interface PhoneActions {
   setAutopilot(on: boolean): void;
   openHistory(): void;
   openLaptop(): void;
+  /** The Agent monitor: every worker's live CLI at once. */
+  openMonitor(): void;
+  /** Approve a worker's finished work, or send it back with a note — without office hours. */
+  review(deskId: string, approve: boolean, text: string): void;
   travel(place: (typeof PLACES)[number]): void;
   /** The phone opened or closed (to free or take the mouse). */
   shown(open: boolean): void;
@@ -52,6 +56,7 @@ export interface PhoneActions {
 const APPS: { id: Exclude<PhoneApp, "home">; icon: string; label: string; color: string }[] = [
   { id: "alerts", icon: "🔔", label: "Alerts", color: "#ef476f" },
   { id: "chat", icon: "💬", label: "Chat", color: "#4cc9f0" },
+  { id: "monitor", icon: "📺", label: "Monitor", color: "#3a86ff" },
   { id: "tasks", icon: "🎯", label: "Goals", color: "#ffd166" },
   { id: "reviews", icon: "🎤", label: "Reviews", color: "#c77dff" },
   { id: "workers", icon: "🧑‍💻", label: "Workers", color: "#06d6a0" },
@@ -139,6 +144,12 @@ export class Phone {
   }
 
   private go(app: PhoneApp): void {
+    // Too many screens for a phone: the monitor opens big, and the phone goes away.
+    if (app === "monitor") {
+      this.close();
+      this.a.openMonitor();
+      return;
+    }
     this.app = app;
     this.refresh(true);
   }
@@ -150,7 +161,7 @@ export class Phone {
     const waiting = office.desks.filter((d) => d.worker?.status === "waiting").length;
     const line = office.presentations.filter((p) => p.report).length;
     const overdue = this.a.progress().goals.filter((g) => g.dueAt && !g.shippedAt && g.dueAt < Date.now()).length;
-    return { alerts: urgent + waiting, workers: waiting, reviews: line, tasks: overdue };
+    return { alerts: urgent + waiting, monitor: waiting, workers: waiting, reviews: line, tasks: overdue };
   }
 
   /** Redraw (only when something changed, unless forced: inputs keep their text). */
@@ -219,6 +230,9 @@ export class Phone {
         ];
         return this.head("🔔 Alerts") + (rows.length ? rows.join("") : `<p class="ph-empty">All clear. I'll buzz you when a worker needs you, work is waiting, or a deadline gets close.</p>`);
       }
+      case "monitor":
+        // Never shown here (go() opens the big monitor instead).
+        return "";
       case "chat": {
         const desks = office.desks.filter((d) => d.worker);
         return (
@@ -258,7 +272,13 @@ export class Phone {
           this.head("🎤 Reviews") +
           (line.length
             ? line
-                .map((p) => `<div class="ph-card"><b>${esc(this.name(p.deskId))}: ${esc(p.report!.title)}</b><span>${esc(p.report!.summary.slice(0, 140))}</span>${p.report!.check ? `<span class="ph-sub">${p.report!.check.status === "pass" ? "✅ checks pass" : p.report!.check.status === "running" ? "⏳ checking…" : "❌ checks fail"}</span>` : ""}</div>`)
+                .map(
+                  (p) =>
+                    `<div class="ph-card"><b>${esc(this.name(p.deskId))}: ${esc(p.report!.title)}</b><span>${esc(p.report!.summary.slice(0, 140))}</span>${p.report!.check ? `<span class="ph-sub">${p.report!.check.status === "pass" ? "✅ checks pass" : p.report!.check.status === "running" ? "⏳ checking…" : "❌ checks fail"}</span>` : ""}
+                    ${p.report!.question ? `<span class="ph-sub">❓ ${esc(p.report!.question)}</span>` : ""}
+                    <input class="ph-rv-note" data-rvnote="${p.deskId}" placeholder="${p.report!.status === "blocked" ? "Your answer" : "A note (needed to send it back)"}" />
+                    <div class="ph-acts">${p.report!.status === "blocked" ? "" : `<button data-approve="${p.deskId}">✅ ${p.report!.status === "plan" ? "Approve plan" : "Approve"}</button>`}<button data-back="${p.deskId}">${p.report!.status === "blocked" ? "💬 Answer" : "↩ Send back"}</button></div></div>`,
+                )
                 .join("") + `<button class="ph-wide primary" data-do="hours">🎤 Hold office hours (${line.length})</button>`
             : `<p class="ph-empty">Nobody's waiting to present.</p>`) +
           `<button class="ph-wide" data-do="roundup">📣 Round everyone up</button>`
@@ -267,7 +287,7 @@ export class Phone {
       case "workers": {
         const desks = office.desks.filter((d) => d.worker);
         return (
-          this.head("🧑‍💻 Workers") +
+          this.head("🧑‍💻 Workers", desks.length ? `<button class="ph-link" data-app="monitor">📺 Watch all ›</button>` : "") +
           (desks.length
             ? desks
                 .map((d) => {
@@ -324,6 +344,22 @@ export class Phone {
     });
     on("[data-chat]", (el) => away(() => this.a.openChat(el.dataset.chat)));
     on("[data-term]", (el) => away(() => this.a.openTerminal(el.dataset.term!)));
+    const note = (deskId: string) => s.querySelector<HTMLInputElement>(`[data-rvnote="${deskId}"]`);
+    on("[data-approve]", (el) => {
+      const id = el.dataset.approve!;
+      this.a.review(id, true, note(id)?.value.trim() ?? "");
+      el.closest(".ph-card")?.classList.add("done");
+    });
+    on("[data-back]", (el) => {
+      const id = el.dataset.back!;
+      const n = note(id);
+      if (!n?.value.trim()) {
+        n?.focus();
+        return;
+      }
+      this.a.review(id, false, n.value.trim());
+      el.closest(".ph-card")?.classList.add("done");
+    });
     on("[data-goto]", (el) => this.a.goToDesk(el.dataset.goto!));
     on("[data-goal]", (el) => away(() => this.a.openGoals(el.dataset.goal || undefined)));
     on("[data-rem]", (el) => {

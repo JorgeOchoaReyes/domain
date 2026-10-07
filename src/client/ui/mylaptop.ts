@@ -13,11 +13,13 @@ import { esc, openModal, type Modal } from "./modal.js";
 import { workerName } from "./team.js";
 import { ingestLoop, loopState, onLoop, renderLoop, type LoopHandlers } from "./loop.js";
 import { openDeck, paintDeckSlide } from "./deck.js";
+import { MonitorView, type MonitorActions } from "./monitor.js";
 import "../styles/loop.css";
 
 /**
  * Your own laptop, open anywhere (L): a little desktop with a dock of apps.
  *
+ * - 📺 Monitor: every worker's live terminal at once, to watch and answer.
  * - 🌐 Browser: the app your workers are building, in a frame — the preview
  *   URL from domain.config.json, or any dev server found running locally.
  * - 🖥 Workers: any worker's live terminal, to watch or type into.
@@ -29,10 +31,11 @@ import "../styles/loop.css";
  * the office and progress.
  */
 
-export type LaptopApp = "team" | "browser" | "workers" | "loop" | "decks" | "deploy";
+export type LaptopApp = "team" | "monitor" | "browser" | "workers" | "loop" | "decks" | "deploy";
 
 const APPS: { id: LaptopApp; icon: string; label: string }[] = [
   { id: "team", icon: "💬", label: "Team" },
+  { id: "monitor", icon: "📺", label: "Monitor" },
   { id: "browser", icon: "🌐", label: "Browser" },
   { id: "workers", icon: "🖥", label: "Workers" },
   { id: "loop", icon: "🎯", label: "Loop" },
@@ -79,7 +82,13 @@ export class MyLaptop {
 
   private resizer = new ResizeObserver(() => this.refit());
 
-  constructor(private actions: LaptopActions) {
+  // The Monitor app: every terminal at once.
+  private monitorView: MonitorView | null = null;
+
+  constructor(
+    private actions: LaptopActions,
+    private monitor: MonitorActions,
+  ) {
     this.termHost.className = "lt-term";
     this.dHost.className = "lt-term";
     this.resizer.observe(this.termHost);
@@ -166,6 +175,8 @@ export class MyLaptop {
       onClose: () => {
         this.modal = null;
         this.watching = null;
+        this.monitorView?.destroy();
+        this.monitorView = null;
         if (this.clockTimer !== null) clearInterval(this.clockTimer);
         this.clockTimer = null;
       },
@@ -186,9 +197,12 @@ export class MyLaptop {
     this.app = app;
     this.renderKey = "";
     this.root.querySelectorAll<HTMLElement>(".lt-tabs [data-app]").forEach((b) => b.classList.toggle("on", b.dataset.app === app));
+    this.monitorView?.destroy();
+    this.monitorView = null;
     this.content.innerHTML = "";
     this.content.dataset.app = app;
     if (app === "team") this.showTeam();
+    else if (app === "monitor") this.monitorView = new MonitorView(this.content, this.monitor);
     else if (app === "browser") this.showBrowser();
     else if (app === "workers") this.showWorkers();
     else if (app === "deploy") this.showDeploy();
@@ -198,7 +212,8 @@ export class MyLaptop {
   /** New office or progress: refresh what depends on it, without disturbing the browser or terminals. */
   private soft(): void {
     if (!this.modal) return;
-    if (this.app === "loop") this.renderLoopApp();
+    if (this.app === "monitor") this.monitorView?.refresh();
+    else if (this.app === "loop") this.renderLoopApp();
     else if (this.app === "decks") this.renderDecks();
     else if (this.app === "workers") this.renderWorkerList();
     else if (this.app === "team") this.renderTeamPeople();

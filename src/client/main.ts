@@ -1,7 +1,7 @@
 import { ingestAlumni, openFire } from "./ui/fire.js";
 import { ingestLessons, openLessons } from "./ui/lessons.js";
 import { ingestSkills } from "./ui/skills.js";
-import { ingestVoices, osDictationHint, useVoices } from "./voice.js";
+import { ingestVoices, osDictationHint, speak, useVoices } from "./voice.js";
 import { openVoices } from "./ui/voices.js";
 import { openGiveTask } from "./ui/waiting.js";
 import type { AgentKind, ClientMessage, Desk, Look, OfficeState, Presentation } from "../shared/protocol.js";
@@ -34,11 +34,12 @@ import { World } from "./scene/world.js";
 import { Player, type ViewMode } from "./scene/player.js";
 import { ShotMeter } from "./scene/minigames.js";
 import { openArcade, arcadeBest } from "./ui/arcade.js";
-import { openStandup, type StandupPlan } from "./ui/standup.js";
+import { openStandup, standupDraftArrived, type StandupPlan } from "./ui/standup.js";
 import { openTeleport, placeDestinations, teleportFlash, type Destination } from "./ui/teleport.js";
 import { Minimap } from "./ui/minimap.js";
 import { ObjectiveTracker, nextObjective, type Objective } from "./ui/objective.js";
 import { MyLaptop } from "./ui/mylaptop.js";
+import { openMonitor, type MonitorActions, type MonitorView } from "./ui/monitor.js";
 import { openDeck, refreshDeck } from "./ui/deck.js";
 import { loadSettings, openSettings, saveSettings, type Settings } from "./ui/settings.js";
 import { Music } from "./music.js";
@@ -73,7 +74,7 @@ import type { Idea } from "../shared/ideas.js";
 import { pickCharacter } from "./ui/charpick.js";
 import { esc, escapeModal, modalOpen } from "./ui/modal.js";
 import { GoalsWindow } from "./ui/goals.js";
-import { SessionPill, openStartSession, showSessionSummary } from "./ui/session.js";
+import { SessionPill, listenForRecap, openStartSession, showSessionSummary } from "./ui/session.js";
 import { PlayerCard, blankStats, openProfile } from "./ui/profile.js";
 import { confetti, engine, floatXp, isMuted, setFxVolume, setMuted, sound } from "./ui/fx.js";
 import { carNear, exitSpot } from "./scene/cars.js";
@@ -187,6 +188,7 @@ const hud = new Hud(hudRoot, {
   onStandup: () => openStandupNow(),
   onTravel: () => openTravel(),
   onLaptop: () => openLaptop(),
+  onMonitor: () => openMonitorNow(),
   onSettings: () => openSettingsNow(),
 });
 const minimap = new Minimap(hudRoot, () => openTravel());
@@ -284,7 +286,11 @@ hudRoot.appendChild(crosshair);
 for (const a of ARCADES) world.gameRoom.setBest(a.id, arcadeBest(a.id));
 /** What the loop controls (in the Goals window and on your laptop) can do. */
 const loopHandlers: LoopHandlers = {
-  send: (m) => net.send(m),
+  send: (m) => {
+    // A worker's terminal resized here: its laptop (and the monitors) follow, so lines wrap as they do there.
+    if (m.t === "resize") world.resizeTerminal(m.deskId, m.cols, m.rows);
+    net.send(m);
+  },
   roundup: () => openRoundup(),
   officeHours: () => startOfficeHours(),
   openDeck: (goal) => openDeck(goal),
@@ -296,7 +302,27 @@ const loopHandlers: LoopHandlers = {
     hud.toast("🪑 Walk to a desk with a green + and press E to hire");
   },
 };
-const laptop = new MyLaptop(loopHandlers);
+/** The Agent monitor: every worker's live CLI at once (K, the monitor wall, the laptop, the phone). */
+const monitorActions: MonitorActions = {
+  office: () => office,
+  progress: () => progress,
+  send: (m) => net.send(m),
+  paintTerminal: (deskId, g, x, y, w, h) => world.paintTerminal(deskId, g, x, y, w, h),
+  terminalVersion: (deskId) => world.terminalVersion(deskId),
+  canType: () => guestRole() !== "visitor",
+  openTerminal: (deskId) => openTerminal(deskId),
+  goToDesk: (deskId) => {
+    escapeModal();
+    goToDesk(deskId);
+  },
+};
+let monitorView: MonitorView | null = null;
+function openMonitorNow(focus?: string): void {
+  if (reviewing()) return;
+  phone.close();
+  monitorView = openMonitor(monitorActions, () => (monitorView = null), focus).view;
+}
+const laptop = new MyLaptop(loopHandlers, monitorActions);
 const goals = new GoalsWindow({
   loop: loopHandlers,
   create: (title, why, tasks, kind, dueAt) => net.send({ t: "goalCreate", title, why, tasks, kind, dueAt: dueAt ?? null }),
@@ -436,6 +462,7 @@ net.onMessage = (msg) => {
       const startedNow = !progress.session && msg.progress.session;
       progress = msg.progress;
       world.setProgress(progress);
+      monitorView?.refresh();
       goals.update(progress, office.desks, office.presentations);
       refreshDeck(progress.goals);
       refreshGame();
@@ -458,6 +485,9 @@ net.onMessage = (msg) => {
       break;
     case "sessionEnd":
       showSessionSummary(msg.summary);
+      break;
+    case "standupDraft":
+      standupDraftArrived(msg.draft, msg.via);
       break;
     case "said":
       if (msg.from === "agent") world.speak(msg.deskId, msg.text);
@@ -585,6 +615,7 @@ function applyOffice(): void {
     else lastStatus.delete(desk.id);
   }
   goals.update(progress, office.desks, office.presentations);
+  monitorView?.refresh();
   hud.update(office.desks, office.presentations, office.peers, selfId);
   objective.update(nextObjective(progress, office.desks, office.presentations));
 
@@ -630,7 +661,10 @@ function openTerminal(deskId: string): void {
   terminalPending = deskId;
   terminal.open(deskId, title, desk.worker.status, {
     onInput: (data) => net.send({ t: "input", deskId, data }),
-    onResize: (cols, rows) => net.send({ t: "resize", deskId, cols, rows }),
+    onResize: (cols, rows) => {
+      world.resizeTerminal(deskId, cols, rows);
+      net.send({ t: "resize", deskId, cols, rows });
+    },
     onFire: () => {
       const w = deskById(deskId)?.worker;
       if (!w) return;
@@ -1033,6 +1067,11 @@ const phone = new Phone({
   },
   openHistory: () => openHistory((m) => net.send(m)),
   openLaptop: () => openLaptop(),
+  openMonitor: () => openMonitorNow(),
+  review: (deskId, approve, text) => {
+    net.send({ t: "review", deskId, approve, ...(text ? { text } : {}) });
+    hud.toast(approve ? "✅ Approved from your phone" : "↩ Sent back with your note");
+  },
   travel: (p) => travelTo({ label: p.label, icon: p.icon, x: p.x, z: p.z, facing: p.facing }),
   shown: (open) => {
     // The mouse is for the phone while it's out; you can still walk.
@@ -1376,15 +1415,41 @@ function openStandupNow(): void {
       setTimeout(
         () =>
           hud.toast(
-            staffed
-              ? "🎯 Goal set. Open Goals (G) to plan it with a worker, or walk to their desk"
-              : "🎯 Goal set. Next: hire a worker on the work floor — T then 1 to get there fast",
+            !staffed
+              ? "🎯 Goal set. Next: hire a worker on the work floor — T then 1 to get there fast (or set a starting team in Team policy)"
+              : plan.dispatch !== false
+                ? "🚀 Day started — the tasks are going out to free workers · K watches them all"
+                : "🎯 Goal set. Open Goals (G) to hand out its tasks",
           ),
         900,
       );
     },
     () => {},
+    {
+      draft: (text) => net.send({ t: "standupVoice", text }),
+      speak: (text) => speak(text, "claude"),
+      resume: () => {
+        net.send({ t: "resume" });
+        sound.levelUp();
+        hud.toast("↺ Picking up where you left off — the team's waking and the open tasks go out");
+      },
+    },
   );
+}
+
+// The end-of-day recap is read aloud.
+listenForRecap((text) => speak(text, "claude"));
+
+/** N: the next thing that needs you — an agent's question, then work ready to review — in the Agent monitor. */
+function nextNeedsYou(): void {
+  const waiting = office.desks.find((d) => d.worker?.status === "waiting");
+  const ready = office.desks.find((d) => d.worker?.report) ?? office.desks.find((d) => office.presentations.some((p) => p.deskId === d.id && p.report));
+  const id = waiting?.id ?? ready?.id;
+  if (!id) {
+    hud.toast("✨ Nobody needs you right now");
+    return;
+  }
+  openMonitorNow(id);
 }
 
 function travelTo(d: Destination): void {
@@ -1787,6 +1852,10 @@ function interact(): void {
   }
   if (interactFun()) return;
   const { x, z } = player.position;
+  if (world.nearMonitorWall(x, z)) {
+    openMonitorNow();
+    return;
+  }
   if (world.inMyOffice(x, z) && world.nearReviewDesk(x, z)) {
     startOfficeHours();
     return;
@@ -1849,7 +1918,8 @@ function hintWork(): string | null {
         ? `<span class="title">⭐ Your desk</span> <span class="key">E</span> Start office hours · ${ready} ready`
         : `<span class="title">⭐ Your desk</span> Nobody ready yet · <span class="key">R</span> round up workers`;
     }
-    return `<span class="title">⭐ Your office</span> Sit at your desk to hold reviews`;
+    if (world.nearMonitorWall(x, z)) return `<span class="title">📺 Monitor wall</span> <span class="key">E</span> Every agent's CLI, live — answer them from here`;
+    return `<span class="title">⭐ Your office</span> Sit at your desk to hold reviews · <span class="key">K</span> Agent monitor`;
   }
   const near = world.nearestDesk(x, z);
   if (near && near.dist <= INTERACT_RADIUS) {
@@ -1915,6 +1985,8 @@ window.addEventListener("keydown", (e) => {
   else if (key === "u") openStandupNow();
   else if (key === "m") applySettings({ ...settings, minimap: !settings.minimap });
   else if (key === "l") openLaptop();
+  else if (key === "k") openMonitorNow();
+  else if (key === "n") nextNeedsYou();
   else if (key === "p") phone.toggle();
   else if (e.key === "Tab") {
     e.preventDefault();

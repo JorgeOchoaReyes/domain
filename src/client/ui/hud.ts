@@ -42,6 +42,7 @@ export interface HudHandlers {
   onStandup(): void;
   onTravel(): void;
   onLaptop(): void;
+  onMonitor(): void;
   onSettings(): void;
 }
 
@@ -89,6 +90,7 @@ export class Hud {
         <button class="btn dock-btn sec moved" data-act="roundup" title="Call workers to your office (R)">📣 <span class="lbl">Round up</span></button>
         <button class="btn dock-btn sec moved" data-act="hours" title="Hold office hours (O)">🎤 <span class="lbl">Office hours</span> <span class="svc-count hidden">0</span></button>
         <button class="btn dock-btn" data-act="laptop" title="Your laptop: browser, workers, loop, decks (L)">💻 <span class="lbl">Laptop</span></button>
+        <button class="btn dock-btn" data-act="monitor" title="Agent monitor: every agent's live CLI at once — watch and answer them (K)">📺 <span class="lbl">Monitor</span></button>
         <button class="btn dock-btn sec moved" data-act="travel" title="Fast travel (T)">🌀 <span class="lbl">Travel</span></button>
         <button class="btn dock-btn dock-icon" data-act="settings" title="Settings: speed, mouse, view (Esc)" aria-label="Settings">⚙️</button>
         <button class="btn dock-btn dock-icon dock-help" data-act="help" title="Controls (H)" aria-label="Controls">?</button>
@@ -106,6 +108,7 @@ export class Hud {
     top.querySelector('[data-act="standup"]')!.addEventListener("click", () => this.handlers.onStandup());
     top.querySelector('[data-act="travel"]')!.addEventListener("click", () => this.handlers.onTravel());
     top.querySelector('[data-act="laptop"]')!.addEventListener("click", () => this.handlers.onLaptop());
+    top.querySelector('[data-act="monitor"]')!.addEventListener("click", () => this.handlers.onMonitor());
     top.querySelector('[data-act="settings"]')!.addEventListener("click", () => this.handlers.onSettings());
     this.goalsCount = top.querySelector(".goals-n")!;
     this.leftEl = top.querySelector(".tb-left")!;
@@ -271,11 +274,13 @@ export class Hud {
       ["Q", "Put your coffee down (and its speed boost with it)"],
       ["C", "Team chat: message a worker or everyone; see what each is doing now and what it has done; type into its terminal"],
       ["T", "Fast travel: work floor, your office, stand-up, kitchen, game room, outside — or straight to a worker who needs you"],
-      ["U", "Stand-up: pick today's goal, set the tone, start the session"],
+      ["U", "Stand-up: say your day out loud (🎤) and it becomes the plan — summary, end-of-day goals, tasks handed out — or Resume yesterday in one click"],
       ["L", "Your laptop: a browser for what's being built, workers' screens, the loop, decks and deploys — near a couch or table you sit down and it stays there"],
+      ["K", "Agent monitor: every agent's live CLI at once, whoever needs you first — answer with a message, a task or a key (1, 2, 3, Enter, Esc) without leaving your seat · also the monitor wall in your office, the laptop's 📺 Monitor and the phone"],
+      ["N", "The next thing that needs you: an agent's question, then finished work to review — opened big in the Agent monitor, ready to answer, approve or send back"],
       ["P", "Your phone: alerts, chat, goals and deadlines, reviews, workers, history, music and travel — keep walking with it out"],
       ["M", "Show or hide the minimap"],
-      ["E", "At a desk: hire a worker, or open its terminal · At your desk: start office hours · At a whiteboard: the idea board · At a jukebox: pick the music · Coffee, arcades, hoops, the ball: have fun"],
+      ["E", "At a desk: hire a worker, or open its terminal · At your desk: start office hours · At the monitor wall in your office: the Agent monitor · At a whiteboard: the idea board · At a jukebox: pick the music · Coffee, arcades, hoops, the ball: have fun"],
       ["G", "Goals: set one, break it into tasks, assign them to workers"],
       ["F", "Focus session: a timed sprint — finish it for XP and to keep your streak"],
       ["R", "Round up workers: they prepare a progress report and line up outside your office"],

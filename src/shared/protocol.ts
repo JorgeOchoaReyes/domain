@@ -1,3 +1,4 @@
+import type { StandupDraft } from "./standupDraft.js";
 import type { Alumnus } from "./alumni.js";
 import type { LessonsState } from "./lessons.js";
 import type { SkillSeen } from "./skills.js";
@@ -306,7 +307,18 @@ export type ClientMessage =
       tone: ToneId;
       intention: string;
       minutes: number;
+      /** From a spoken stand-up: its summary and the end-of-day goals. */
+      summary?: string;
+      eod?: string[];
+      /** Hand the goal's tasks to free workers straight away (default true). */
+      dispatch?: boolean;
+      /** The tasks as planned at the stand-up and who takes each ("" = whoever's free): missing ones are added, picked ones saved for their worker. */
+      assign?: { task: string; deskId: string }[];
     }
+  /** A spoken stand-up, as words: answered with "standupDraft" (a plan to look over). */
+  | { t: "standupVoice"; text: string }
+  /** Pick up where the last stand-up left off: wake the team, same goal, tone and length, tasks handed out. */
+  | { t: "resume" }
   // --- the agent loop ------------------------------------------------------
   /** Ask the worker at a desk to break a goal into tasks (it writes plan.md). */
   | { t: "plan"; goalId: string; deskId: string }
@@ -415,6 +427,8 @@ export type ServerMessage =
   | { t: "award"; who: string; xp: number; reason: string; levelUp?: { level: number; title: string }; unlocked: string[] }
   /** The focus session ended. */
   | { t: "sessionEnd"; summary: SessionSummary }
+  /** A spoken stand-up turned into a plan ("claude": by a model; "simple": from your sentences). */
+  | { t: "standupDraft"; draft: StandupDraft; via: "claude" | "simple" }
   // --- projects and GitHub -------------------------------------------------
   | { t: "project"; info: ProjectInfo; recent: RecentProject[]; account: GithubAccount | null }
   /** The office is switching to another project: the app restarts on it. */

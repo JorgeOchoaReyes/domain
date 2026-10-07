@@ -1,5 +1,7 @@
 import { Alumni } from "./alumni.js";
 import { Autopilot } from "./autopilot.js";
+import { draftStandup } from "./standupVoice.js";
+import type { TeamMember } from "../shared/standupDraft.js";
 import { BAY_DESK_IDS, DESKS } from "../shared/layout.js";
 import { Lessons } from "./lessons.js";
 import { EodSync } from "./sync.js";
@@ -814,7 +816,28 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
           tone: msg.tone,
           intention: str(msg.intention, 1000) ?? "",
           minutes,
+          summary: str(msg.summary, 1000) ?? "",
+          eod: Array.isArray(msg.eod) ? msg.eod.filter((e): e is string => typeof e === "string").slice(0, 6) : [],
         });
+        // Who takes what (picked at the stand-up): each task is saved for its worker.
+        const goalId = progress.snapshot().session?.goalId;
+        const goal = goalId ? progress.snapshot().goals.find((g) => g.id === goalId) : undefined;
+        if (goal && Array.isArray(msg.assign)) {
+          const staffed = new Set(office.snapshot().desks.filter((d) => d.worker).map((d) => d.id));
+          for (const a of msg.assign.slice(0, 40)) {
+            const title = a && typeof a.task === "string" ? a.task.replace(/\s+/g, " ").trim().slice(0, 300) : "";
+            if (!title) continue;
+            // An open goal it was about may not have this task yet: add it.
+            let t = goal.tasks.find((x) => x.title.toLowerCase() === title.toLowerCase());
+            if (!t) {
+              const id = progress.addTask(goal.id, title);
+              t = id ? progress.snapshot().goals.find((g) => g.id === goal.id)?.tasks.find((x) => x.id === id) : undefined;
+            }
+            if (t && t.status === "todo" && !t.deskId && typeof a.deskId === "string" && staffed.has(a.deskId)) progress.reserve(goal.id, t.id, a.deskId);
+          }
+        }
+        // Then the tasks go out: each to its worker if they're free, the rest to whoever is (a goal without tasks gets planned first).
+        if (goalId && msg.dispatch !== false) setTimeout(() => dispatchGoal(client.name, goalId), 500).unref();
         break;
       }
       case "plan": {
@@ -1183,12 +1206,75 @@ const autopilot = new Autopilot({
   requests: internRequests,
   internDesks: () => [...BAY_DESK_IDS, ...DESKS.map((d) => d.id).filter((id) => !BAY_DESK_IDS.includes(id))],
   eod: () => void eod.run(),
+  sessionGoal: () => progress.snapshot().session?.goalId ?? null,
+  diffLines: (deskId) => {
+    const ws = office.workspaceOf(deskId);
+    return ws && office.workspaces ? office.workspaces.diffLines(office.workdir(deskId)) : null;
+  },
   note: (text, deskId) => {
     history.add({ kind: "audit", who: "Autopilot", text, ...(deskId ? { worker: workerRef(deskId) } : {}) });
     broadcast({ t: "loop", goalId: "", event: "warn", text: `🤖 ${text}` });
   },
 });
 setInterval(() => autopilot.tick(), 20_000).unref();
+
+/** The team as the stand-up's planner sees it: who, on what, what they're for, what they've done. */
+function teamForPlanning(): TeamMember[] {
+  const goals = progress.snapshot().goals;
+  return office
+    .snapshot()
+    .desks.filter((d) => d.worker && !BAY_DESK_IDS.includes(d.id))
+    .map((d) => {
+      const w = d.worker!;
+      const on = goals.flatMap((g) => g.tasks).find((t) => t.deskId === d.id && t.status !== "done");
+      const character = w.identity ? progress.character(w.identity.characterId) : null;
+      return {
+        deskId: d.id,
+        name: w.identity?.name ?? `${AGENT_LABELS[w.agent]} at ${d.label}`,
+        agent: AGENT_LABELS[w.agent],
+        model: w.model,
+        status: w.status === "idle" && !on ? "idle" : w.status,
+        doing: on?.title ?? "",
+        persona: character?.persona ?? "",
+        done: history
+          .latest()
+          .filter((e) => e.kind === "approved" && e.worker?.deskId === d.id && e.task)
+          .slice(0, 4)
+          .map((e) => e.task!),
+      };
+    });
+}
+
+/** Hand a goal's waiting tasks to the free workers now, and say so. */
+function dispatchGoal(who: string, goalId: string): void {
+  const n = autopilot.dispatch(goalId);
+  const goal = progress.snapshot().goals.find((g) => g.id === goalId);
+  if (n && goal) broadcast({ t: "loop", goalId, event: "warn", text: `🚀 ${who === "Autopilot" ? "" : `${who}'s `}stand-up: ${n} worker${n === 1 ? "" : "s"} on “${goal.title}”` });
+}
+
+/**
+ * The team the policy says to start with: last time's workers wake, and new
+ * ones are hired at the free desks (not the intern bay) until there are enough
+ * — so they're up by the time the stand-up's done.
+ */
+function startTeam(): void {
+  const { agent, count } = progress.policy.startTeam;
+  if (!count) return;
+  const woken = office.wake();
+  const desks = () => office.snapshot().desks;
+  let staffed = desks().filter((d) => d.worker && !BAY_DESK_IDS.includes(d.id)).length;
+  let hired = 0;
+  for (const d of desks()) {
+    if (staffed >= count) break;
+    if (d.worker || BAY_DESK_IDS.includes(d.id)) continue;
+    if (!office.hire(d.id, agent, "Office", progress.policy.defaultModel[agent], progress.policy.leash, progress.policy.isolate, null)) continue;
+    history.add({ kind: "hired", who: "Office", text: `The office started ${nameAt(d.id)} at ${d.id.replace("desk-", "desk ")} (your starting team)`, worker: workerRef(d.id) });
+    staffed++;
+    hired++;
+  }
+  if (woken || hired) log.start("agent", `Starting team: ${[woken ? `woke ${woken}` : "", hired ? `hired ${hired} ${AGENT_LABELS[agent]}` : ""].filter(Boolean).join(", ")}`).done(true);
+}
+setTimeout(startTeam, 1500).unref();
 
 // Workers can ask for interns when the policy allows it.
 briefNotes.push((_g, _t, deskId) =>
@@ -1213,6 +1299,24 @@ routes.set("wake", (msg, client) => {
 routes.set("trustWorkers", () => {
   trustProject(CWD);
   void office.trustAll().then((n) => log.start("agent", n ? `Trusted this project's worker folders (answered ${n} waiting)` : "Trusted this project's worker folders").done(true));
+});
+// A spoken stand-up: what you said becomes a plan to look over (by a quick model, or from your sentences).
+routes.set("standupVoice", (msg, _client, ws) => {
+  const text = typeof msg.text === "string" ? msg.text.slice(0, 6000) : "";
+  if (!text.trim()) return;
+  const snap = progress.snapshot();
+  const open = snap.goals.filter((g) => !g.doneAt && !g.shippedAt).map((g) => g.title);
+  void draftStandup(text, open, { simulate: SIMULATE, team: teamForPlanning() }).then(({ draft, via }) => send(ws, { t: "standupDraft", draft, via }));
+});
+// Resume yesterday: the team wakes, and the last stand-up's plan starts again with its tasks handed out.
+routes.set("resume", (_msg, client) => {
+  const plan = progress.lastPlan;
+  if (!plan || progress.snapshot().session) return;
+  const woken = office.wake();
+  progress.standup(client.name, { goalId: plan.goalId, tone: plan.tone ?? "focus", intention: plan.intention, minutes: plan.minutes, summary: plan.summary, eod: plan.eod });
+  log.start("agent", `${client.name} resumed yesterday's plan${woken ? `, woke ${woken} worker${woken === 1 ? "" : "s"}` : ""}`).done(true);
+  // Woken workers need a moment to come up before they take tasks.
+  if (plan.goalId) setTimeout(() => dispatchGoal(client.name, plan.goalId!), woken ? 8000 : 500).unref();
 });
 for (const make of MODULES) {
   for (const [t, route] of Object.entries(make(ctx))) if (route) routes.set(t, route);

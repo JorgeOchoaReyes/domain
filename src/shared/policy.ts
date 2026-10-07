@@ -85,6 +85,8 @@ export interface TeamPolicy {
   merge: MergeMode;
   gate: GateMode;
   autopilot: AutopilotPolicy;
+  /** Workers to start (or wake) as soon as the office opens, so they're ready by the end of the stand-up. */
+  startTeam: StartTeam;
 }
 
 /** The office running itself (see server/autopilot.ts). */
@@ -96,9 +98,26 @@ export interface AutopilotPolicy {
   interns: boolean;
   /** When the end-of-day sync runs ("17:30"; "" = never on its own). */
   eodAt: string;
+  /**
+   * Keep workers busy, even with autopilot off: a worker that's free picks up
+   * the next task of the session's goal (the one you chose at the stand-up).
+   */
+  keepBusy: boolean;
+  /** Approve small work whose checks passed (no audit needed): it merges and you hear about it. */
+  approveGreen: boolean;
 }
 
-export const DEFAULT_AUTOPILOT: AutopilotPolicy = { on: false, approveAudited: true, interns: true, eodAt: "17:30" };
+/** "Small" for approveGreen: at most this many lines added and removed. */
+export const GREEN_MAX_LINES = 150;
+
+/** The team the office starts on its own when it opens (count 0: none). */
+export interface StartTeam {
+  agent: AgentKind;
+  count: number;
+}
+export const MAX_START_TEAM = 8;
+
+export const DEFAULT_AUTOPILOT: AutopilotPolicy = { on: false, approveAudited: true, interns: true, eodAt: "17:30", keepBusy: true, approveGreen: false };
 
 export const TIME_BUDGETS = [0, 15, 30, 45, 60, 90] as const;
 
@@ -119,6 +138,7 @@ export const DEFAULT_POLICY: TeamPolicy = {
   merge: "auto",
   gate: "fix",
   autopilot: DEFAULT_AUTOPILOT,
+  startTeam: { agent: "claude", count: 0 },
 };
 
 /** How many times a failed check sends the same work back before it reaches you anyway. */
@@ -207,8 +227,16 @@ export function coercePolicy(raw: unknown, base: TeamPolicy = DEFAULT_POLICY): T
     isolate: typeof o.isolate === "boolean" ? o.isolate : base.isolate,
     merge: o.merge === "auto" || o.merge === "manual" ? o.merge : base.merge,
     gate: o.gate === "fix" || o.gate === "show" ? o.gate : base.gate,
-      autopilot: coerceAutopilot((o as { autopilot?: unknown }).autopilot, base.autopilot ?? DEFAULT_AUTOPILOT),
-};
+    autopilot: coerceAutopilot((o as { autopilot?: unknown }).autopilot, base.autopilot ?? DEFAULT_AUTOPILOT),
+    startTeam: coerceStartTeam(o.startTeam, base.startTeam ?? DEFAULT_POLICY.startTeam, kinds),
+  };
+}
+
+function coerceStartTeam(raw: unknown, base: StartTeam, kinds: AgentKind[]): StartTeam {
+  const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const agent = typeof o.agent === "string" && (kinds as string[]).includes(o.agent) ? (o.agent as AgentKind) : base.agent;
+  const count = typeof o.count === "number" && Number.isFinite(o.count) ? Math.max(0, Math.min(MAX_START_TEAM, Math.round(o.count))) : base.count;
+  return { agent, count };
 }
 
 export function coerceAutopilot(raw: unknown, base: AutopilotPolicy = DEFAULT_AUTOPILOT): AutopilotPolicy {
@@ -218,5 +246,7 @@ export function coerceAutopilot(raw: unknown, base: AutopilotPolicy = DEFAULT_AU
     approveAudited: typeof o.approveAudited === "boolean" ? o.approveAudited : base.approveAudited,
     interns: typeof o.interns === "boolean" ? o.interns : base.interns,
     eodAt: typeof o.eodAt === "string" && (o.eodAt === "" || /^\d{1,2}:\d{2}$/.test(o.eodAt)) ? o.eodAt : base.eodAt,
+    keepBusy: typeof o.keepBusy === "boolean" ? o.keepBusy : (base.keepBusy ?? DEFAULT_AUTOPILOT.keepBusy),
+    approveGreen: typeof o.approveGreen === "boolean" ? o.approveGreen : (base.approveGreen ?? DEFAULT_AUTOPILOT.approveGreen),
   };
 }
