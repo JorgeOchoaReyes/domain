@@ -26,7 +26,9 @@ import { dirname, join, normalize, extname } from "node:path";
 import { WebSocketServer, WebSocket } from "ws";
 import { mayDirect, AGENT_KINDS, AGENT_LABELS, coerceLook, parseClientMessage, type CheckResult, type Presentation, type ServerMessage } from "../shared/protocol.js";
 import { SIGN_IN } from "../shared/trouble.js";
-import { GATE_RETRIES, coerceBrief, coercePolicy, isModelName } from "../shared/policy.js";
+import { AGENT_CONTEXT, SLOW_TPS, isLocalModel, speedVerdict, type LocalModelInfo } from "../shared/localModels.js";
+import { COPY_CONTEXTS, ollamaCopy, ollamaShow, speedOf } from "./localModels.js";
+import { GATE_RETRIES, coerceBrief, coercePolicy, isModelName, modelLabel } from "../shared/policy.js";
 import { runCheck, simulateCheck } from "./checks.js";
 import { OpLogger } from "./oplog.js";
 import { allowed } from "./permissions.js";
@@ -267,7 +269,43 @@ setInterval(() => {
 
 /** Models served on this machine (Ollama, LM Studio), refreshed every minute. */
 let localModels: string[] = [];
-const refreshLocalModels = () => void detectLocalModels().then((m) => (localModels = m));
+/** What we know of each: its context window (Ollama) and its speed here (once a worker's hired on it). */
+const localInfo: Record<string, LocalModelInfo> = {};
+const localMsg = (): ServerMessage => ({ t: "localModels", models: localModels, info: Object.fromEntries(localModels.filter((m) => localInfo[m]).map((m) => [m, localInfo[m]])) });
+let localSent = "";
+const refreshLocalModels = (): Promise<void> =>
+  detectLocalModels().then(async (m) => {
+    localModels = m;
+    await Promise.all(
+      m.filter((x) => x.startsWith("ollama/")).map(async (x) => {
+        const show = await ollamaShow(x.slice("ollama/".length));
+        if (show) localInfo[x] = { ...localInfo[x], ...show };
+      }),
+    );
+    const msg = JSON.stringify(localMsg());
+    if (msg !== localSent) {
+      localSent = msg;
+      broadcast(localMsg());
+    }
+  });
+
+/** How fast a local model runs here: measured once a session, when a worker's first hired on it. */
+function checkSpeed(model: string): void {
+  if (!isLocalModel(model) || localInfo[model]?.tps !== undefined || SIMULATE) return;
+  localInfo[model] = { ...(localInfo[model] ?? { ctx: null, max: null }), tps: 0 };
+  const op = log.start("agent", `Speed check: ${model}`, { topic: "local" });
+  void speedOf(model).then((tps) => {
+    if (tps === null) {
+      delete localInfo[model].tps;
+      op.done(false, "Couldn't measure it (is the model server still running?)");
+      return;
+    }
+    localInfo[model].tps = tps;
+    op.done(true, `${tps} tokens a second on this computer`);
+    broadcast({ t: "loop", goalId: "", event: tps < SLOW_TPS ? "warn" : "info", text: `🖥 ${modelLabel(model)} writes ${Math.round(tps)} tokens a second here — ${speedVerdict(tps)}` });
+    broadcast(localMsg());
+  });
+}
 refreshLocalModels();
 setInterval(refreshLocalModels, 60_000).unref();
 
@@ -633,6 +671,7 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
           git: office.workspaces ? { base: office.workspaces.base() } : null,
           localModels,
         });
+        send(ws, localMsg());
         if (deployer.goalId) send(ws, { t: "deployLog", goalId: deployer.goalId, data: deployer.log });
         break;
       }
@@ -662,6 +701,7 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
           const autoless = autoModeWarning(agent, model, leash);
           if (autoless) broadcast({ t: "loop", goalId: "", event: "warn", text: autoless });
           watchLocalContext(model);
+          checkSpeed(model);
           history.add({ kind: "hired", who: client.name, text: `${client.name} hired ${nameAt(msg.deskId)} at ${msg.deskId.replace("desk-", "desk ")}`, worker: workerRef(msg.deskId) });
           if (character) progress.characterHired(character.id);
           progress.hired(client.name);
@@ -1208,7 +1248,7 @@ function watchLocalContext(model: string): void {
         t: "loop",
         goalId: "",
         event: "warn",
-        text: `🧠 ${name} is running with a ${Math.round(ctxLen / 1024)}K context window — an agent needs 32K or more. In Ollama's settings set Context length to 32K (or start Ollama with OLLAMA_CONTEXT_LENGTH=32768), then hire it again. And keep its tasks small.`,
+        text: `🧠 ${name} is running with a ${Math.round(ctxLen / 1024)}K context window — an agent needs ${AGENT_CONTEXT / 1024}K or more. Team defaults → 🖥 makes a ${AGENT_CONTEXT / 1024}K copy of it in one click (or set Context length in Ollama's settings), then hire that. And keep its tasks small.`,
       });
     }
   };
@@ -1238,6 +1278,7 @@ function internRequests(): { deskId: string; pieces: string[] }[] {
 }
 
 const autopilot = new Autopilot({
+  speed: (model) => localInfo[model]?.tps || undefined,
   policy: () => progress.policy,
   goals: () => progress.snapshot().goals,
   desks: () => office.snapshot().desks,
@@ -1396,6 +1437,23 @@ routes.set("wake", (msg, client) => {
 routes.set("restartWorker", (msg, client) => {
   if (typeof msg.deskId !== "string") return;
   if (office.restart(msg.deskId, `${client.name} restarted your session.`)) log.start("agent", `${client.name} restarted ${nameAt(msg.deskId)} at ${msg.deskId.replace("desk-", "desk ")}: back in its last conversation`).done(true);
+});
+// A copy of an Ollama model with a bigger context window (same weights, nothing downloaded).
+routes.set("localCopy", (msg) => {
+  const model = typeof msg.model === "string" ? msg.model : "";
+  const ctx = Number(msg.ctx);
+  if (!model.startsWith("ollama/") || !localModels.includes(model) || !(COPY_CONTEXTS as readonly number[]).includes(ctx)) return;
+  const name = model.slice("ollama/".length);
+  const op = log.start("agent", `Making a ${ctx / 1024}K-context copy of ${name}`, { topic: "local" });
+  void ollamaCopy(name, ctx).then(async (to) => {
+    if (!to) {
+      op.done(false, "Ollama couldn't make it — is it running, and 0.5 or newer?");
+      return;
+    }
+    await refreshLocalModels();
+    op.done(true, `ollama/${to} is ready — hire it, or pick it for a task. It needs more memory than the original.`);
+    broadcast({ t: "loop", goalId: "", event: "info", text: `🖥 ollama/${to} is ready: ${name} with a ${ctx / 1024}K context window` });
+  });
 });
 // Signed out: start the CLI's own sign-in in its terminal (where it has one; else the desk says what to run).
 routes.set("workerSignIn", (msg) => {

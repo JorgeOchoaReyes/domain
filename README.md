@@ -224,6 +224,23 @@ reason. Local models still vary a lot: pick one built for agentic coding, and
 big enough for it. Hire one that won't fit in your computer's memory and you're
 told straight away (in a toast and the Logs) rather than left watching it hang.
 
+**Local models first.** They're free and private, so wherever you pick a model
+— the hire card, a character, the assignment card — the ones on this computer
+come first (🖥, *free, private*), even before you've added them to Team
+policy. Hand a small task (a typo, the README, a 15-minute budget) to a cloud
+model and the assignment card offers the local one instead; hand a big one (a
+migration, a refactor across the app) to a local model and it warns you.
+Autopilot does the same: small tasks go to workers on local models, big ones
+wait for a cloud worker (unless the whole team is local).
+
+**End to end.** Team policy shows each Ollama model's **context window**, and
+when it's too small for an agent, **⤢ Make a 32K copy** creates one with
+Ollama — same weights, nothing downloaded, just its own `num_ctx`
+(`qwen3:8b` → `qwen3:8b-32k`). The first time a worker's hired on a local
+model, a **speed check** measures how fast it writes on this computer
+(tokens a second, in a toast and the Logs); a slow one (under 10/s) gets only
+small tasks from autopilot.
+
 ## The office
 
 - **Desk pods** on the west side. A green **+** marks a free desk: press **E**
@@ -955,13 +972,6 @@ Next up, after v1.0:
   from the size of the task and how long similar ones took this team. Shown
   on the assignment card, the laptop and the phone, and checked against what
   it really took when the task is done, so the estimates get better.
-- **Local models first.** Suggest a model on this computer whenever one can
-  do the job: local models listed first (marked free and private) when hiring
-  and handing out work, a nudge when a small task is about to go to a big
-  cloud model, and autopilot preferring them for small tasks.
-- **Local models, end to end.** Pick a context window for Ollama models (or
-  have the office make a copy with a bigger one), a speed check on hire, and
-  autopilot that sizes tasks to the model — small ones for small models.
 - **Smoother still.** The first look at your office, the lobby and floor 2
   still drops a few frames once per session (50–67 ms); the outline pass costs
   as much as the scene itself; and static furniture could be merged into far

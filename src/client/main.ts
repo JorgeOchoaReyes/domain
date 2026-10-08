@@ -68,7 +68,7 @@ import { openAgentClis } from "./ui/agentclis.js";
 import { canUpdate, updateTarget } from "../shared/agents.js";
 import { openHire, openTeam, type TeamContext } from "./ui/team.js";
 import { openPolicy } from "./ui/policy.js";
-import type { LoopHandlers } from "./ui/loop.js";
+import { loopState, type LoopHandlers } from "./ui/loop.js";
 import { Hud } from "./ui/hud.js";
 import { TerminalOverlay } from "./ui/terminal.js";
 import { ReviewPanel } from "./ui/review.js";
@@ -858,7 +858,7 @@ function openPolicyNow(): void {
   openPolicy(progress.policy, (p) => {
     net.send({ t: "policySet", policy: p });
     hud.toast("🛠 Team policy saved — new hires and assignments start from it");
-  });
+  }, guestRole() ? undefined : (m) => net.send(m));
 }
 
 function openRoundup(): void {
@@ -2293,7 +2293,7 @@ void pickCharacter(myName, myLook).then(({ name, look }) => {
 
 // A handle for poking at the office from the console (and screenshot scripts) in dev builds.
 if (import.meta.env.DEV) {
-  (window as unknown as { domain: unknown }).domain = { world, player, vr, music, startOfficeHours, openLaptop, openTravel, openGoals, openHistory: () => openHistory((m) => net.send(m)), openTerminal, phone, escapeModal, net, laptop, progress: () => progress, office: () => office, agents: agentsState, openHire: (deskId: string) => { const d = deskById(deskId); if (d) hire(d); } };
+  (window as unknown as { domain: unknown }).domain = { world, player, vr, music, startOfficeHours, openLaptop, openTravel, openGoals, openHistory: () => openHistory((m) => net.send(m)), openTerminal, phone, escapeModal, net, laptop, progress: () => progress, office: () => office, agents: agentsState, localModels: () => loopState.config?.localModels ?? [], openHire: (deskId: string) => { const d = deskById(deskId); if (d) hire(d); } };
   (window as unknown as { __roomAt: unknown }).__roomAt = (x: number, z: number) => roomAt(x, z).id;
 }
 

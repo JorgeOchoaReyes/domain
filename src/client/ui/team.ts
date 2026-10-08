@@ -27,6 +27,8 @@ import { listVoices, speak, stopSpeaking } from "../voice.js";
 import { esc, openModal } from "./modal.js";
 import { agentsState, installAgent, isInstalled, onAgentsChange } from "./agents.js";
 import { ROLES, roleCharacter, type Role } from "../../shared/roles.js";
+import { isLocalModel, modelChoices } from "../../shared/localModels.js";
+import { loopState } from "./loop.js";
 import "../styles/team.css";
 
 /**
@@ -236,9 +238,9 @@ function openRoster(ctx: TeamContext & Partial<Pick<HireContext, "onHire">>, des
       <h4>⚡ Quick hire <span class="tm-sub">a plain worker, no character</span></h4>
       <div class="seg tm-leash">${(Object.keys(LEASH_LABEL) as Leash[]).map((l) => `<button data-l="${l}" title="${esc(LEASH_RULES[l])}">${LEASH_ICON[l]} ${esc(LEASH_LABEL[l])}</button>`).join("")}</div>
       <ul class="tm-agents">${AGENT_KINDS.map((k) => {
-        const models = [...new Set(["", ...policy.models[k], policy.defaultModel[k]])];
+        const models = modelChoices(k, policy.models[k], loopState.config?.localModels ?? [], [policy.defaultModel[k]]);
         return `<li data-agent="${k}"><span class="dot" style="background:${AGENT_COLOR[k]}"></span><b>${AGENT_LABELS[k]}</b>
-          <select class="tm-model" title="Model">${models.map((m) => `<option value="${esc(m)}" ${m === policy.defaultModel[k] ? "selected" : ""}>${esc(modelLabel(m))}</option>`).join("")}</select>
+          <select class="tm-model" title="Model — the ones on this computer (🖥) are free and private">${models.map((m) => `<option value="${esc(m)}" ${m === policy.defaultModel[k] ? "selected" : ""}>${esc(modelLabel(m))}${isLocalModel(m) ? " · free, private" : ""}</option>`).join("")}</select>
           <button class="btn small tm-quick-hire">Hire</button>
           <span class="tm-tools" data-agent="${k}"></span><span class="tm-skills" data-agent="${k}"></span>
           <button class="btn small primary tm-install" title="Install it with npm">⬇ Install</button></li>`;
@@ -502,8 +504,8 @@ function openEditor(
 
   const renderModels = () => {
     const def = policy.defaultModel[c.agent];
-    const choices = [...new Set(["", ...policy.models[c.agent], c.model])];
-    modelIn.innerHTML = choices.map((m) => `<option value="${esc(m)}" ${m === c.model ? "selected" : ""}>${m ? esc(m) : `Team default (${esc(modelLabel(def))})`}</option>`).join("");
+    const choices = modelChoices(c.agent, policy.models[c.agent], loopState.config?.localModels ?? [], [c.model]);
+    modelIn.innerHTML = choices.map((m) => `<option value="${esc(m)}" ${m === c.model ? "selected" : ""}>${m ? `${esc(modelLabel(m))}${isLocalModel(m) ? " · free, private" : ""}` : `Team default (${esc(modelLabel(def))})`}</option>`).join("");
   };
   modelIn.addEventListener("change", () => (c.model = modelIn.value));
 

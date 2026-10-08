@@ -312,6 +312,23 @@ await ev(() => document.querySelector(".modal.term .term-restart")?.click());
 const after = await until(() => { const w = window.domain.office().desks[0].worker; return w && w.status !== "asleep" && w.id !== window.__before ? w.status : null; }, 10000, 500);
 check("restart a worker: a new session at the same desk", !!after, after ?? "");
 
+// --- 11. Local models first (when Ollama or LM Studio runs on this computer) -------------------------
+await closeAll();
+const localOnes = await until(() => window.domain.localModels?.().length ? window.domain.localModels() : null, 8000, 500);
+if (localOnes) {
+  await ev(() => window.domain.openHire(window.domain.office().desks.find((d) => !d.worker).id));
+  await sleep(1000);
+  const firstOpt = await ev(() => document.querySelector('.tm-agents li[data-agent="codex"] .tm-model option')?.textContent);
+  check("hire card: a local model is listed first, free and private", /^🖥 .*free, private/.test(firstOpt ?? ""), firstOpt ?? "");
+  await ev(() => document.querySelector(".tm-policy").click());
+  await sleep(800);
+  const rows = await ev(() => [...document.querySelectorAll(".po-local-list li")].map((li) => li.textContent.replace(/\s+/g, " ").trim()));
+  check("Team defaults: local models with their context window", rows?.length > 0 && rows.some((r) => /context/.test(r)), JSON.stringify(rows).slice(0, 200));
+  await ev(() => document.querySelector(".po-local-list")?.scrollIntoView());
+  await shot("11-local-models.png");
+  await closeAll();
+} else results.push("SKIP  local models: none running on this computer");
+
 console.log(results.join("\n"));
 const failed = results.filter((r) => r.startsWith("FAIL")).length;
 console.log(`\n${results.length - failed}/${results.length} passed · screenshots in ${OUT}`);

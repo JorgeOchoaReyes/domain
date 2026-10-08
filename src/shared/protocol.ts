@@ -1,6 +1,7 @@
 import type { StandupDraft } from "./standupDraft.js";
 import type { Alumnus } from "./alumni.js";
 import type { Trouble } from "./trouble.js";
+import type { LocalModelInfo } from "./localModels.js";
 import type { LessonsState } from "./lessons.js";
 import type { SkillSeen } from "./skills.js";
 import type { Idea } from "./ideas.js";
@@ -406,6 +407,8 @@ export type ClientMessage =
   | { t: "restartWorker"; deskId: string }
   /** A worker that needs signing in: start its CLI's sign-in (Claude Code's /login, Gemini's /auth). */
   | { t: "workerSignIn"; deskId: string }
+  /** Make a copy of an Ollama model that runs with a bigger context window. */
+  | { t: "localCopy"; model: string; ctx: number }
   /** Let agents trust this project's worker folders (answers their trust prompts, now and later). */
   | { t: "trustWorkers" }
   /** Wake the workers remembered from last time (one desk, or everyone): each resumes where it left off. */
@@ -509,6 +512,8 @@ export type ServerMessage =
    * if none is configured — then a worker is asked to ship instead).
    */
   | { t: "config"; project: string; preview: string | null; deploy: string | null; simulate: boolean; check: string | null; git: { base: string | null } | null; localModels: string[] }
+  /** Models served on this computer, and what's known of each (context window, speed here). */
+  | { t: "localModels"; models: string[]; info: Record<string, LocalModelInfo> }
   /** Dev servers found running on this machine, in reply to a probe. */
   | { t: "devServers"; urls: string[] }
   /** Output from a running deploy, as it happens. */
@@ -523,7 +528,7 @@ export type ServerMessage =
  * deck was updated; deployStarted / deployFailed: the deploy command started
  * or exited non-zero; shipped: a goal shipped or was delivered.
  */
-export type LoopEvent = "planned" | "deck" | "deployStarted" | "deployFailed" | "shipped" | "timeUp" | "checkFailed" | "merged" | "mergeFailed" | "warn";
+export type LoopEvent = "planned" | "deck" | "deployStarted" | "deployFailed" | "shipped" | "timeUp" | "checkFailed" | "merged" | "mergeFailed" | "warn" | "info";
 
 /** An ElevenLabs voice, for the voice pickers. */
 export interface VoiceInfo {

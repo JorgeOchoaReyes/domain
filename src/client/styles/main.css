@@ -794,3 +794,7 @@ button.link { border: 0; background: none; color: var(--accent); font: inherit; 
 .term-trouble .tt-said { flex: 1 1 260px; font-family: ui-monospace, Consolas, monospace; font-size: 13px; opacity: 0.9; overflow-wrap: anywhere; }
 .term-trouble .tt-fix { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .term-trouble code { background: #1e1f2e; padding: 1px 6px; border-radius: 6px; }
+/* Team defaults: local models with their context window and speed */
+.po-local-list { list-style: none; margin: 6px 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.po-local-list li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.po-local-list .po-warn { color: #c0392b; font-weight: 700; }

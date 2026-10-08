@@ -31,6 +31,7 @@ const HOST_ONLY: ReadonlySet<T> = new Set<T>([
   "agentUpdate",
   "agentPin",
   "agentsCheck",
+  "localCopy",
   "trustWorkers",
   "voicesKey",
   // Presses keys on this computer.

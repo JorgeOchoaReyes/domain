@@ -191,7 +191,9 @@ export function isModelName(s: string): boolean {
   return s === "" || /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}$/.test(s);
 }
 
+/** A model as people read it: "CLI default", or "🖥 qwen3:8b" for one on this computer. */
 export function modelLabel(m: string): string {
+  if (/^(?:ollama|lmstudio)\/./.test(m)) return `🖥 ${m.slice(m.indexOf("/") + 1)}`;
   return m || "CLI default";
 }
 

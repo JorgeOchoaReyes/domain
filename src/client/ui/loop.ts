@@ -2,6 +2,7 @@ import type { ClientMessage, Desk, ServerMessage } from "../../shared/protocol.j
 import { AGENT_LABELS } from "../../shared/protocol.js";
 import { LOOP_STAGES, STAGE_ICON, goalProgress, goalStage, stageLabel, type Goal } from "../../shared/progress.js";
 import { esc } from "./modal.js";
+import type { LocalModelInfo } from "../../shared/localModels.js";
 import { icon } from "./icons.js";
 import { isGithubProject, projectState } from "./projects.js";
 import "../styles/loop.css";
@@ -34,6 +35,8 @@ export const loopState = {
   devServers: [] as string[],
   /** The current (or last) deploy's goal and its whole output. */
   deploy: { goalId: null as string | null, log: "" },
+  /** What's known of each local model: its context window, its speed here. */
+  localInfo: {} as Record<string, LocalModelInfo>,
 };
 
 const listeners = new Set<(msg: ServerMessage) => void>();
@@ -51,6 +54,10 @@ export function ingestLoop(msg: ServerMessage): void {
   switch (msg.t) {
     case "config":
       loopState.config = { project: msg.project, preview: msg.preview, deploy: msg.deploy, simulate: msg.simulate, check: msg.check, git: msg.git, localModels: msg.localModels ?? [] };
+      break;
+    case "localModels":
+      if (loopState.config) loopState.config.localModels = msg.models;
+      loopState.localInfo = msg.info;
       break;
     case "devServers":
       loopState.devServers = msg.urls;

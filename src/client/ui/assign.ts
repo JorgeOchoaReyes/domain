@@ -17,6 +17,8 @@ import { AGENT_COLOR } from "../scene/characters.js";
 import { esc, openModal } from "./modal.js";
 import { workerName } from "./team.js";
 import { micButton, wireMic } from "../voice.js";
+import { fitsModel, isLocalModel, modelChoices, suggestLocal, taskSize } from "../../shared/localModels.js";
+import { loopState } from "./loop.js";
 
 /**
  * The assignment card: handing a task to a worker on your terms. Who does it,
@@ -123,17 +125,33 @@ export function openAssignCard(o: AssignOptions): void {
     body.querySelectorAll<HTMLElement>(".as-worker").forEach((b) => b.classList.toggle("on", b.dataset.desk === deskId));
   const renderModels = () => {
     const w = worker();
-    const choices = [...new Set(["", ...o.policy.models[w.agent], w.model])];
+    const local = loopState.config?.localModels ?? [];
+    const choices = modelChoices(w.agent, o.policy.models[w.agent], local, [w.model]).filter((m) => m !== w.model);
     if (!choices.includes(model)) model = "";
-    body.querySelector(".as-models")!.innerHTML = choices
-      .map((m) => `<button data-model="${esc(m)}" class="${m === model ? "on" : ""}">${m === "" ? `Keep ${esc(modelLabel(w.model))}` : esc(m)}</button>`)
+    body.querySelector(".as-models")!.innerHTML = [
+      ...choices.filter((m) => m === ""),
+      ...choices.filter((m) => m !== ""),
+    ]
+      .map((m) => `<button data-model="${esc(m)}" class="${m === model ? "on" : ""}" ${isLocalModel(m) ? `title="On this computer: free and private"` : ""}>${m === "" ? `Keep ${esc(modelLabel(w.model))}` : esc(modelLabel(m))}</button>`)
       .join("");
     const note = body.querySelector<HTMLElement>(".as-model-note")!;
-    if (model && model !== w.model) {
+    const using = model || w.model;
+    // A small task about to go to a cloud model: one on this computer could do it, free.
+    const size = taskSize(o.task.title, minutes, body.querySelector<HTMLTextAreaElement>(".as-notes")?.value ?? "");
+    const try_ = suggestLocal(w.agent, using, size, local);
+    if (try_) {
+      note.innerHTML = `💡 This looks small — <b>${esc(modelLabel(try_))}</b> on this computer could do it, free and private. <button class="btn small as-use-local" data-model="${esc(try_)}">Use it</button>`;
+      note.querySelector<HTMLButtonElement>(".as-use-local")!.addEventListener("click", () => {
+        model = try_;
+        renderModels();
+      });
+    } else if (!fitsModel(using, size)) {
+      note.textContent = `⚠️ This looks big for ${modelLabel(using)} — a small local model can lose the thread on large tasks. Split it, or pick a cloud model.`;
+    } else if (model && model !== w.model) {
       note.textContent =
         w.agent === "claude"
-          ? `Claude Code switches to ${model} in place and keeps its context.`
-          : `${AGENT_LABELS[w.agent]} picks its model at launch, so it restarts on ${model} (a fresh session).`;
+          ? `Claude Code switches to ${modelLabel(model)} in place and keeps its context.`
+          : `${AGENT_LABELS[w.agent]} picks its model at launch, so it restarts on ${modelLabel(model)} (a fresh session).`;
     } else note.textContent = "";
     body.querySelectorAll<HTMLButtonElement>(".as-models button").forEach((b) =>
       b.addEventListener("click", () => {
@@ -195,6 +213,8 @@ export function openAssignCard(o: AssignOptions): void {
     b.addEventListener("click", () => {
       minutes = Number(b.dataset.m);
       renderTime();
+      // The time budget says how big it is: the model note follows.
+      renderModels();
     }),
   );
   body.querySelectorAll<HTMLElement>(".as-timeup button").forEach((b) =>
