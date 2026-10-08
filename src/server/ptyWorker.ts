@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { join } from "node:path";
 import type { AgentKind, WorkerStatus } from "../shared/protocol.js";
 import { AGENT_LABELS } from "../shared/protocol.js";
+import { troubleFrom, troubleHint, type Trouble } from "../shared/trouble.js";
 import { enterDelay, type IWorkerSession } from "./workerSession.js";
 
 /**
@@ -117,6 +118,8 @@ export class PtyWorker implements IWorkerSession {
   private doingListeners = new Set<() => void>();
   /** Where this desk's report and reply go (typed out in full: see withPaths). */
   private paths = { report: "", reply: "", reports: "", desk: "" };
+  /** What's wrong, read off its screen (see trouble.ts). */
+  private troubleNow: Trouble | null = null;
   /** Already skipped an "update available" menu this many times. */
   private updatesSkipped = 0;
   /** The agent quit back to the shell: nothing more is typed until it's running again. */
@@ -327,9 +330,21 @@ export class PtyWorker implements IWorkerSession {
     }
     if (this.consentAsked) return;
     if (this.skipUpdateMenu()) return;
+    // It stopped on an error (signed out, offline…): briefs wait until it's sorted.
+    const stillLoading = this.troubleNow?.detail === NEVER_LOADED;
+    const trouble = now - this.lastOutputAt > 2000 ? troubleFrom(this.screen()) : stillLoading ? null : this.troubleNow;
+    if (trouble) {
+      this.showTrouble(trouble);
+      return;
+    }
+    if (this.troubleNow && !stillLoading) {
+      this.setTrouble(null);
+      this.setStatus("working", `${AGENT_LABELS[this.agent]} starting…`);
+    }
     // Still loading (Codex shows "model: loading" until it's connected): anything typed now is lost.
     if (STILL_LOADING.test(this.screen().join("\n"))) {
       if (now - this.launchedAt > 90_000 && this.status !== "waiting") {
+        this.setTrouble({ kind: "update", detail: NEVER_LOADED });
         this.setStatus("waiting", `${AGENT_LABELS[this.agent]} is stuck starting up (its model won't load) — it most likely needs an update: Office → Agent CLIs updates it and restarts it here. Otherwise check it's signed in and online.`);
       }
       return;
@@ -346,8 +361,11 @@ export class PtyWorker implements IWorkerSession {
     if (this.readyTimer) clearInterval(this.readyTimer);
     this.readyTimer = null;
     const queued = this.queue.splice(0);
+    // It got going after all (a slow "model: loading"): no longer stuck.
+    const wasStuck = !!this.troubleNow;
+    this.setTrouble(null);
     // With a brief waiting, whatever the office set meanwhile ("🧠 Planning…") stays on the desk.
-    if (this.status !== "waiting") this.setStatus("working", queued.length ? "" : `${AGENT_LABELS[this.agent]} ready`);
+    if (this.status !== "waiting" || wasStuck) this.setStatus("working", queued.length ? "" : `${AGENT_LABELS[this.agent]} ready`);
     // Typed one piece at a time, spaced as typeLine spaces them.
     queued.forEach((d, i) => setTimeout(() => this.write(d), i * enterDelay(this.agent)));
     this.watchTimer = setInterval(() => this.watch(), 1000);
@@ -390,6 +408,13 @@ export class PtyWorker implements IWorkerSession {
       this.doingNow = doing;
       for (const l of this.doingListeners) l();
     }
+    // Stopped on an error once it's gone quiet (a CLI retrying mid-task isn't stuck yet).
+    const trouble = quiet >= 3000 || this.troubleNow ? troubleFrom(screen) : null;
+    if (trouble) {
+      this.showTrouble(trouble);
+      return;
+    }
+    if (this.troubleNow) this.setTrouble(null);
     const asking = ASKING.test(screen.join("\n"));
     // On screen for a moment and it's a real question — even while a spinner keeps drawing under it.
     if (!asking) this.askingSince = 0;
@@ -437,6 +462,24 @@ export class PtyWorker implements IWorkerSession {
 
   doing(): string {
     return this.doingNow;
+  }
+
+  trouble(): Trouble | null {
+    return this.troubleNow;
+  }
+
+  /** Remember what's wrong (the desk shows it), telling the office when it changes. */
+  private setTrouble(t: Trouble | null): void {
+    if (t?.kind === this.troubleNow?.kind && t?.detail === this.troubleNow?.detail) return;
+    this.troubleNow = t;
+    for (const l of this.doingListeners) l();
+  }
+
+  /** Stuck on something: it needs you, with the CLI's own words and what to do. */
+  private showTrouble(t: Trouble): void {
+    this.setTrouble(t);
+    const text = `${AGENT_LABELS[this.agent]} says “${t.detail}” — ${troubleHint(t.kind)}`;
+    if (this.status !== "waiting" || this.activity !== text) this.setStatus("waiting", text);
   }
 
   onDoing(listener: () => void): () => void {
@@ -554,6 +597,8 @@ export function looksLikeShellPrompt(screen: string[], cwd: string): boolean {
 
 /** An agent still connecting: Codex's header reads "model: loading" until it is. */
 export const STILL_LOADING = /model:\s*loading\b/i;
+/** The trouble an agent has when it's sat at "model: loading" for minutes. */
+const NEVER_LOADED = "model: loading — it never connected";
 
 /**
  * The environment a worker's shell starts with: yours, minus the markers a

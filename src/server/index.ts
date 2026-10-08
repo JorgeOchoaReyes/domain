@@ -25,6 +25,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join, normalize, extname } from "node:path";
 import { WebSocketServer, WebSocket } from "ws";
 import { mayDirect, AGENT_KINDS, AGENT_LABELS, coerceLook, parseClientMessage, type CheckResult, type Presentation, type ServerMessage } from "../shared/protocol.js";
+import { SIGN_IN } from "../shared/trouble.js";
 import { GATE_RETRIES, coerceBrief, coercePolicy, isModelName } from "../shared/policy.js";
 import { runCheck, simulateCheck } from "./checks.js";
 import { OpLogger } from "./oplog.js";
@@ -1322,7 +1323,7 @@ function writeAttachments(workdir: string, files: { name: string; text: string }
 }
 
 /** What directs a worker (rather than just watching or talking to it). */
-const DIRECTING = new Set<string>(["input", "fire", "taskAssign", "quickTask", "review", "say", "plan", "ship", "wake", "restartWorker", "ideaHandoff", "offerAnswer"]);
+const DIRECTING = new Set<string>(["input", "fire", "taskAssign", "quickTask", "review", "say", "plan", "ship", "wake", "restartWorker", "workerSignIn", "ideaHandoff", "offerAnswer"]);
 
 /** The people in the office now (by name). */
 function presentNames(): string[] {
@@ -1395,6 +1396,12 @@ routes.set("wake", (msg, client) => {
 routes.set("restartWorker", (msg, client) => {
   if (typeof msg.deskId !== "string") return;
   if (office.restart(msg.deskId, `${client.name} restarted your session.`)) log.start("agent", `${client.name} restarted ${nameAt(msg.deskId)} at ${msg.deskId.replace("desk-", "desk ")}: back in its last conversation`).done(true);
+});
+// Signed out: start the CLI's own sign-in in its terminal (where it has one; else the desk says what to run).
+routes.set("workerSignIn", (msg) => {
+  const w = typeof msg.deskId === "string" ? office.workerAt(msg.deskId) : null;
+  const slash = w ? SIGN_IN[w.agent].slash : undefined;
+  if (w && slash) office.nudge(msg.deskId as string, slash);
 });
 // You said this project's worker folders can be trusted: remember it, and answer any agent asking now.
 routes.set("trustWorkers", () => {

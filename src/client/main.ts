@@ -690,7 +690,7 @@ function applyOffice(): void {
   if (terminal.isOpen && terminal.deskId) {
     const desk = deskById(terminal.deskId);
     if (!desk?.worker) terminal.close();
-    else terminal.setStatus(desk.worker.status);
+    else terminal.setWorker(desk.worker);
   }
 
   // Office hours you asked for while the work was still being checked: now someone's ready.
@@ -741,7 +741,20 @@ function openTerminal(deskId: string): void {
     onClose: () => {
       terminalPending = null;
     },
+    onFix: (fix) => {
+      const w = deskById(deskId)?.worker;
+      if (!w) return;
+      const name = w.identity?.name ?? AGENT_LABELS[w.agent];
+      if (fix === "restart") {
+        net.send({ t: "restartWorker", deskId });
+        hud.toast(`🔄 Restarting ${name} — back in its last conversation`);
+      } else if (fix === "update") {
+        net.send({ t: "agentUpdate", agent: w.agent });
+        hud.toast(`⬆ Updating ${AGENT_LABELS[w.agent]} once its workers are free — the output's in Office → Logs`);
+      } else net.send({ t: "workerSignIn", deskId });
+    },
   });
+  terminal.setWorker(desk.worker);
   net.send({ t: "open", deskId });
 }
 

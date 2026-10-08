@@ -788,3 +788,9 @@ button.link { border: 0; background: none; color: var(--accent); font: inherit; 
 .ac-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .ac-list li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px; border: 2px solid var(--ink); border-radius: 12px; background: #fff; }
 .ac-status { flex: 1 1 220px; font-size: 14px; opacity: 0.85; }
+/* A stuck worker: what its CLI said, and the fixes, over its terminal */
+.term-trouble { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 12px; background: #3a2230; color: #ffd7e0; border-top: 2px solid #ef476f; font-size: 14px; }
+.term-trouble[hidden] { display: none; }
+.term-trouble .tt-said { flex: 1 1 260px; font-family: ui-monospace, Consolas, monospace; font-size: 13px; opacity: 0.9; overflow-wrap: anywhere; }
+.term-trouble .tt-fix { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.term-trouble code { background: #1e1f2e; padding: 1px 6px; border-radius: 6px; }

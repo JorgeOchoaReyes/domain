@@ -597,6 +597,14 @@ Logs.
   (`claude update`); for the others, it says a new one's out and you update
   it the way you installed it.
 
+**A stuck worker** says why, in its CLI's own words — signed out, can't reach
+its service, an API error (overloaded, rate limit), or it needs an update —
+and goes red ("needs you"). Its terminal shows what it said with the fix one
+click away: **🔑 Sign in** (Claude Code's `/login`, Gemini's `/auth`; for Codex
+and OpenCode, the command to run), **⬆ Update**, or **🔄 Restart** — its CLI
+starts again, back in its last conversation. Restart is always in the
+terminal's footer too. A CLI that says it's retrying isn't flagged.
+
 ### MCP tools
 
 MCP servers are tools your workers can use — read files, browse the web, work
@@ -942,9 +950,6 @@ docs/screenshots/        the pictures in this README
 
 Next up, after v1.0:
 
-- **Stuck agents, recovered.** Next, one-click fixes from the desk (update the
-  CLI, restart its session, re-check its sign-in) and the CLI's own error
-  shown.
 - **Estimates for every job.** Before you hand out a task: how long it'll
   likely take and what it'll cost — on a cloud model, or free on a local one —
   from the size of the task and how long similar ones took this team. Shown

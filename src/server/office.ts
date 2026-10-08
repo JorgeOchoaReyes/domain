@@ -714,6 +714,7 @@ export class Office {
               ...(s.skills?.length ? { skills: s.skills } : {}),
               ...(s.internOf && s.desk.worker ? { internOf: s.internOf } : {}),
               ...(s.desk.worker.status === "working" && s.session?.doing?.() ? { doing: s.session.doing() } : {}),
+              ...(s.session?.trouble?.() ? { trouble: s.session.trouble()! } : {}),
             }
           : null,
       })),

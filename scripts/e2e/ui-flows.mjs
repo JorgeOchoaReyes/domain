@@ -306,7 +306,9 @@ check("Agent CLIs: versions looked up", !!looked, looked ?? "");
 await shot("10-agent-clis.png");
 await closeAll();
 await ev(() => (window.__before = window.domain.office().desks[0].worker?.id ?? null));
-await ev(() => window.domain.net.send({ t: "restartWorker", deskId: window.domain.office().desks[0].id }));
+await ev(() => window.domain.openTerminal(window.domain.office().desks[0].id));
+await sleep(800);
+await ev(() => document.querySelector(".modal.term .term-restart")?.click());
 const after = await until(() => { const w = window.domain.office().desks[0].worker; return w && w.status !== "asleep" && w.id !== window.__before ? w.status : null; }, 10000, 500);
 check("restart a worker: a new session at the same desk", !!after, after ?? "");
 

@@ -1,5 +1,6 @@
 import type { StandupDraft } from "./standupDraft.js";
 import type { Alumnus } from "./alumni.js";
+import type { Trouble } from "./trouble.js";
 import type { LessonsState } from "./lessons.js";
 import type { SkillSeen } from "./skills.js";
 import type { Idea } from "./ideas.js";
@@ -117,6 +118,8 @@ export interface Worker {
   internOf?: string;
   /** What it's doing right now, in a word or three ("Editing math.js", "Running tests"). */
   doing?: string;
+  /** What's wrong, in the CLI's own words, when it's stuck (the desk offers the fix). */
+  trouble?: Trouble;
 }
 
 /** Workers the office started itself (not one person's): anyone may direct them. */
@@ -401,6 +404,8 @@ export type ClientMessage =
   | { t: "agentsCheck" }
   /** Start a desk's agent again, back in its last conversation (stuck, or after an update). */
   | { t: "restartWorker"; deskId: string }
+  /** A worker that needs signing in: start its CLI's sign-in (Claude Code's /login, Gemini's /auth). */
+  | { t: "workerSignIn"; deskId: string }
   /** Let agents trust this project's worker folders (answers their trust prompts, now and later). */
   | { t: "trustWorkers" }
   /** Wake the workers remembered from last time (one desk, or everyone): each resumes where it left off. */
