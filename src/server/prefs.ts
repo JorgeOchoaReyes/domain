@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import { VERSION_RE } from "../shared/agents.js";
 import type { RecentProject } from "../shared/project.js";
 
 /**
@@ -18,6 +19,8 @@ export interface Prefs {
   githubLogin?: string;
   /** Projects whose worker folders agents may trust without asking you each time. */
   trusted?: string[];
+  /** Agent CLI versions you've said to stay on (an update broke something). */
+  pins?: Record<string, string>;
 }
 
 export const MAX_RECENT = 12;
@@ -37,11 +40,15 @@ export function loadPrefs(file = prefsPath()): Prefs {
       : [];
     const login = typeof raw.githubLogin === "string" && /^[A-Za-z0-9-]{1,39}$/.test(raw.githubLogin) ? raw.githubLogin : undefined;
     const trusted = Array.isArray(raw.trusted) ? raw.trusted.filter((t): t is string => typeof t === "string").slice(0, 100) : [];
+    const pins = Object.fromEntries(
+      Object.entries(raw.pins && typeof raw.pins === "object" ? raw.pins : {}).filter(([k, v]) => /^[a-z]{1,20}$/.test(k) && typeof v === "string" && VERSION_RE.test(v)),
+    );
     return {
       project: typeof raw.project === "string" ? raw.project : undefined,
       recent: recent.slice(0, MAX_RECENT),
       ...(login ? { githubLogin: login } : {}),
       ...(trusted.length ? { trusted } : {}),
+      ...(Object.keys(pins).length ? { pins } : {}),
     };
   } catch {
     return { recent: [] };
@@ -96,4 +103,13 @@ export function trustProject(project: string, file = prefsPath()): void {
   const p = loadPrefs(file);
   if ((p.trusted ?? []).some((t) => samePath(t, project))) return;
   savePrefs({ ...p, trusted: [...(p.trusted ?? []), project] }, file);
+}
+
+/** Stay on a version of an agent CLI (null: follow the newest again). */
+export function pinAgent(agent: string, version: string | null, file = prefsPath()): void {
+  const p = loadPrefs(file);
+  const pins = { ...(p.pins ?? {}) };
+  if (version) pins[agent] = version;
+  else delete pins[agent];
+  savePrefs({ ...p, pins }, file);
 }

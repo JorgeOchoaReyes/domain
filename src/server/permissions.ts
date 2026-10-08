@@ -28,6 +28,9 @@ const HOST_ONLY: ReadonlySet<T> = new Set<T>([
   "mcpScan",
   "probe",
   "agentInstall",
+  "agentUpdate",
+  "agentPin",
+  "agentsCheck",
   "trustWorkers",
   "voicesKey",
   // Presses keys on this computer.

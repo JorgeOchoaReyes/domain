@@ -85,7 +85,7 @@ export interface CreateWorkerOptions {
 }
 
 /** The CLI command each agent kind launches when a real terminal is used. */
-const AGENT_COMMAND: Record<AgentKind, string> = {
+export const AGENT_COMMAND: Record<AgentKind, string> = {
   claude: "claude",
   codex: "codex",
   opencode: "opencode",

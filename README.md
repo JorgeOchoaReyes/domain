@@ -580,6 +580,23 @@ the panels and when it presents. **Quick hire** still gives you a plain worker.
 | :-: | :-: |
 | ![Hiring from your team](docs/screenshots/your-team.jpg) | ![The character editor](docs/screenshots/character-editor.jpg) |
 
+### Agent CLIs
+
+Which version of each coding agent you have, and the newest out. An
+out-of-date CLI can stop working (Codex 0.157 hung at "model: loading" until it
+was updated), so when one's out Arnold offers it, and **Office → Agent CLIs**
+has an **Update** button. The update waits until none of that agent's workers
+is busy, pauses the free ones (on Windows a running CLI holds its own files),
+installs, and starts them again in their last conversation. The output is in
+Logs.
+
+- Installed with **npm**: updated with `npm install -g <package>@<version>`.
+  If an update breaks something, **📌 Keep** a version: updates install that
+  one until you unpin it.
+- Installed with its **own installer**: Claude Code updates itself
+  (`claude update`); for the others, it says a new one's out and you update
+  it the way you installed it.
+
 ### MCP tools
 
 MCP servers are tools your workers can use — read files, browse the web, work
@@ -925,15 +942,6 @@ docs/screenshots/        the pictures in this README
 
 Next up, after v1.0:
 
-- **Agent CLI updates, handled.** Today the office skips an agent's
-  "update available" menu at startup (so a stray keypress can't run its
-  installer mid-task) and leaves updating to you. Next: notice when a CLI has
-  an update, offer it in the Office menu, and run it between tasks — never
-  while a worker's busy — with the output in Logs; pin a known-good version
-  per agent if an update breaks something.
-  This matters: an out-of-date CLI can stop working outright — Codex 0.157,
-  for one, hung at "model: loading" until it was updated. For now a worker
-  stuck like that is flagged as needing you, with a hint to update it.
 - **Stuck agents, recovered.** Next, one-click fixes from the desk (update the
   CLI, restart its session, re-check its sign-in) and the CLI's own error
   shown.

@@ -64,6 +64,8 @@ import { openOfficeMenu, type OfficeTile } from "./ui/officemenu.js";
 import { ingestProjects, openProjects, projectBadge, projectState } from "./ui/projects.js";
 import { ingestGithub } from "./ui/github.js";
 import { agentsState, ingestAgents, installAgent, isInstalled, setAgentsSender } from "./ui/agents.js";
+import { openAgentClis } from "./ui/agentclis.js";
+import { canUpdate, updateTarget } from "../shared/agents.js";
 import { openHire, openTeam, type TeamContext } from "./ui/team.js";
 import { openPolicy } from "./ui/policy.js";
 import type { LoopHandlers } from "./ui/loop.js";
@@ -283,6 +285,7 @@ const officeTiles: OfficeTile[] = [
   { key: "history", icon: "📜", title: "History", text: "Everything you and your workers have done — by day, or by worker", run: () => openHistory((m) => net.send(m)) },
   { key: "chat", icon: "💬", title: "Team chat", text: "Message any worker, or everyone — see what each is doing and what it has done", run: () => openChat() },
   { key: "ideas", icon: "💡", title: "Idea board", text: "Sketch an idea and hand it to a worker, or make it a goal — also at the whiteboards", run: () => openIdeas(null) },
+  { key: "clis", icon: "⬆", title: "Agent CLIs", text: "Which version of each coding agent you have — update, or stay on one that works", hostOnly: true, run: () => openAgentClis((m) => net.send(m), () => openLogs()) },
   { key: "mcp", icon: "mcp", title: "MCP tools", text: "Tools your workers can use — add once, give to whoever needs them", hostOnly: true, run: () => openMcp({ progress: () => progress, send: (m) => net.send(m), isHost: () => !guestRole() }) },
   { key: "invite", icon: "📡", title: "Invite people", text: "Share your office with people on your Wi-Fi, with a passcode", hostOnly: true, run: () => openInviteNow() },
   { key: "nearby", icon: "📶", title: "Join a nearby office", text: "Offices shared on your network", hostOnly: true, run: () => openNearby({ send: (m) => net.send(m) }) },
@@ -1179,6 +1182,19 @@ function pipTips(): Tip[] {
           }
         : { id: "no-node", urgency: 2, text: "To hire coding agents, this computer needs Node.js (nodejs.org) — install it, then restart domain and I'll set up the agents." },
     );
+  }
+  // A new version of an agent CLI you use (an old one can stop working): offer it.
+  if (agents && !guestRole()) {
+    for (const [k, v] of Object.entries(agents.versions) as [AgentKind, NonNullable<(typeof agents.versions)[AgentKind]>][]) {
+      const to = updateTarget(v);
+      if (!to || v.pinned || !canUpdate(k, v) || agents.queued.includes(k) || agents.updating === k) continue;
+      tips.push({
+        id: `update-${k}-${to}`,
+        urgency: 1,
+        text: `${AGENT_LABELS[k]} ${to} is out (you have ${v.current}). I'll update it once its workers are free and start them again where they were.`,
+        action: { label: `⬆ Update ${AGENT_LABELS[k]}`, run: () => net.send({ t: "agentUpdate", agent: k }) },
+      });
+    }
   }
   // Last time's team, asleep at their desks: the gong gets them going.
   const asleep = sleepers().length;
@@ -2264,7 +2280,7 @@ void pickCharacter(myName, myLook).then(({ name, look }) => {
 
 // A handle for poking at the office from the console (and screenshot scripts) in dev builds.
 if (import.meta.env.DEV) {
-  (window as unknown as { domain: unknown }).domain = { world, player, vr, music, startOfficeHours, openLaptop, openTravel, openGoals, openHistory: () => openHistory((m) => net.send(m)), openTerminal, phone, escapeModal, net, laptop, progress: () => progress, office: () => office, openHire: (deskId: string) => { const d = deskById(deskId); if (d) hire(d); } };
+  (window as unknown as { domain: unknown }).domain = { world, player, vr, music, startOfficeHours, openLaptop, openTravel, openGoals, openHistory: () => openHistory((m) => net.send(m)), openTerminal, phone, escapeModal, net, laptop, progress: () => progress, office: () => office, agents: agentsState, openHire: (deskId: string) => { const d = deskById(deskId); if (d) hire(d); } };
   (window as unknown as { __roomAt: unknown }).__roomAt = (x: number, z: number) => roomAt(x, z).id;
 }
 

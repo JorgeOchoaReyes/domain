@@ -294,6 +294,22 @@ await ev(() => document.querySelector(".su-resume")?.click());
 const resumed = await until(() => window.domain.progress().session && JSON.stringify({ eod: window.domain.progress().session.eod, minutes: window.domain.progress().session.minutes }), 8000);
 check("Resume yesterday: same plan, session on", !!resumed, resumed ?? "");
 
+// --- 10. Agent CLIs: versions and updates; restarting a worker -------------------------------------
+await closeAll();
+await ev(() => document.querySelector('.dock [data-act="office"]').click());
+await sleep(600);
+await ev(() => [...document.querySelectorAll(".om-tile")].find((b) => /Agent CLIs/.test(b.textContent ?? ""))?.click());
+const cliRows = await until(() => document.querySelectorAll(".ac-list li").length, 5000, 250);
+check("Office → Agent CLIs lists every agent", cliRows === 4, `${cliRows} rows`);
+const looked = await until(() => window.domain.agents()?.checkedAt > 0 && [...document.querySelectorAll(".ac-status")].map((e) => e.textContent).join(" | "), 60000);
+check("Agent CLIs: versions looked up", !!looked, looked ?? "");
+await shot("10-agent-clis.png");
+await closeAll();
+await ev(() => (window.__before = window.domain.office().desks[0].worker?.id ?? null));
+await ev(() => window.domain.net.send({ t: "restartWorker", deskId: window.domain.office().desks[0].id }));
+const after = await until(() => { const w = window.domain.office().desks[0].worker; return w && w.status !== "asleep" && w.id !== window.__before ? w.status : null; }, 10000, 500);
+check("restart a worker: a new session at the same desk", !!after, after ?? "");
+
 console.log(results.join("\n"));
 const failed = results.filter((r) => r.startsWith("FAIL")).length;
 console.log(`\n${results.length - failed}/${results.length} passed · screenshots in ${OUT}`);

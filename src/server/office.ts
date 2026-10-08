@@ -867,21 +867,60 @@ export class Office {
     for (const seat of this.seats) {
       const r = seat.asleep;
       if (!r || (deskId && seat.desk.id !== deskId)) continue;
-      seat.asleep = undefined;
-      const session = this.launch(seat.desk.id, r.agent, r.model, r.leash, seat.workspace?.path ?? this.cwd, r.identity, true);
-      seat.session = session;
-      seat.desk.worker = this.toWorker(session, r.hiredBy, r.model, r.leash, seat.workspace?.branch ?? null, r.identity);
-      seat.desk.worker.activity = "☀️ Waking up…";
-      seat.busyWith = r.activity;
-      this.attach(seat, session);
-      if (!session.summon) {
-        const was = r.activity ? ` You were on: "${r.activity.replace(/^\W+/, "")}".` : "";
-        typeLine(session, `[Office] Good morning — the office is open again and your manager rang the gong.${was} Pick up where you left off.`);
-      }
+      const was = r.activity ? ` You were on: "${r.activity.replace(/^\W+/, "")}".` : "";
+      this.relaunch(seat, r, "☀️ Waking up…", `[Office] Good morning — the office is open again and your manager rang the gong.${was} Pick up where you left off.`);
       woken++;
     }
     if (woken) this.changed();
     return woken;
+  }
+
+  /** Start a remembered worker's agent again, back in its last conversation, and tell it why. */
+  private relaunch(seat: Seat, r: Remembered, activity: string, line: string): void {
+    seat.asleep = undefined;
+    const session = this.launch(seat.desk.id, r.agent, r.model, r.leash, seat.workspace?.path ?? this.cwd, r.identity, true);
+    seat.session = session;
+    seat.desk.worker = this.toWorker(session, r.hiredBy, r.model, r.leash, seat.workspace?.branch ?? null, r.identity);
+    seat.desk.worker.activity = activity;
+    seat.busyWith = r.activity;
+    this.attach(seat, session);
+    if (!session.summon) typeLine(session, line);
+  }
+
+  /**
+   * Stop a desk's agent without letting it go — its CLI is being updated: it
+   * stays at its desk, asleep, until restart() starts it again. Returns
+   * whether there was one running.
+   */
+  pause(deskId: string, activity: string): boolean {
+    const seat = this.seats.find((s) => s.desk.id === deskId);
+    const w = seat?.desk.worker;
+    if (!seat?.session || !w) return false;
+    seat.asleep = { deskId, agent: w.agent, hiredBy: w.hiredBy, model: w.model, leash: w.leash, identity: w.identity, workspace: seat.workspace, activity: taskLabel(seat.busyWith) ?? taskLabel(w.activity) ?? "" };
+    for (const off of seat.cleanup) off();
+    seat.cleanup = [];
+    seat.session.dispose();
+    seat.session = null;
+    this.dequeue(deskId);
+    seat.desk.worker = { ...w, id: `asleep-${deskId}`, status: "asleep", activity, report: null };
+    this.changed();
+    return true;
+  }
+
+  /**
+   * Start a desk's agent again, back in its last conversation: it was stuck,
+   * or paused for an update. `why` is told to it. Returns whether it restarted.
+   */
+  restart(deskId: string, why: string, activity = "🔄 Restarting…"): boolean {
+    const seat = this.seats.find((s) => s.desk.id === deskId);
+    if (!seat?.desk.worker) return false;
+    if (seat.session && !this.pause(deskId, activity)) return false;
+    const r = seat.asleep;
+    if (!r) return false;
+    const was = r.activity ? ` You were on: "${r.activity.replace(/^\W+/, "")}" — carry on with it.` : "";
+    this.relaunch(seat, r, activity, `[Office] ${why}${was}`);
+    this.changed();
+    return true;
   }
 }
 

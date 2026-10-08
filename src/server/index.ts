@@ -1322,7 +1322,7 @@ function writeAttachments(workdir: string, files: { name: string; text: string }
 }
 
 /** What directs a worker (rather than just watching or talking to it). */
-const DIRECTING = new Set<string>(["input", "fire", "taskAssign", "quickTask", "review", "say", "plan", "ship", "wake", "ideaHandoff", "offerAnswer"]);
+const DIRECTING = new Set<string>(["input", "fire", "taskAssign", "quickTask", "review", "say", "plan", "ship", "wake", "restartWorker", "ideaHandoff", "offerAnswer"]);
 
 /** The people in the office now (by name). */
 function presentNames(): string[] {
@@ -1390,6 +1390,11 @@ routes.set("wake", (msg, client) => {
   const deskId = typeof msg.deskId === "string" ? msg.deskId : undefined;
   const n = office.wake(deskId);
   if (n) log.start("agent", `${client.name} woke ${n === 1 && deskId ? `the worker at ${deskId}` : `${n} worker${n === 1 ? "" : "s"}`}: each picks up its last conversation`).done(true);
+});
+// A worker stuck (or after an update): its agent starts again, back in its last conversation.
+routes.set("restartWorker", (msg, client) => {
+  if (typeof msg.deskId !== "string") return;
+  if (office.restart(msg.deskId, `${client.name} restarted your session.`)) log.start("agent", `${client.name} restarted ${nameAt(msg.deskId)} at ${msg.deskId.replace("desk-", "desk ")}: back in its last conversation`).done(true);
 });
 // You said this project's worker folders can be trusted: remember it, and answer any agent asking now.
 routes.set("trustWorkers", () => {

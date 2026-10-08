@@ -393,6 +393,14 @@ export type ClientMessage =
   | { t: "agentsGet" }
   /** Install a missing agent CLI with npm (shown in the logs as it goes). */
   | { t: "agentInstall"; agent: AgentKind }
+  /** Update an agent CLI (to its pinned version, or the newest) once none of its workers is busy. */
+  | { t: "agentUpdate"; agent: AgentKind }
+  /** Stay on a version of an agent CLI (null: follow the newest again). */
+  | { t: "agentPin"; agent: AgentKind; version: string | null }
+  /** Look up the agent CLIs' versions again now. */
+  | { t: "agentsCheck" }
+  /** Start a desk's agent again, back in its last conversation (stuck, or after an update). */
+  | { t: "restartWorker"; deskId: string }
   /** Let agents trust this project's worker folders (answers their trust prompts, now and later). */
   | { t: "trustWorkers" }
   /** Wake the workers remembered from last time (one desk, or everyone): each resumes where it left off. */

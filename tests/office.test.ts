@@ -152,3 +152,31 @@ test("a review with a whiteboard sketch saves it for the worker", async () => {
   office.dispose();
   rmSync(dir, { recursive: true, force: true });
 });
+
+test("pausing a worker keeps it at its desk; restarting starts it again with the same model", () => {
+  const office = new Office(sim);
+  const deskId = office.snapshot().desks[0].id;
+  office.hire(deskId, "codex", "Jorge", "gpt-5", "auto");
+  const before = office.snapshot().desks.find((d) => d.id === deskId)!.worker!;
+
+  assert.equal(office.pause(deskId, "⬆ Waiting for Codex to update…"), true);
+  let w = office.snapshot().desks.find((d) => d.id === deskId)!.worker!;
+  assert.equal(w.status, "asleep");
+  assert.equal(w.activity, "⬆ Waiting for Codex to update…");
+  assert.equal(office.isStaffed(deskId), false);
+  assert.equal(office.pause(deskId, "again"), false);
+
+  assert.equal(office.restart(deskId, "Updated."), true);
+  w = office.snapshot().desks.find((d) => d.id === deskId)!.worker!;
+  assert.notEqual(w.status, "asleep");
+  assert.notEqual(w.id, before.id);
+  assert.equal(w.model, "gpt-5");
+  assert.equal(w.leash, "auto");
+  assert.equal(w.hiredBy, "Jorge");
+  assert.equal(office.isStaffed(deskId), true);
+
+  // A running worker restarts in one go; an empty desk doesn't.
+  assert.equal(office.restart(deskId, "Stuck."), true);
+  assert.equal(office.restart(office.snapshot().desks[1].id, "Nobody."), false);
+  office.dispose();
+});
