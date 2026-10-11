@@ -125,6 +125,10 @@ nou watch Bolt                # one agent's terminal, live
 nou review / nou review Grace # what's waiting, or one whole deck
 nou approve Grace "Nice"      # or: nou back Grace "Cover the empty case too"
 nou repo                      # your branch vs GitHub, agents' branches, pull requests
+nou repo add ../api           # open another repo alongside (no restart); nou repo close api
+nou hire builder --repo api   # hire into it (or: nou repo hire api, for every new hire)
+nou task "Add the endpoint" --to Bolt --repo api   # Bolt moves to api for this one
+nou move Bolt site            # or move an agent for good
 nou hire reviewer             # a ready-made agent at a free desk (nou roles lists them)
 ```
 
@@ -563,6 +567,20 @@ GitHub — without pasting tokens.
   opens against the default branch, with the goal, its tasks and the session's
   intention. Its checks are followed and shown on the goal.
 - **GitHub issues → tasks**: import open issues into a goal from the Goals window.
+- **Several repos at once**: **Add** (next to Open, on a recent project, a
+  path, or a clone with *Open the clone alongside*) opens another repo
+  alongside the project — no restart. Each worker works in one repo: the one
+  it was hired into (**Hire here** picks where new hires go; the project
+  until you pick another) or moved to (each worker has a repo picker in the
+  Projects window; it restarts there on a branch of its own). A task can name
+  another repo in the assignment card (**📂 Repo**) or with
+  `nou task … --repo NAME`: the worker moves there first. Each repo has its
+  own worktrees (`~/.domain/worktrees/<repo>-<id>`), its own check (its own
+  `domain.config.json`), and approved work merges into *that* repo's branch.
+  A goal's pull request goes to the repo its tasks were done in, and its
+  checks are followed there. The Repo view and `nou repo` show every open
+  repo. The list is kept in `.domain/repos.json`; an office that never opens
+  another repo works exactly as before.
 
 ![Projects and GitHub](docs/screenshots/projects.jpg)
 
@@ -890,6 +908,7 @@ src/
     worker.ts            simulated worker
     workspace.ts         a git worktree and branch per worker; merges
     projects.ts          projects, cloning, GitHub sign-in, PRs, issues (with github.ts, prefs.ts)
+    repos.ts             the repos open alongside the project (a repo per agent)
     team.ts              your team's characters
     mcp.ts               MCP: scan agents' configs, health checks, per-worker servers
     lan.ts               local multiplayer: the passcode listener, discovery
@@ -959,10 +978,6 @@ Next up, after v1.0:
 - **More of the team loop**: a real team huddle at the start of a goal
   (everyone weighs in on the plan), and a shared screenshot/demo of the
   finished result in the final review.
-- **A repo per agent.** Today the office works on one project at a time
-  (switching restarts it). Next: open several repos at once and pick one per
-  agent or per task — each with its own worktrees, checks, merges and pull
-  requests — and see them all in the Repo view and `nou repo`.
 - **A design cleanup.** The HUD has grown: fewer, clearer dock buttons, one
   place for what needs you (questions, reviews, offers), quieter toasts, and
   a consistent look across the monitor, laptop, phone and windows.

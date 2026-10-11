@@ -4,6 +4,7 @@ import type { ClientMessage, GuestRole, ServerMessage } from "../shared/protocol
 import type { Office } from "./office.js";
 import type { Progress } from "./progress.js";
 import type { OpLogger } from "./oplog.js";
+import type { OpenRepos } from "./repos.js";
 
 /**
  * What a feature module gets from the server: the office, the score, the
@@ -30,6 +31,8 @@ export type Routes = Partial<Record<string, Route>>;
 export interface ServerCtx {
   /** The project folder workers work in. */
   cwd: string;
+  /** The repos open alongside the project (absent: just the project). */
+  repos?: OpenRepos;
   port: number;
   simulate: boolean;
   office: Office;

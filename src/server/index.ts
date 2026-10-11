@@ -22,7 +22,7 @@ import { randomUUID } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join, normalize, extname } from "node:path";
+import { basename, dirname, join, normalize, extname } from "node:path";
 import { WebSocketServer, WebSocket } from "ws";
 import { mayDirect, AGENT_KINDS, AGENT_LABELS, coerceLook, parseClientMessage, type CheckResult, type Presentation, type ServerMessage } from "../shared/protocol.js";
 import { GATE_RETRIES, coerceBrief, coercePolicy, isModelName } from "../shared/policy.js";
@@ -34,6 +34,7 @@ import { describeLaunch, mcpCleanup, mcpLaunch, scanAgents, serversFor, withGith
 import type { ClientRec, Route, ServerCtx } from "./ctx.js";
 import { personaBrief, type WorkerIdentity } from "../shared/team.js";
 import { Office } from "./office.js";
+import { OpenRepos } from "./repos.js";
 import { isTrusted, trustProject } from "./prefs.js";
 import { Progress } from "./progress.js";
 import { isTone } from "../shared/progress.js";
@@ -78,6 +79,8 @@ const CWD = process.env.DOMAIN_CWD || process.cwd();
 const SIMULATE = process.env.DOMAIN_SIMULATE === "1";
 // The office remembers who's at which desk between runs (real workers only).
 const office = new Office({ cwd: CWD, simulate: SIMULATE, trusted: () => isTrusted(CWD), memory: SIMULATE ? null : join(CWD, ".domain", "office.json") });
+// The repos open alongside the project (none until you open one): each worker works in one of them.
+const repos = new OpenRepos(CWD, SIMULATE ? null : join(CWD, ".domain", "repos.json"));
 
 // ---------------------------------------------------------------------------
 // Static file server (serves the built client in production).
@@ -332,8 +335,9 @@ setInterval(() => lessons.write(), 60_000).unref();
 function toYou(presentation: Presentation): void {
   // Finished work gets a slide of what changed, from git (once).
   const ws = office.workspaceOf(presentation.deskId);
-  if (presentation.report?.status === "ready" && ws && office.workspaces && !presentation.report.slides.some((s) => s.startsWith(CHANGED_HEADING))) {
-    const slide = changedSlide(office.workspaces.diffFiles(office.workdir(presentation.deskId)));
+  const workspaces = office.workspacesOf(presentation.deskId);
+  if (presentation.report?.status === "ready" && ws && workspaces && !presentation.report.slides.some((s) => s.startsWith(CHANGED_HEADING))) {
+    const slide = changedSlide(workspaces.diffFiles(office.workdir(presentation.deskId)));
     if (slide) {
       const add = (r: NonNullable<Presentation["report"]>) => ({ ...r, slides: [...r.slides, slide] });
       office.amendReport(presentation.deskId, add);
@@ -353,7 +357,7 @@ function toYou(presentation: Presentation): void {
 const audits = new Audits({
   office,
   hasOwnTask: (deskId) => !!progress.taskAt(deskId),
-  base: () => office.workspaces?.base() ?? null,
+  base: (deskId) => office.workspacesOf(deskId)?.base() ?? null,
   nameOf: nameAt,
   release: (deskId) => {
     const presentation = office.release(deskId);
@@ -395,7 +399,8 @@ office.onReport = (presentation) => {
   const { deskId, report } = presentation;
   // An auditor's verdict on a builder's work isn't for you: it goes back and forth.
   if (report && audits.auditorReport(deskId, report)) return;
-  const check = loadConfig(CWD).check ?? null;
+  // Each repo's own check (domain.config.json in it): the project's for workers in the project.
+  const check = loadConfig(office.repoOf(deskId)).check ?? null;
   // Finished work an auditor reviews first; otherwise it comes to you.
   const pass = (p: Presentation) => {
     if (p.report?.status === "ready" && audits.builderReady(deskId, p.report)) return;
@@ -656,7 +661,7 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
         const identity: WorkerIdentity | null = character
           ? { characterId: character.id, name: character.name, look: character.look, voice: character.voice }
           : null;
-        if (office.hire(msg.deskId, agent, client.name, model, leash, policy.isolate, identity)) {
+        if (office.hire(msg.deskId, agent, client.name, model, leash, policy.isolate, identity, repos.forHire(msg.repo))) {
           warnIfTooBig(model);
           const autoless = autoModeWarning(agent, model, leash);
           if (autoless) broadcast({ t: "loop", goalId: "", event: "warn", text: autoless });
@@ -682,7 +687,7 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
         if (!a || office.workerAt(msg.deskId)) break;
         const character = a.characterId ? progress.character(a.characterId) : null;
         const identity: WorkerIdentity | null = character ? { characterId: character.id, name: character.name, look: character.look, voice: character.voice } : null;
-        if (office.hire(msg.deskId, a.agent, client.name, a.model, a.leash, progress.policy.isolate, identity)) {
+        if (office.hire(msg.deskId, a.agent, client.name, a.model, a.leash, progress.policy.isolate, identity, repos.hireRepo)) {
           alumni.remove(a.id);
           history.add({ kind: "hired", who: client.name, text: `${client.name} brought ${a.name} back, at ${msg.deskId.replace("desk-", "desk ")}`, worker: workerRef(msg.deskId) });
         }
@@ -795,6 +800,7 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
           const taskId = progress.addTask(goal.id, title);
           const files = coerceAttachments(msg.files);
           if (taskId && files.length) pendingFiles.set(taskId, files);
+          if (taskId && typeof msg.repo === "string" && repos.find(msg.repo)) pendingRepos.set(taskId, repos.find(msg.repo)!);
           if (taskId) ctx.offerTask(goal.id, taskId, title, [], client);
           break;
         }
@@ -805,7 +811,7 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
         const max = deskId ? 120 : 300;
         const title = deskId && firstLine.length <= max ? firstLine : said.length <= max ? said : `${(deskId ? firstLine : said).slice(0, max - 3).trimEnd()}…`;
         const files = coerceAttachments(msg.files);
-        const brief = { ...(title === said ? {} : { notes: said }), ...(files.length ? { files } : {}) };
+        const brief = { ...(title === said ? {} : { notes: said }), ...(files.length ? { files } : {}), ...(typeof msg.repo === "string" ? { repo: msg.repo } : {}) };
         const taskId = progress.addTask(goal.id, title);
         if (!taskId) break;
         if (!deskId) {
@@ -969,6 +975,14 @@ function assignTask(who: string, goalId: string, taskId: string, deskId: string,
   const waiting = pendingFiles.get(taskId);
   if (waiting) pendingFiles.delete(taskId);
   const brief = coerceBrief(waiting && !raw.files ? { ...raw, files: waiting } : raw, progress.policy);
+  // The repo it's to be done in, when it names one (or was given to everyone with one): else the worker's own.
+  const wantRepo = brief.repo ?? pendingRepos.get(taskId);
+  pendingRepos.delete(taskId);
+  const repo = wantRepo ? repos.find(wantRepo) : null;
+  // Where it's done is kept with it once other repos are open, so its pull request goes there.
+  const doneIn = repo ?? (repos.others().length ? repos.find(office.repoOf(deskId)) : null);
+  if (doneIn) brief.repo = doneIn;
+  else delete brief.repo;
   const got = progress.assign(who, goalId, taskId, deskId, brief);
   if (!got) return false;
   const paired = brief.auditor ? audits.start(deskId, brief.auditor, got.title, brief.rounds ?? DEFAULT_AUDIT_ROUNDS, brief.auditWhen === "along") : false;
@@ -983,10 +997,16 @@ function assignTask(who: string, goalId: string, taskId: string, deskId: string,
   if (brief.model) warnIfTooBig(brief.model);
   // Put the worker on the task's model first: Claude Code switches in
   // place; other CLIs restart on it, so give them a moment to boot.
-  const switched = brief.model ? office.switchModel(deskId, brief.model) : "same";
+  // A task in another repo than the worker's: it moves there first (restarting, on the task's model).
+  const moved = repo ? office.moveToRepo(deskId, repo, progress.policy.isolate, brief.model || undefined) : null;
+  if (moved?.moved) {
+    broadcast({ t: "loop", goalId, event: "warn", text: `📦 ${nameAt(deskId)} moved to ${basename(repo!)} for “${got.title}”` });
+    if (moved.kept) broadcast({ t: "loop", goalId: "", event: "mergeFailed", text: `🌿 Kept ${moved.kept} — it has work that isn't on its repo's branch yet` });
+  }
+  const switched = moved?.moved ? "restarted" : brief.model ? office.switchModel(deskId, brief.model) : "same";
   const delay = switched === "restarted" ? 6000 : switched === "switched" && !SIMULATE ? 1500 : 0;
   const ws = office.workspaceOf(deskId);
-  if (ws) office.workspaces?.sync(ws.path);
+  if (ws) office.workspacesOf(deskId)?.sync(ws.path);
   // The team's lessons in its own folder before it starts (the brief says to read them first).
   lessons.write();
   // Files you attached go into its own folder (no asking for access), and the brief points at them.
@@ -1018,6 +1038,7 @@ function assignTask(who: string, goalId: string, taskId: string, deskId: string,
  */
 function fireWorker(who: string, deskId: string, reason?: string): boolean {
   const ws = office.workspaceOf(deskId);
+  const workspaces = office.workspacesOf(deskId);
   const leaving = workerRef(deskId);
   const w = office.workerAt(deskId);
   const tasksDone = history.of({ deskId, characterId: w?.identity?.characterId }).filter((e) => e.kind === "approved").length;
@@ -1034,7 +1055,7 @@ function fireWorker(who: string, deskId: string, reason?: string): boolean {
   // Its MCP configs may hold tokens: they go with it.
   mcpCleanup(CWD, deskId);
   gateTries.delete(deskId);
-  if (ws && office.workspaces?.remove(ws) === "kept") {
+  if (ws && workspaces?.remove(ws) === "kept") {
     broadcast({ t: "loop", goalId: "", event: "mergeFailed", text: `🌿 Kept ${ws.branch} — it has work that isn't on your branch yet` });
   }
   return true;
@@ -1048,14 +1069,16 @@ function fireWorker(who: string, deskId: string, reason?: string): boolean {
 function reviewWork(who: string, deskId: string, approve: boolean, text?: string, sketch?: string): boolean {
   const wasPlan = office.reportStatus(deskId) === "plan";
   const ws = office.workspaceOf(deskId);
-  if (approve && !wasPlan && ws && office.workspaces && progress.policy.merge === "auto") {
+  // Its branch merges into its own repo's branch (the project's, or another open repo's).
+  const workspaces = office.workspacesOf(deskId);
+  if (approve && !wasPlan && ws && workspaces && progress.policy.merge === "auto") {
     const at = progress.taskAt(deskId);
     const title = at?.title ?? "work";
-    office.workspaces.commitAll(office.workdir(deskId), `domain: ${title}`);
-    const m = office.workspaces.merge(ws.branch, title);
+    workspaces.commitAll(office.workdir(deskId), `domain: ${title}`);
+    const m = workspaces.merge(ws.branch, title);
     if (m.outcome === "conflict") {
       // It can't land cleanly: back to the worker to resolve, not onto your branch.
-      const base = office.workspaces.base() ?? "your branch";
+      const base = workspaces.base() ?? "your branch";
       if (office.review(deskId, false, `Approved — but your branch conflicts with ${base}. Merge ${base} into your branch, resolve the conflicts, make sure the checks pass, and present again.`)) {
         progress.reviewed(who, deskId, false);
       }
@@ -1118,6 +1141,7 @@ function personaFor(deskId: string): string {
 const ctx: ServerCtx = {
   mayDirectDesk: (client, deskId) => mayDirectDesk(client, deskId),
   cwd: CWD,
+  repos,
   port: PORT,
   simulate: SIMULATE,
   office,
@@ -1247,7 +1271,8 @@ const autopilot = new Autopilot({
   approve: (d) => void reviewWork("Autopilot", d, true),
   addTask: (g, title) => progress.addTask(g, title),
   hire: (deskId, agent, model, leash, mentor) => {
-    if (!office.hire(deskId, agent, "Autopilot", model, leash, progress.policy.isolate, null)) return false;
+    // An intern works in its mentor's repo.
+    if (!office.hire(deskId, agent, "Autopilot", model, leash, progress.policy.isolate, null, office.repoOf(mentor))) return false;
     office.setInternOf(deskId, mentor);
     history.add({ kind: "hired", who: "Autopilot", text: `${nameAt(mentor)} brought in an intern at ${deskId.replace("desk-", "desk ")}`, worker: workerRef(deskId) });
     return true;
@@ -1259,7 +1284,8 @@ const autopilot = new Autopilot({
   sessionGoal: () => progress.snapshot().session?.goalId ?? null,
   diffLines: (deskId) => {
     const ws = office.workspaceOf(deskId);
-    return ws && office.workspaces ? office.workspaces.diffLines(office.workdir(deskId)) : null;
+    const workspaces = office.workspacesOf(deskId);
+    return ws && workspaces ? workspaces.diffLines(office.workdir(deskId)) : null;
   },
   note: (text, deskId) => {
     history.add({ kind: "audit", who: "Autopilot", text, ...(deskId ? { worker: workerRef(deskId) } : {}) });
@@ -1303,6 +1329,8 @@ function autoModeWarning(agent: string, model: string, leash: string): string | 
 
 /** Files attached to a task given to everyone, until someone takes it. */
 const pendingFiles = new Map<string, { name: string; text: string }[]>();
+/** The repo a task given to everyone is to be done in, until someone takes it. */
+const pendingRepos = new Map<string, string>();
 
 /** Write attached files into a worker's .domain/notes/ (kept out of git); returns the names written. */
 function writeAttachments(workdir: string, files: { name: string; text: string }[]): string[] {
@@ -1322,7 +1350,7 @@ function writeAttachments(workdir: string, files: { name: string; text: string }
 }
 
 /** What directs a worker (rather than just watching or talking to it). */
-const DIRECTING = new Set<string>(["input", "fire", "taskAssign", "quickTask", "review", "say", "plan", "ship", "wake", "ideaHandoff", "offerAnswer"]);
+const DIRECTING = new Set<string>(["input", "fire", "taskAssign", "quickTask", "review", "say", "plan", "ship", "wake", "ideaHandoff", "offerAnswer", "workerRepo"]);
 
 /** The people in the office now (by name). */
 function presentNames(): string[] {
@@ -1363,7 +1391,7 @@ function startTeam(): void {
   for (const d of desks()) {
     if (staffed >= count) break;
     if (d.worker || BAY_DESK_IDS.includes(d.id)) continue;
-    if (!office.hire(d.id, agent, "Office", progress.policy.defaultModel[agent], progress.policy.leash, progress.policy.isolate, null)) continue;
+    if (!office.hire(d.id, agent, "Office", progress.policy.defaultModel[agent], progress.policy.leash, progress.policy.isolate, null, repos.hireRepo)) continue;
     history.add({ kind: "hired", who: "Office", text: `The office started ${nameAt(d.id)} at ${d.id.replace("desk-", "desk ")} (your starting team)`, worker: workerRef(d.id) });
     staffed++;
     hired++;

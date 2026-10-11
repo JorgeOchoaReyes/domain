@@ -17,6 +17,7 @@ import { AGENT_COLOR } from "../scene/characters.js";
 import { esc, openModal } from "./modal.js";
 import { workerName } from "./team.js";
 import { micButton, wireMic } from "../voice.js";
+import { openRepos } from "./projects.js";
 
 /**
  * The assignment card: handing a task to a worker on your terms. Who does it,
@@ -55,6 +56,10 @@ export function openAssignCard(o: AssignOptions): void {
   let auditor = start?.auditor ?? "";
   let rounds = start?.rounds ?? DEFAULT_AUDIT_ROUNDS;
   let auditWhen: "end" | "along" = start?.auditWhen ?? "end";
+  // With other repos open: which one it's done in ("": the worker's own).
+  const repos = openRepos();
+  let repo = start?.repo ?? "";
+  const samePath = (a: string, b: string) => a.replace(/[\\/]+$/, "").toLowerCase() === b.replace(/[\\/]+$/, "").toLowerCase();
 
   const body = document.createElement("div");
   body.className = "assign";
@@ -79,6 +84,14 @@ export function openAssignCard(o: AssignOptions): void {
           .join("")}
       </div>
     </section>
+    ${
+      repos.length > 1
+        ? `<section>
+      <h4>📂 Repo <span class="as-hint">where it's done — a worker in another repo moves there first</span></h4>
+      <div class="seg as-repos"></div>
+    </section>`
+        : ""
+    }
     <section>
       <h4>Model <span class="as-hint">for this task</span></h4>
       <div class="seg as-models"></div>
@@ -142,6 +155,23 @@ export function openAssignCard(o: AssignOptions): void {
       }),
     );
   };
+  const renderRepos = () => {
+    const el = body.querySelector(".as-repos");
+    if (!el) return;
+    // The worker's own repo is the default: picking it is the same as not picking.
+    const own = repos.find((r) => samePath(r.path, worker().repo ?? repos[0].path)) ?? repos[0];
+    if (repo && samePath(repo, own.path)) repo = "";
+    el.innerHTML = [
+      `<button data-repo="" class="${repo ? "" : "on"}">Its own · ${esc(own.name)}</button>`,
+      ...repos.filter((r) => r !== own).map((r) => `<button data-repo="${esc(r.path)}" class="${repo && samePath(repo, r.path) ? "on" : ""}">${esc(r.name)}</button>`),
+    ].join("");
+    el.querySelectorAll<HTMLButtonElement>("button").forEach((b) =>
+      b.addEventListener("click", () => {
+        repo = b.dataset.repo ?? "";
+        renderRepos();
+      }),
+    );
+  };
   // Anyone but the worker doing it can audit it.
   const renderAuditors = () => {
     if (auditor === deskId) auditor = "";
@@ -188,6 +218,7 @@ export function openAssignCard(o: AssignOptions): void {
       deskId = b.dataset.desk!;
       renderWorkers();
       renderModels();
+      renderRepos();
       renderAuditors();
     }),
   );
@@ -223,11 +254,12 @@ export function openAssignCard(o: AssignOptions): void {
     modal.close();
     const notes = notesEl.value.trim();
     const files = attached();
-    o.onAssign(deskId, { model, minutes, onTimeUp, planFirst, done: lines.length ? lines : [...o.policy.done], ...(auditor ? { auditor, rounds, auditWhen } : {}), ...(notes ? { notes } : {}), ...(files.length ? { files } : {}) });
+    o.onAssign(deskId, { model, minutes, onTimeUp, planFirst, done: lines.length ? lines : [...o.policy.done], ...(auditor ? { auditor, rounds, auditWhen } : {}), ...(notes ? { notes } : {}), ...(files.length ? { files } : {}), ...(repo ? { repo } : {}) });
   });
 
   renderWorkers();
   renderModels();
+  renderRepos();
   renderTime();
   renderAuditors();
   footer.querySelector<HTMLButtonElement>(".go")!.focus();

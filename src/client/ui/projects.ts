@@ -1,5 +1,5 @@
 import type { ClientMessage, ServerMessage } from "../../shared/protocol.js";
-import type { GithubAccount, GithubRepo, ProjectInfo, RecentProject } from "../../shared/project.js";
+import type { GithubAccount, GithubRepo, ProjectInfo, RecentProject, RepoWorker } from "../../shared/project.js";
 import { icon } from "./icons.js";
 import { logView, openLogs } from "./logs.js";
 import { esc, openModal, type Modal } from "./modal.js";
@@ -12,6 +12,10 @@ import "../styles/projects.css";
  * changes would hold up merges), lets you switch to a recent one or any
  * folder, sign in with GitHub through git's own sign-in, and clone a repo —
  * with the clone's progress right there.
+ *
+ * Other repos open alongside the project without a restart: the window lists
+ * them all, says where new hires work and who works where, and moves a
+ * worker to another repo.
  */
 
 export const projectState = {
@@ -27,6 +31,12 @@ export const projectState = {
   reposLoading: false,
   /** You joined someone else's office: their projects aren't yours to switch. */
   guest: false,
+  /** The other repos open alongside the project, where new hires work, and who works where. */
+  open: [] as ProjectInfo[],
+  hireRepo: "",
+  workers: [] as RepoWorker[],
+  /** Clone (or open) alongside the project rather than switching to it. */
+  alongside: false,
 };
 
 export interface ProjectActions {
@@ -53,6 +63,9 @@ export function ingestProjects(msg: ServerMessage): void {
       projectState.info = msg.info;
       projectState.recent = msg.recent;
       if (msg.account) projectState.account = msg.account;
+      projectState.open = msg.repos ?? [];
+      projectState.hireRepo = msg.hireRepo ?? "";
+      projectState.workers = msg.workers ?? [];
       break;
     case "githubAccount":
       projectState.accountChecked = true;
@@ -90,7 +103,15 @@ export function projectBadge(): string {
   if (!i) return "";
   return `<span class="pj-badge" title="${esc(i.path)}">${icon("folder", 13)} ${esc(i.name)}${
     i.branch ? ` <span class="pj-branch">${icon("branch", 12)} ${esc(i.branch)}</span>` : ""
-  }${i.github ? ` <span class="pj-gh" title="On GitHub: ${esc(i.github.owner)}/${esc(i.github.repo)}">${icon("github", 12)}</span>` : ""}</span>`;
+  }${i.github ? ` <span class="pj-gh" title="On GitHub: ${esc(i.github.owner)}/${esc(i.github.repo)}">${icon("github", 12)}</span>` : ""}${
+    projectState.open.length ? ` <span class="pj-more" title="Also open: ${esc(projectState.open.map((r) => r.name).join(", "))}">+${projectState.open.length}</span>` : ""
+  }</span>`;
+}
+
+/** The repos open now: the project, then the others (for picking one per task). */
+export function openRepos(): ProjectInfo[] {
+  const i = projectState.info;
+  return i ? [i, ...projectState.open] : [];
 }
 
 function ago(t: number): string {
@@ -163,7 +184,41 @@ function render(): void {
       </section>`
     : `<section class="pj-current loading">${icon("spinner", 20)} Looking at this project…</section>`;
 
-  const recent = projectState.recent.filter((r) => !i || !samePath(r.path, i.path));
+  // Every open repo: who works there, where new hires go, and moving workers between them.
+  const all = i ? [i, ...projectState.open] : [];
+  const hireAt = projectState.hireRepo || i?.path || "";
+  const openHtml = all.length > 1
+    ?`<section class="pj-open-repos">
+        <h4>${icon("git", 14)} Open repos <span class="pj-hint">each worker works in one; a task can name another</span></h4>
+        <ul class="pj-recent">${all
+          .map((r, n) => {
+            const who = projectState.workers.filter((w) => samePath(w.repo, r.path));
+            return `<li>
+              <span class="pj-r-icon">${r.github ? icon("github", 16) : icon("folder", 16)}</span>
+              <span class="pj-r-main"><b>${esc(r.name)}${n === 0 ? ` <span class="pj-lock">project</span>` : ""}</b><code>${esc(r.path)}</code><span class="pj-desc">${
+                r.branch ? `${esc(r.branch)} · ` : ""
+              }${who.length ? esc(who.map((w) => w.name).join(", ")) : "nobody works here yet"}</span></span>
+              ${samePath(hireAt, r.path) ? `<span class="pj-r-when">new hires work here</span>` : `<button class="btn small pj-hire-here" data-path="${esc(r.path)}">Hire here</button>`}
+              ${n === 0 ? "" : `<button class="btn small pj-close-repo" data-path="${esc(r.path)}" title="Close it (its worktrees and branches are kept)">Close</button>`}
+            </li>`;
+          })
+          .join("")}</ul>
+        ${
+          all.length > 1 && projectState.workers.length
+            ? `<div class="pj-movers">${projectState.workers
+                .map(
+                  (w) => `<label class="pj-mover"><span>${esc(w.name)}</span><select class="pj-move" data-desk="${esc(w.deskId)}">${all
+                    .map((r) => `<option value="${esc(r.path)}" ${samePath(r.path, w.repo) ? "selected" : ""}>${esc(r.name)}</option>`)
+                    .join("")}</select></label>`,
+                )
+                .join("")}</div>
+              <p class="pj-note">Moving a worker restarts it in that repo, on a branch of its own.</p>`
+            : ""
+        }
+      </section>`
+    : "";
+
+  const recent = projectState.recent.filter((r) => !i || !all.some((o) => samePath(r.path, o.path)));
   const recentHtml = recent.length
     ? `<ul class="pj-recent">${recent
         .map(
@@ -171,7 +226,8 @@ function render(): void {
             <span class="pj-r-icon">${r.github ? icon("github", 16) : icon("folder", 16)}</span>
             <span class="pj-r-main"><b>${esc(r.name)}</b><code>${esc(r.path)}</code></span>
             <span class="pj-r-when">${ago(r.openedAt)}</span>
-            <button class="btn small pj-open" data-path="${esc(r.path)}">Open</button>
+            <button class="btn small pj-add" data-path="${esc(r.path)}" title="Open it alongside this project (no restart)">Add</button>
+            <button class="btn small pj-open" data-path="${esc(r.path)}" title="Switch the office to it (restarts)">Open</button>
           </li>`,
         )
         .join("")}</ul>`
@@ -221,6 +277,7 @@ function render(): void {
 
   body.innerHTML = host
     ? `${current}
+      ${openHtml}
       <div class="pj-grid">
         <section>
           <h4>${icon("folder", 14)} Recent</h4>
@@ -229,9 +286,10 @@ function render(): void {
           <div class="pj-row">
             <button class="btn pj-pick">Choose a folder…</button>
             <input type="text" class="pj-path" data-keep="path" placeholder="or paste a path, e.g. C:\\code\\my-app" />
+            <button class="btn small pj-path-add" title="Open it alongside this project (no restart)">Add</button>
             <button class="btn small pj-path-go">Open</button>
           </div>
-          <p class="pj-note">Switching restarts the office in that folder.</p>
+          <p class="pj-note">Add opens it alongside this project, no restart. Open switches: the office restarts in that folder.</p>
         </section>
         <section>
           <h4>${icon("github", 14)} Start from GitHub</h4>
@@ -240,6 +298,7 @@ function render(): void {
             <input type="text" class="pj-url" data-keep="url" placeholder="owner/repo or https://github.com/owner/repo" />
             <button class="btn primary pj-clone">${icon("clone", 14)} Clone</button>
           </div>
+          <label class="pj-note"><input type="checkbox" class="pj-alongside" ${projectState.alongside ? "checked" : ""} /> Open the clone alongside this project (no restart)</label>
           ${repoList}
           <div class="pj-log-slot"></div>
         </section>
@@ -268,6 +327,15 @@ function render(): void {
 
   const send = actions.send;
   body.querySelectorAll<HTMLButtonElement>(".pj-open").forEach((b) => b.addEventListener("click", () => openPath(b.dataset.path!)));
+  body.querySelectorAll<HTMLButtonElement>(".pj-add").forEach((b) => b.addEventListener("click", () => send({ t: "repoAdd", path: b.dataset.path! })));
+  body.querySelector(".pj-path-add")?.addEventListener("click", () => {
+    if (path?.value.trim()) send({ t: "repoAdd", path: path.value.trim() });
+    else send({ t: "repoAdd", path: "" });
+  });
+  body.querySelectorAll<HTMLButtonElement>(".pj-hire-here").forEach((b) => b.addEventListener("click", () => send({ t: "repoHire", path: b.dataset.path! })));
+  body.querySelectorAll<HTMLButtonElement>(".pj-close-repo").forEach((b) => b.addEventListener("click", () => send({ t: "repoClose", path: b.dataset.path! })));
+  body.querySelectorAll<HTMLSelectElement>(".pj-move").forEach((el) => el.addEventListener("change", () => send({ t: "workerRepo", deskId: el.dataset.desk!, repo: el.value })));
+  body.querySelector<HTMLInputElement>(".pj-alongside")?.addEventListener("change", (e) => (projectState.alongside = (e.target as HTMLInputElement).checked));
   body.querySelector(".pj-pick")?.addEventListener("click", () => send({ t: "projectOpen", path: "" }));
   body.querySelector(".pj-path-go")?.addEventListener("click", () => openPath(path?.value ?? ""));
   body.querySelector(".pj-clone")?.addEventListener("click", () => clone(url?.value ?? ""));
@@ -295,7 +363,7 @@ function openPath(p: string): void {
 
 function clone(u: string): void {
   if (!u.trim() || !actions) return;
-  actions.send({ t: "projectClone", url: u.trim() });
+  actions.send({ t: "projectClone", url: u.trim(), ...(projectState.alongside ? { add: true } : {}) });
 }
 
 /** The office is restarting on another project: a calm full-screen card while it does. */

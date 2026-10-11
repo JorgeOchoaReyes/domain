@@ -1,6 +1,6 @@
 import { readFileSync, statSync } from "node:fs";
 import { userInfo } from "node:os";
-import { basename } from "node:path";
+import { basename, resolve } from "node:path";
 import { MAX_ATTACH_BYTES } from "../shared/policy.js";
 import { createInterface } from "node:readline";
 import WebSocket from "ws";
@@ -25,9 +25,10 @@ import type { RepoStatus } from "../shared/project.js";
 const HELP = `nou — your command line for the office
 
   nou                          what everyone's doing, and what's waiting for you
-  nou task "…" [--to NAME] [--file notes.md,spec.txt]
+  nou task "…" [--to NAME] [--file notes.md,spec.txt] [--repo REPO]
                                give a task (to everyone: someone offers to take it),
-                               with notes or files from your computer for it to read
+                               with notes or files from your computer for it to read,
+                               in another open repo than the agent's own
   nou say NAME|all "…"         message an agent (or everyone)
   nou ask NAME "…"             message an agent and wait for its answer
   nou watch [NAME]             live: what happens in the office — or one agent's terminal
@@ -36,9 +37,14 @@ const HELP = `nou — your command line for the office
   nou approve NAME [note]      approve it (it merges into your branch)
   nou back NAME "…"            send it back with what to change
   nou standup "…"              say what you want today: Claude plans it and picks who does what
-  nou repo                     where the repo stands: your branch, agents' branches, pull requests
+  nou repo                     where each open repo stands: your branch, agents' branches, pull requests
+  nou repo add PATH            open another repo alongside the project (no restart)
+  nou repo close REPO          close it (its branches are kept)
+  nou repo hire REPO           new hires work there
+  nou move NAME REPO           move an agent to another open repo
   nou roles                    the ready-made agents
-  nou hire ROLE [--desk N]     hire one (e.g. nou hire reviewer)
+  nou hire ROLE [--desk N] [--repo REPO]
+                               hire one (e.g. nou hire reviewer)
 
   Options: --yes (don't ask), --name YOU (who you are in the chat)
   It finds the office running on this machine; set NOU_PORT to point it elsewhere.`;
@@ -197,7 +203,8 @@ export function statusText(office: OfficeState, progress: ProgressState, me = ""
     // Its activity often just repeats the task: say it once.
     const extra = task && doing.includes(task) ? "" : doing;
     const owner = me && w.hiredBy !== me && !SHARED_HIRERS.includes(w.hiredBy) ? dim(` (${w.hiredBy}'s)`) : "";
-    out.push(`   ${pad(bold(workerName(d)) + owner, 14 + (TTY ? 8 : 0) + (owner ? owner.length : 0))}${pad(dim(AGENT_LABELS[w.agent]), 13 + (TTY ? 8 : 0))}${pad(color(st), 11 + (TTY ? 9 : 0))}${task ? `🎯 ${task}${extra ? " — " : ""}` : ""}${dim(extra)}`);
+    const where = w.repo ? dim(` 📂 ${basename(w.repo)}`) : "";
+    out.push(`   ${pad(bold(workerName(d)) + owner, 14 + (TTY ? 8 : 0) + (owner ? owner.length : 0))}${pad(dim(AGENT_LABELS[w.agent]), 13 + (TTY ? 8 : 0))}${pad(color(st), 11 + (TTY ? 9 : 0))}${task ? `🎯 ${task}${extra ? " — " : ""}` : ""}${dim(extra)}${where}`);
   }
   const ready = office.presentations.filter((p) => p.report);
   const waiting = staffed.filter((d) => d.worker!.status === "waiting");
@@ -319,7 +326,7 @@ async function run(conn: Conn, cmd: string, words: string[], flags: Record<strin
           return 1;
         }
       }
-      const withFiles = files.length ? { files } : {};
+      const withFiles = { ...(files.length ? { files } : {}), ...(typeof flags.repo === "string" ? { repo: flags.repo } : {}) };
       if (files.length) console.log(dim(`📎 ${files.map((f) => f.name).join(", ")}`));
       if (typeof flags.to === "string") {
         const d = desk(flags.to);
@@ -393,6 +400,21 @@ async function run(conn: Conn, cmd: string, words: string[], flags: Record<strin
     }
 
     case "repo": {
+      const sub = (words[0] ?? "").toLowerCase();
+      if (["add", "close", "hire"].includes(sub)) {
+        const what = words.slice(1).join(" ").trim();
+        if (!what) return usage(`nou repo ${sub} ${sub === "add" ? "PATH" : "REPO"}`);
+        // A folder is named from where you are; the office knows open repos by name too.
+        const path = sub === "add" ? resolve(what) : what;
+        conn.send({ t: sub === "add" ? "repoAdd" : sub === "close" ? "repoClose" : "repoHire", path });
+        const got = await conn.next((m): m is Extract<ServerMessage, { t: "project" }> => m.t === "project", 15_000);
+        if (!got) {
+          console.log(yellow("The office didn't confirm — see its Logs (Projects → Logs)."));
+          return 1;
+        }
+        console.log(openReposText(got));
+        return 0;
+      }
       conn.send({ t: "repoStatus" });
       const got = await conn.next((m): m is Extract<ServerMessage, { t: "repoStatus" }> => m.t === "repoStatus", 45_000);
       if (!got) {
@@ -401,6 +423,18 @@ async function run(conn: Conn, cmd: string, words: string[], flags: Record<strin
       }
       console.log(repoText(got.status));
       return 0;
+    }
+
+    case "move": {
+      const d = desk(words[0]);
+      const repo = words.slice(1).join(" ").trim();
+      if (!d) return 1;
+      if (!repo) return usage("nou move NAME REPO");
+      conn.send({ t: "workerRepo", deskId: d.id, repo });
+      const got = await conn.next((m): m is Extract<ServerMessage, { t: "project" }> => m.t === "project", 15_000);
+      const now = got?.workers?.find((w) => w.deskId === d.id);
+      console.log(now ? green(`📦 ${workerName(d)} works in ${basename(now.repo)} now.`) : yellow(`“${repo}” isn't an open repo (nou repo), or ${workerName(d)} isn't running.`));
+      return now ? 0 : 1;
     }
 
     case "screen": {
@@ -549,7 +583,7 @@ async function run(conn: Conn, cmd: string, words: string[], flags: Record<strin
       }
       const ch = roleCharacter(role, conn.progress.team.map((x) => x.name));
       conn.send({ t: "characterSave", character: ch });
-      conn.send({ t: "hire", deskId: free.id, agent: ch.agent, characterId: ch.id });
+      conn.send({ t: "hire", deskId: free.id, agent: ch.agent, characterId: ch.id, ...(typeof flags.repo === "string" ? { repo: flags.repo } : {}) });
       const up = await conn.next((m): m is Extract<ServerMessage, { t: "office" }> => m.t === "office" && !!m.office.desks.find((d) => d.id === free.id)?.worker, 10_000);
       console.log(up ? green(`${role.icon} ${ch.name} (${role.title}) is at ${free.label}.`) : yellow("Asked — the office hasn't confirmed yet."));
       return up ? 0 : 1;
@@ -558,6 +592,19 @@ async function run(conn: Conn, cmd: string, words: string[], flags: Record<strin
   console.error(red(`Unknown command: ${cmd}`));
   console.log(HELP);
   return 1;
+}
+
+/** The open repos, where new hires work, and who works where. */
+export function openReposText(m: Extract<ServerMessage, { t: "project" }>): string {
+  const all = [m.info, ...(m.repos ?? [])];
+  const same = (a: string, b: string) => resolve(a).toLowerCase() === resolve(b).toLowerCase();
+  return all
+    .map((r, i) => {
+      const who = (m.workers ?? []).filter((w) => same(w.repo, r.path)).map((w) => w.name);
+      const hire = same(m.hireRepo ?? m.info.path, r.path) ? green(" ← new hires") : "";
+      return `${bold(`📂 ${r.name}`)}${i === 0 ? dim(" (project)") : ""}${hire}  ${dim(r.path)}\n   ${who.length ? who.join(", ") : dim("nobody works here")}`;
+    })
+    .join("\n");
 }
 
 /** The newest offer you haven't answered (or been asked about) yet. */
@@ -594,6 +641,8 @@ function watchEvents(conn: Conn): void {
 }
 
 export function repoText(s: RepoStatus): string {
+  // Every open repo the same way: the project, then the others open alongside it.
+  if (s.others?.length) return [s, ...s.others].map((r) => `${bold(cyan(`📂 ${r.name ?? "project"}`))} ${dim(r.path ?? "")}\n${repoText({ ...r, others: undefined })}`).join("\n\n");
   if (!s.isGit) return yellow("This project isn't a git repo.");
   const out: string[] = [];
   const commit = (c: RepoStatus["last"]) => (c ? `${dim(c.sha)} ${c.subject} ${dim(c.when)}` : dim("no commits"));

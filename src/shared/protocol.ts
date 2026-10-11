@@ -8,7 +8,7 @@ import type { ChatPeek, ChatThread, ChatWork } from "./chat.js";
 import type { HistoryEvent } from "./history.js";
 import type { GoalKind, ProgressState, SessionSummary, ToneId } from "./progress.js";
 import type { Leash, TaskBrief, TeamPolicy } from "./policy.js";
-import type { GithubAccount, GithubIssue, GithubRepo, OpLog, ProjectInfo, PullRequestInfo, RecentProject, RepoStatus } from "./project.js";
+import type { GithubAccount, GithubIssue, GithubRepo, OpLog, ProjectInfo, PullRequestInfo, RecentProject, RepoStatus, RepoWorker } from "./project.js";
 import type { Character, WorkerIdentity } from "./team.js";
 import type { McpHealth, McpSeen, McpServer } from "./mcp.js";
 
@@ -117,6 +117,8 @@ export interface Worker {
   internOf?: string;
   /** What it's doing right now, in a word or three ("Editing math.js", "Running tests"). */
   doing?: string;
+  /** The repo folder it works in, when that's another open repo than the office's own project. */
+  repo?: string;
 }
 
 /** Workers the office started itself (not one person's): anyone may direct them. */
@@ -245,7 +247,7 @@ export type ClientMessage =
   /** Presence update as you walk around. */
   | { t: "move"; x: number; z: number; facing: number }
   /** Staff an empty desk with an agent. */
-  | { t: "hire"; deskId: string; agent: AgentKind; model?: string; leash?: Leash; characterId?: string }
+  | { t: "hire"; deskId: string; agent: AgentKind; model?: string; leash?: Leash; characterId?: string; repo?: string }
   /** Open a worker's terminal; the server replies with its scrollback. */
   | { t: "open"; deskId: string }
   /** Send a worker home and free its desk. */
@@ -303,7 +305,7 @@ export type ClientMessage =
   /** Put the worker at a desk on a task (it's briefed in its terminal). */
   | { t: "taskAssign"; goalId: string; taskId: string; deskId: string; brief?: TaskBrief }
   /** Hand a worker something to do, straight from the chat: tracked as a task (on the session's goal, or "Quick tasks"). deskId "any": whoever's free. */
-  | { t: "quickTask"; deskId: string; text: string; goalId?: string; files?: { name: string; text: string }[] }
+  | { t: "quickTask"; deskId: string; text: string; goalId?: string; files?: { name: string; text: string }[]; repo?: string }
   /** Change the team's defaults for hiring and handing out tasks. */
   | { t: "policySet"; policy: TeamPolicy }
   /** Tick a task off (or back on) by hand. */
@@ -361,7 +363,15 @@ export type ClientMessage =
   /** Switch the office to another folder (the app restarts on it). */
   | { t: "projectOpen"; path: string }
   /** Clone a repo (URL or owner/repo) into the projects folder, then open it. */
-  | { t: "projectClone"; url: string }
+  | { t: "projectClone"; url: string; add?: boolean }
+  /** Open another repo alongside the project (no restart): a folder, or the picker when empty. Answered with "project". */
+  | { t: "repoAdd"; path: string }
+  /** Close an open repo (not the office's own project). */
+  | { t: "repoClose"; path: string }
+  /** Where new hires work (a path or name of an open repo). */
+  | { t: "repoHire"; path: string }
+  /** Move a worker to another open repo: it restarts there, on its own branch. */
+  | { t: "workerRepo"; deskId: string; repo: string }
   /** Sign in to GitHub through git's own credential manager (opens the browser once). */
   | { t: "githubSignIn" }
   | { t: "githubRepos" }
@@ -369,7 +379,7 @@ export type ClientMessage =
   /** Turn GitHub issues into tasks (on a goal, or a new goal when null). */
   | { t: "issuesImport"; goalId: string | null; numbers: number[] }
   /** Ship a goal as a GitHub pull request: push, open it, follow its checks. */
-  | { t: "shipPR"; goalId: string }
+  | { t: "shipPR"; goalId: string; repo?: string }
   /** The full operations log (git, GitHub, MCP, checks, deploys). */
   | { t: "logs" }
   // --- your team ---------------------------------------------------------------
@@ -452,7 +462,16 @@ export type ServerMessage =
   /** A spoken stand-up turned into a plan ("claude": by a model; "simple": from your sentences). */
   | { t: "standupDraft"; draft: StandupDraft; via: "claude" | "simple" }
   // --- projects and GitHub -------------------------------------------------
-  | { t: "project"; info: ProjectInfo; recent: RecentProject[]; account: GithubAccount | null }
+  | {
+      t: "project";
+      info: ProjectInfo;
+      recent: RecentProject[];
+      account: GithubAccount | null;
+      /** The other repos open alongside it, where new hires work, and who works where. */
+      repos?: ProjectInfo[];
+      hireRepo?: string;
+      workers?: RepoWorker[];
+    }
   /** The office is switching to another project: the app restarts on it. */
   | { t: "projectSwitching"; path: string; name: string }
   | { t: "githubAccount"; account: GithubAccount | null; error?: string }

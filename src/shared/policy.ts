@@ -56,6 +56,8 @@ export interface TaskBrief {
   auditWhen?: "end" | "along";
   /** Notes and files you attached (text): copied into its folder, under .domain/notes/. */
   files?: Attachment[];
+  /** The open repo to do it in (its folder), when not the worker's own: it moves there first. */
+  repo?: string;
 }
 
 /** A text file you attached to a task. */
@@ -227,6 +229,7 @@ export function coerceBrief(raw: unknown, policy: TeamPolicy): TaskBrief {
     ...(typeof o.auditor === "string" && o.auditWhen === "along" ? { auditWhen: "along" as const } : {}),
     ...(typeof o.notes === "string" && o.notes.trim() ? { notes: o.notes.trim().replace(/\s+/g, " ").slice(0, 2000) } : {}),
     ...(coerceAttachments(o.files).length ? { files: coerceAttachments(o.files) } : {}),
+    ...(typeof o.repo === "string" && o.repo.trim() && o.repo.length <= 1000 ? { repo: o.repo.trim() } : {}),
   };
 }
 
