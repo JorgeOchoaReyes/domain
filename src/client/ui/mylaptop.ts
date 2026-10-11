@@ -257,7 +257,7 @@ export class MyLaptop {
       this.content.innerHTML = `<p class="lt-note">Looking at the repo…</p>`;
       return;
     }
-    if (!s.isGit) {
+    if (!s.isGit && !s.others?.length) {
       this.content.innerHTML = `<div class="rp"><p class="lt-note">This project isn't a git repo yet — open one (File → Open project folder) or clone one from GitHub in Projects.</p></div>`;
       return;
     }
@@ -269,7 +269,11 @@ export class MyLaptop {
           ? `<span class="rp-pill ok">✓ up to date with GitHub</span>`
           : `${s.ahead ? `<span class="rp-pill warn">↑ ${s.ahead} to push</span>` : ""}${s.behind ? `<span class="rp-pill warn">↓ ${s.behind} to pull</span>` : ""}`;
     const checks = (c: string) => (c === "success" ? `<span class="rp-pill ok">✓ checks pass</span>` : c === "failure" ? `<span class="rp-pill bad">✗ checks fail</span>` : c === "pending" ? `<span class="rp-pill warn">⏳ checks running</span>` : `<span class="rp-pill">no checks</span>`);
-    this.content.innerHTML = `<div class="rp">
+    // Each open repo the same way: the project first, then the others open alongside it.
+    const cards = (s: RepoStatus) =>
+      !s.isGit
+        ? `<section class="rp-card"><h3>📦 ${esc(s.name ?? "Project")}</h3><p class="lt-note">Not a git repo — its workers share the folder.</p></section>`
+        : `${s.name ? `<h2 class="rp-repo">📂 ${esc(s.name)} <code>${esc(s.path ?? "")}</code></h2>` : ""}
       <section class="rp-card">
         <h3>📦 ${s.github ? `<a href="${esc(s.github.url)}" target="_blank" rel="noreferrer">${esc(s.github.owner)}/${esc(s.github.repo)}</a>` : "Local repo"} <span class="rp-branch">🌿 ${esc(s.branch ?? "?")}</span></h3>
         <div class="rp-row">${sync}${s.dirty.length ? `<span class="rp-pill bad">✎ ${s.dirty.length} uncommitted</span>` : `<span class="rp-pill ok">✓ clean</span>`}</div>
@@ -296,7 +300,9 @@ export class MyLaptop {
               ? `<ul class="rp-prs">${s.pulls.map((p) => `<li><a href="${esc(p.url)}" target="_blank" rel="noreferrer">#${p.number} ${esc(p.title)}</a> <code>${esc(p.head)}</code> ${checks(p.checks)}</li>`).join("")}</ul>`
               : `<p class="lt-note">None open.</p>`
         }
-      </section>
+      </section>`;
+    this.content.innerHTML = `<div class="rp">
+      ${[s, ...(s.others ?? [])].map(cards).join("")}
       <p class="lt-note">Updated ${esc(new Date(s.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" }))} · <button class="btn small rp-refresh">↻ Refresh</button></p>
     </div>`;
     this.content.querySelector(".rp-refresh")?.addEventListener("click", () => this.actions.send({ t: "repoStatus" }));

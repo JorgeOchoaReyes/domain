@@ -65,3 +65,11 @@
 .gh-labels { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 2px; }
 .gh-labels span { font-size: 10px; font-weight: 800; background: #eef2ff; border-radius: 999px; padding: 0 6px; }
 .btn .ic { vertical-align: -3px; }
+
+/* Open repos: who works where, and moving a worker to another. */
+.pj-open-repos { margin: 12px 0; }
+.pj-hint { font-size: 11px; font-weight: 600; color: var(--muted); }
+.pj-more { font-size: 11px; font-weight: 900; color: var(--muted); }
+.pj-movers { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 8px; }
+.pj-mover { display: flex; gap: 6px; align-items: center; font-size: 12px; font-weight: 700; }
+.pj-mover select { font: inherit; border: 2px solid var(--ink); border-radius: 8px; padding: 1px 4px; background: #fff; }

@@ -19,6 +19,7 @@ import { LEASH_RULES, type Leash, type TaskBrief } from "../shared/policy.js";
 import type { WorkerIdentity } from "../shared/team.js";
 import { DropWatcher, writeBrief } from "./reports.js";
 import { officeWorktrees, Workspaces, type Workspace } from "./workspace.js";
+import { samePath } from "./prefs.js";
 
 interface Seat {
   desk: Desk;
@@ -27,6 +28,8 @@ interface Seat {
   cleanup: (() => void)[];
   /** The worker's own git worktree and branch, if it has one. */
   workspace: Workspace | null;
+  /** The open repo it works in, when that's not the project (its folder). */
+  repo?: string;
   /** What it was doing before it went quiet, to show again when it picks up. */
   busyWith?: string;
   /** What it was doing when it stopped to ask you something. */
@@ -77,6 +80,8 @@ interface Remembered {
   identity: WorkerIdentity | null;
   workspace: Workspace | null;
   activity: string;
+  /** The open repo it worked in, when not the project. */
+  repo?: string;
 }
 
 /**
@@ -118,6 +123,8 @@ export class Office {
   private readonly reviewsDir: string;
   /** Workers' own branches. Disabled for simulated workers and outside a git repo. */
   readonly workspaces: Workspaces | null;
+  /** Workers' own branches in the other repos open alongside the project. */
+  private repoWorkspaces = new Map<string, Workspaces>();
 
   private trusted: () => boolean;
   private memory: string | null;
@@ -181,12 +188,25 @@ export class Office {
 
   // --- desks --------------------------------------------------------------
 
-  hire(deskId: string, agent: AgentKind, hiredBy: string, model = "", leash: Leash = "ask", isolate = false, identity: WorkerIdentity | null = null): boolean {
+  hire(
+    deskId: string,
+    agent: AgentKind,
+    hiredBy: string,
+    model = "",
+    leash: Leash = "ask",
+    isolate = false,
+    identity: WorkerIdentity | null = null,
+    repo?: string | null,
+  ): boolean {
     const seat = this.seats.find((s) => s.desk.id === deskId);
     if (!seat || seat.session) return false;
+    // The repo it works in: the project, or another one open alongside it.
+    seat.repo = this.otherRepo(repo);
+    const workspaces = this.workspacesFor(seat.repo);
     // Its own branch and folder, so parallel workers never edit the same files.
-    seat.workspace = isolate && this.workspaces ? this.workspaces.create(deskId, agent) : null;
-    const session = this.launch(deskId, agent, model, leash, seat.workspace?.path ?? this.cwd, identity);
+    seat.workspace = isolate && workspaces ? workspaces.create(deskId, agent) : null;
+    if (!seat.workspace && seat.repo) workspaces?.ignoreDomainDir();
+    const session = this.launch(deskId, agent, model, leash, seat.workspace?.path ?? this.repoDir(seat.repo), identity);
     seat.session = session;
     seat.desk.worker = this.toWorker(session, hiredBy, model, leash, seat.workspace?.branch ?? null, identity);
     this.attach(seat, session);
@@ -287,13 +307,82 @@ export class Office {
     for (const off of seat.cleanup) off();
     seat.cleanup = [];
     seat.session.dispose();
-    const session = this.launch(deskId, w.agent, model, w.leash, seat.workspace?.path ?? this.cwd, w.identity);
+    const session = this.launch(deskId, w.agent, model, w.leash, seat.workspace?.path ?? this.repoDir(seat.repo), w.identity);
     seat.session = session;
     Object.assign(w, { id: session.id, status: session.getStatus(), activity: session.getActivity(), report: null });
     this.dequeue(deskId);
     this.attach(seat, session);
     this.changed();
     return "restarted";
+  }
+
+  /**
+   * Move a desk's worker to another open repo (or back to the project): its
+   * terminal restarts there — in a worktree of its own when `isolate`, as a
+   * hire would get — on `model` if given. Its old folder is cleared as a
+   * leaving worker's is: a branch with work not merged yet is kept (named in
+   * `kept`). Null when there's nobody running at that desk.
+   */
+  moveToRepo(deskId: string, repo: string | null, isolate: boolean, model?: string): { moved: boolean; kept?: string } | null {
+    const seat = this.seats.find((s) => s.desk.id === deskId);
+    const w = seat?.desk.worker;
+    if (!seat?.session || !w) return null;
+    const target = this.otherRepo(repo);
+    if ((!target && !seat.repo) || (target && seat.repo && samePath(target, seat.repo))) return { moved: false };
+    const old = seat.workspace;
+    const oldWorkspaces = this.workspacesFor(seat.repo);
+    for (const off of seat.cleanup) off();
+    seat.cleanup = [];
+    seat.session.dispose();
+    this.deleteReportFile(deskId);
+    this.watcher?.forget(deskId);
+    this.replies?.forget(deskId);
+    this.stopDrops(seat);
+    const kept =old && oldWorkspaces?.remove(old) === "kept" ? old.branch : undefined;
+    seat.repo = target;
+    const workspaces = this.workspacesFor(target);
+    seat.workspace = isolate && workspaces ? workspaces.create(deskId, w.agent) : null;
+    if (!seat.workspace && target) workspaces?.ignoreDomainDir();
+    if (model !== undefined) w.model = model;
+    const session = this.launch(deskId, w.agent, w.model, w.leash, seat.workspace?.path ?? this.repoDir(target), w.identity);
+    seat.session = session;
+    Object.assign(w, { id: session.id, status: session.getStatus(), activity: session.getActivity(), report: null, branch: seat.workspace?.branch ?? null });
+    this.dequeue(deskId);
+    this.attach(seat, session);
+    this.changed();
+    return { moved: true, ...(kept ? { kept } : {}) };
+  }
+
+  /** The repo a desk's worker works in: its folder (the project's, unless it's in another open repo). */
+  repoOf(deskId: string): string {
+    return this.repoDir(this.seats.find((s) => s.desk.id === deskId)?.repo);
+  }
+
+  /** Workers' own branches in the repo a desk's worker works in (null: none there). */
+  workspacesOf(deskId: string): Workspaces | null {
+    return this.workspacesFor(this.seats.find((s) => s.desk.id === deskId)?.repo);
+  }
+
+  /** Workers' own branches in a repo: the project's, or another open repo's (kept once found). */
+  workspacesFor(repo?: string | null): Workspaces | null {
+    const other = this.otherRepo(repo);
+    if (!other) return this.workspaces;
+    if (this.simulate) return null;
+    const have = this.repoWorkspaces.get(other);
+    if (have) return have;
+    const ws = new Workspaces(other, officeWorktrees(other));
+    if (!ws.enabled) return null;
+    this.repoWorkspaces.set(other, ws);
+    return ws;
+  }
+
+  /** A repo's folder when it's another one than the project (undefined: the project). */
+  private otherRepo(repo: string | null | undefined): string | undefined {
+    return repo && !samePath(repo, this.cwd) ? resolve(repo) : undefined;
+  }
+
+  private repoDir(repo: string | undefined): string {
+    return repo ?? this.cwd;
   }
 
   private attach(seat: Seat, session: IWorkerSession): void {
@@ -349,6 +438,7 @@ export class Office {
       seat.asleep = undefined;
       seat.desk.worker = null;
       seat.workspace = null;
+      seat.repo = undefined;
       this.changed();
       return true;
     }
@@ -359,6 +449,7 @@ export class Office {
     seat.session = null;
     seat.desk.worker = null;
     seat.workspace = null;
+    seat.repo = undefined;
     this.dequeue(deskId);
     this.watcher?.forget(deskId);
     this.replies?.forget(deskId);
@@ -555,9 +646,9 @@ export class Office {
     return this.seats.find((s) => s.desk.id === deskId)?.workspace ?? null;
   }
 
-  /** Where a desk's worker works: its own worktree, or the project folder. */
+  /** Where a desk's worker works: its own worktree, or its repo's folder (the project's). */
   workdir(deskId: string): string {
-    return this.workspaceOf(deskId)?.path ?? this.cwd;
+    return this.workspaceOf(deskId)?.path ?? this.repoOf(deskId);
   }
 
   /** Attach the check's verdict (or "running") to a worker's report. */
@@ -723,6 +814,7 @@ export class Office {
               ...(s.mcp?.length ? { mcp: s.mcp } : {}),
               ...(s.skills?.length ? { skills: s.skills } : {}),
               ...(s.internOf && s.desk.worker ? { internOf: s.internOf } : {}),
+              ...(s.repo ? { repo: s.repo } : {}),
               ...(s.desk.worker.status === "working" && s.session?.doing?.() ? { doing: s.session.doing() } : {}),
               ...(s.session?.trouble?.() ? { trouble: s.session.trouble()! } : {}),
             }
@@ -822,7 +914,17 @@ export class Office {
       const w = s.desk.worker;
       if (!w) continue;
       team.push(
-        s.asleep ?? { deskId: s.desk.id, agent: w.agent, hiredBy: w.hiredBy, model: w.model, leash: w.leash, identity: w.identity, workspace: s.workspace, activity: taskLabel(s.busyWith) ?? taskLabel(w.activity) ?? "" },
+        s.asleep ?? {
+          deskId: s.desk.id,
+          agent: w.agent,
+          hiredBy: w.hiredBy,
+          model: w.model,
+          leash: w.leash,
+          identity: w.identity,
+          workspace: s.workspace,
+          activity: taskLabel(s.busyWith) ?? taskLabel(w.activity) ?? "",
+          ...(s.repo ? { repo: s.repo } : {}),
+        },
       );
     }
     try {
@@ -847,8 +949,12 @@ export class Office {
       if (!seat || seat.session || !AGENT_LABELS[r.agent]) continue;
       // Its own folder is kept between runs; if it's gone, it works in the project.
       const workspace = r.workspace && existsSync(r.workspace.path) ? r.workspace : null;
-      seat.asleep = { ...r, workspace };
+      // So is the repo it worked in (older offices didn't say: the project).
+      const repo = typeof r.repo === "string" && existsSync(r.repo) ? this.otherRepo(r.repo) : undefined;
+      seat.asleep = { ...r, workspace, ...(repo ? { repo } : {}) };
+      if (!repo) delete seat.asleep.repo;
       seat.workspace = workspace;
+      seat.repo = repo;
       seat.desk.worker = {
         id: `asleep-${r.deskId}`,
         agent: r.agent,
@@ -889,7 +995,7 @@ export class Office {
   /** Start a remembered worker's agent again, back in its last conversation, and tell it why. */
   private relaunch(seat: Seat, r: Remembered, activity: string, line: string): void {
     seat.asleep = undefined;
-    const session = this.launch(seat.desk.id, r.agent, r.model, r.leash, seat.workspace?.path ?? this.cwd, r.identity, true);
+    const session = this.launch(seat.desk.id, r.agent, r.model, r.leash, seat.workspace?.path ?? this.repoDir(seat.repo), r.identity, true);
     seat.session = session;
     seat.desk.worker = this.toWorker(session, r.hiredBy, r.model, r.leash, seat.workspace?.branch ?? null, r.identity);
     seat.desk.worker.activity = activity;

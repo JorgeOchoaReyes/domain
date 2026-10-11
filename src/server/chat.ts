@@ -239,7 +239,7 @@ export function chatModule(ctx: ServerCtx, store = new ChatStore(join(ctx.cwd, "
         .snapshot()
         .goals.flatMap((g) => g.tasks.filter((t) => t.deskId === deskId).map((t) => ({ title: t.title, goal: g.title, status: t.status })));
       const ws_ = ctx.office.workspaceOf(deskId);
-      void workOf(ctx.office.workdir(deskId), ctx.office.workspaces?.base() ?? null, !!ws_).then((w) =>
+      void workOf(ctx.office.workdir(deskId), ctx.office.workspacesOf(deskId)?.base() ?? null, !!ws_).then((w) =>
         ctx.send(ws, { t: "chatWork", work: { deskId, branch: d.worker!.branch, tasks, ...w } }),
       );
     },

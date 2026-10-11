@@ -17,6 +17,9 @@ const VISITOR: ReadonlySet<T> = new Set<T>(["join", "move", "open", "logs", "pro
 const HOST_ONLY: ReadonlySet<T> = new Set<T>([
   "projectOpen",
   "projectClone",
+  "repoAdd",
+  "repoClose",
+  "repoHire",
   "githubSignIn",
   "githubRepos",
   "lanStart",

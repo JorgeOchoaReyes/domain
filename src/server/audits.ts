@@ -31,8 +31,8 @@ export interface AuditOffice {
 
 export interface AuditDeps {
   office: AuditOffice;
-  /** Your branch (to diff the builder's work against), or null. */
-  base(): string | null;
+  /** Your branch in the repo the builder works in (to diff its work against), or null. */
+  base(deskId: string): string | null;
   /** A worker's name, for the briefs and the report. */
   nameOf(deskId: string): string;
   /** Hand the builder's report to you (into the line, announced). */
@@ -264,7 +264,7 @@ export class Audits {
   /** Write the builder's changes into the auditor's folder and ask for a verdict. */
   private async briefAuditor(p: Pair, report: Report): Promise<void> {
     const builderDir = this.deps.office.workdir(p.builder);
-    const base = this.deps.base();
+    const base = this.deps.base(p.builder);
     const committed = base ? await gitOut(builderDir, ["diff", `${base}...HEAD`]) : "";
     const uncommitted = await gitOut(builderDir, ["diff", "HEAD"]);
     const diff = `${committed}\n${uncommitted}`.trim() || "(no changes in git — read the builder's summary)";

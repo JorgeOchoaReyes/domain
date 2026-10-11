@@ -18,6 +18,16 @@ export interface ProjectInfo {
   dirty: boolean;
 }
 
+/**
+ * Who works in which open repo: each worker's desk, its name, and the repo
+ * folder it works in (the office's own project when it's that one).
+ */
+export interface RepoWorker {
+  deskId: string;
+  name: string;
+  repo: string;
+}
+
 /** A project you've worked on before, newest first. */
 export interface RecentProject {
   path: string;
@@ -57,6 +67,8 @@ export interface PullRequestInfo {
   state: "open" | "closed" | "merged";
   /** Its CI checks, rolled up. */
   checks: "pending" | "success" | "failure" | "none";
+  /** owner/repo, when it was opened on another open repo than the office's own project. */
+  repo?: string;
 }
 
 /** A commit, briefly. */
@@ -89,6 +101,11 @@ export interface RepoStatus {
   /** Open pull requests (null: not on GitHub, or not signed in). */
   pulls: (PullRequestInfo & { head: string })[] | null;
   pullsError?: string;
+  /** The repo's folder and name (set when more than one repo is open). */
+  path?: string;
+  name?: string;
+  /** The other repos open alongside the office's own project, each the same way. */
+  others?: RepoStatus[];
 }
 
 /** What a tool did, shown in the Logs (and inline wherever it happened). */
