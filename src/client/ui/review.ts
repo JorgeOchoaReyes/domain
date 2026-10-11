@@ -265,7 +265,7 @@ export class ReviewPanel {
     const previewAt = 1 + slides.length;
     let html: string;
     if (i === 0) {
-      html = `<div class="slide title-slide">
+      html = `<div class="slide title-slide${r.title.length + r.summary.length > 320 ? " long" : ""}">
         <div class="kicker">${esc(this.who ? `${this.who.name} · ${AGENT_LABELS[p.agent]}` : AGENT_LABELS[p.agent])} · ${r.status === "blocked" ? "needs a decision" : r.status === "plan" ? "plan — approve it before any code" : "progress report"}</div>
         <h1>${esc(r.title)}</h1>
         <p>${esc(r.summary)}</p>

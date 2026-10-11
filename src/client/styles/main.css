@@ -413,6 +413,10 @@ body.mouse-captured .dock-pop { display: none; }
 .point-slide .bullet { flex: none; width: 22px; height: 22px; margin-top: .35em; border-radius: 50%; background: var(--agent); border: 3px solid var(--ink); }
 .preview-slide { padding: 24px; }
 .preview-slide iframe, .preview-slide img { flex: 1; width: 100%; border: 3px solid var(--ink); border-radius: 12px; background: #fff; object-fit: contain; min-height: 0; }
+/* A long report never spills over the stage: it's centered only while it fits, then scrolls (and long ones get smaller type). */
+.slide-stage > .slide { aspect-ratio: auto; min-height: 0; max-height: 100%; overflow-y: auto; justify-content: safe center; border-top: 0; border-radius: 0; background: transparent; container-type: normal; }
+.title-slide.long h1 { font-size: clamp(22px, 2.5vw, 34px); }
+.title-slide.long p { font-size: clamp(14px, 1.15vw, 17px); line-height: 1.45; max-width: 72ch; }
 .slide-no { position: absolute; right: 14px; bottom: 10px; font-size: 13px; font-weight: 900; color: var(--muted); }
 .deck-bar { display: flex; align-items: center; gap: 8px; }
 .slide-dots { flex: 1; display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; }
