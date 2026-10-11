@@ -338,7 +338,7 @@ export type ClientMessage =
   | { t: "standupVoice"; text: string }
   /** Pick up where the last stand-up left off: wake the team, same goal, tone and length, tasks handed out. */
   | { t: "resume" }
-  /** The desktop app's 🎤: start (or stop) Windows voice typing in the box that has focus. */
+  /** The desktop app's 🎤: start (or stop) the computer's dictation in the box that has focus (answered with "dictated"). */
   | { t: "dictate" }
   /** Where the repo stands: your branch, agents' branches, open pull requests (answered with "repoStatus"). */
   | { t: "repoStatus" }
@@ -499,6 +499,8 @@ export type ServerMessage =
   | { t: "voices"; state: VoicesState }
   /** Speech for a "tts" request: MP3 as base64, or why not. */
   | { t: "ttsAudio"; id: string; audio?: string; error?: string }
+  /** Whether the 🎤 started the computer's dictation, and if not, how to start it by hand. */
+  | { t: "dictated"; ok: boolean; error?: string }
   | { t: "alumni"; list: Alumnus[] }
   | { t: "historyEvent"; event: HistoryEvent }
   /** Every chat thread, with its history. */

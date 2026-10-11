@@ -445,9 +445,13 @@ come back every few minutes until they're dealt with.
 
 Wherever you hand out work — the assignment card's **Anything else they
 should know?**, the chat, the laptop's Team app, the phone, a goal's **Add a
-task** — press **🎤** and say it instead of typing. In the desktop app it uses
-your computer's own dictation (Windows: **Win + H**; macOS: **Fn** twice); in a
-browser, the browser's.
+task** — press **🎤** and say it instead of typing. In the desktop app it starts
+your computer's own dictation in that box for you: on **Windows**, voice typing
+(the office presses **Win + H**; press 🎤 again to stop); on **macOS**, the
+Mac's dictation (the same as **Edit → Start Dictation…**; it stops with **Fn**,
+**Done** or a pause). If it can't — dictation turned off in System Settings →
+Keyboard, or a locked-down PC — the box says so and how to start it by hand
+(**Win + H**, or **Fn** twice). In a browser, it uses the browser's.
 
 ### 🗣 Voices
 
@@ -1004,9 +1008,10 @@ Next up, after v1.0:
 - **A design cleanup.** The HUD has grown: fewer, clearer dock buttons, one
   place for what needs you (questions, reviews, offers), quieter toasts, and
   a consistent look across the monitor, laptop, phone and windows.
-- **Voice in the desktop app, tested.** The 🎤 button now starts Windows
-  voice typing (Win+H) in the desktop app; it needs testing on real machines,
-  and macOS still only shows how to start dictation.
+- **Voice in the desktop app, on a real Mac.** The 🎤 button starts Windows
+  voice typing (Win+H, checked on Windows 11) and macOS dictation (Start
+  Dictation, covered by unit tests only); next, trying it on a real Mac, and
+  a full run on Windows with the app's window in front.
 - **GitHub, against the real thing.** The whole loop — sign-in, issues,
   pushing, pull requests and their checks — is tested end to end against a
   stand-in for GitHub's API (`npm run e2e:real`); next, a run against a real

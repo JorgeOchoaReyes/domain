@@ -1474,8 +1474,8 @@ routes.set("standupVoice", (msg, _client, ws) => {
   const open = snap.goals.filter((g) => !g.doneAt && !g.shippedAt).map((g) => g.title);
   void draftStandup(text, open, { simulate: SIMULATE, team: teamForPlanning() }).then(({ draft, via }) => send(ws, { t: "standupDraft", draft, via }));
 });
-// The desktop app's 🎤: Windows voice typing, into the box that has focus.
-routes.set("dictate", () => void toggleDictation());
+// The desktop app's 🎤: the computer's dictation (Windows voice typing, macOS dictation), into the box that has focus.
+routes.set("dictate", (_msg, _client, ws) => void toggleDictation().then((r) => send(ws, { t: "dictated", ...r })));
 // Resume yesterday: the team wakes, and the last stand-up's plan starts again with its tasks handed out.
 routes.set("resume", (_msg, client) => {
   const plan = progress.lastPlan;
