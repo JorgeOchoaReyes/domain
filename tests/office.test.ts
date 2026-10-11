@@ -180,3 +180,30 @@ test("pausing a worker keeps it at its desk; restarting starts it again with the
   assert.equal(office.restart(office.snapshot().desks[1].id, "Nobody."), false);
   office.dispose();
 });
+
+test("a worker that asked you something and then got on with it: once it's kept at it, the question's off your list", async () => {
+  const office = new Office(sim);
+  office.movedOnMs = 150;
+  const deskId = office.snapshot().desks[0].id;
+  office.hire(deskId, "claude", "Jorge");
+  const moved: string[] = [];
+  office.onMovedOn = (_d, q) => moved.push(q);
+  office.setReport(deskId, { status: "blocked", title: "Can't find the frankie repo", summary: "Where is it?", question: "Where is the frankie repo?", slides: [] } as never);
+  assert.equal(office.snapshot().presentations.length, 1);
+  const session = (office as unknown as { seats: { desk: { id: string }; session: { setStatus(s: string, a: string): void } }[] }).seats.find((s) => s.desk.id === deskId)!.session;
+  // A short burst (answering you) doesn't count.
+  session.setStatus("working", "Answering");
+  await new Promise((r) => setTimeout(r, 50));
+  session.setStatus("idle", "Idle");
+  await new Promise((r) => setTimeout(r, 250));
+  assert.equal(office.snapshot().presentations.length, 1, "still waiting for you");
+  // Back at work for good: it's moved past it.
+  session.setStatus("working", "Installing frankie's dependencies");
+  await new Promise((r) => setTimeout(r, 300));
+  const w = office.snapshot().desks.find((d) => d.id === deskId)!.worker!;
+  assert.equal(office.snapshot().presentations.length, 0, "out of the line");
+  assert.equal(w.report, null);
+  assert.equal(w.status, "working");
+  assert.deepEqual(moved, ["Where is the frankie repo?"]);
+  office.dispose();
+});

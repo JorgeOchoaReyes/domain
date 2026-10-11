@@ -21,6 +21,9 @@ import { DropWatcher, writeBrief } from "./reports.js";
 import { officeWorktrees, Workspaces, type Workspace } from "./workspace.js";
 import { samePath } from "./prefs.js";
 
+/** How long a worker that asked you something has to keep working before its question counts as moved past. */
+export const MOVED_ON_MS = 30_000;
+
 interface Seat {
   desk: Desk;
   session: IWorkerSession | null;
@@ -47,6 +50,8 @@ interface Seat {
   held?: string[];
   /** Remembered from last time and not running yet: the gong (or E) wakes it. */
   asleep?: Remembered;
+  /** It asked you something (a blocked report) and went back to work: when that lasts, it's moved past it. */
+  pastQuestion?: ReturnType<typeof setTimeout>;
   /**
    * A worker in its own folder reports and replies there (its .domain/,
    * which git ignores) — never outside it, where agents must ask permission.
@@ -113,6 +118,10 @@ export class Office {
   mcpNames: ((agent: AgentKind, identity: WorkerIdentity | null, model: string) => string[]) | null = null;
   /** A worker's skills (on, and turned off), to show and to block. */
   skillsFor: ((agent: AgentKind, identity: WorkerIdentity | null) => { on: string[]; off: string[] }) | null = null;
+  /** Called when a worker worked its own way past the question it asked you: it's off your list. */
+  onMovedOn: ((deskId: string, question: string) => void) | null = null;
+  /** How long it keeps working past its question before that counts (tests shorten it). */
+  movedOnMs = MOVED_ON_MS;
   /** Called when you or a worker says something during its review. */
   onSaid: ((deskId: string, from: "agent" | "you", text: string) => void) | null = null;
 
@@ -394,7 +403,10 @@ export class Office {
         const w = seat.desk.worker;
         if (w) {
           // Presenting (a report is up) belongs to the review, not to the terminal going quiet.
-          if (w.report && status !== "done") return;
+          if (w.report && status !== "done") {
+            if (w.report.status === "blocked") this.watchPastQuestion(seat, status);
+            return;
+          }
           if (status === "idle" && w.status === "working") seat.busyWith = w.activity;
           if (status === "waiting" && w.status !== "waiting") seat.beforeAsk = w.activity;
           if (status !== "waiting" && w.status === "waiting" && seat.held?.length) {
@@ -429,6 +441,38 @@ export class Office {
     if (session.onSay) {
       seat.cleanup.push(session.onSay((text) => this.onSaid?.(deskId, "agent", text)));
     }
+  }
+
+  /**
+   * A worker that asked you something (a blocked report) and then got on with
+   * it anyway — it found the answer itself, or you gave it in the chat — has
+   * moved past its question: once it's been working for a while, the question
+   * comes off your list (and out of the line). A short burst (answering you
+   * in its review) doesn't count.
+   */
+  private watchPastQuestion(seat: Seat, status: string): void {
+    if (status !== "working") {
+      if (seat.pastQuestion) clearTimeout(seat.pastQuestion);
+      seat.pastQuestion = undefined;
+      return;
+    }
+    if (seat.pastQuestion) return;
+    seat.pastQuestion = setTimeout(() => {
+      seat.pastQuestion = undefined;
+      const w = seat.desk.worker;
+      if (!seat.session || !w?.report || w.report.status !== "blocked") return;
+      const deskId = seat.desk.id;
+      const question = w.report.question || w.report.title;
+      w.report = null;
+      this.dequeue(deskId);
+      this.watcher?.forget(deskId);
+      this.deleteReportFile(deskId);
+      w.status = "working";
+      w.activity = seat.busyWith && !seat.busyWith.startsWith("Waiting") ? seat.busyWith : "Back at it";
+      this.onMovedOn?.(deskId, question);
+      this.changed();
+    }, this.movedOnMs);
+    seat.pastQuestion.unref?.();
   }
 
   fire(deskId: string): boolean {

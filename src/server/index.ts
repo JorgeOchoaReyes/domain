@@ -439,6 +439,13 @@ const simAudited = new Map<string, number>();
 setInterval(() => audits.tick(), 10_000).unref();
 setInterval(() => audits.checkVerdicts(), 3_000).unref();
 
+// It asked you something, then worked its own way past it: off your list, and #team hears why.
+office.onMovedOn = (deskId, question) => {
+  const text = `✅ ${nameAt(deskId)} got past “${question.slice(0, 140)}” on its own and is back at work — that question's off your list.`;
+  history.add({ kind: "audit", who: "Office", text, worker: workerRef(deskId) });
+  broadcast({ t: "loop", goalId: "", event: "info", text });
+};
+
 office.onReport = (presentation) => {
   const { deskId, report } = presentation;
   // An auditor's verdict on a builder's work isn't for you: it goes back and forth.
