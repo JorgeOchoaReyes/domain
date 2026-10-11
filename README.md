@@ -302,11 +302,14 @@ through one loop, and there's always exactly one obvious next step.
    the tone tints the office light.
 2. **🧠 Plan**: no tasks yet? *Plan with a worker* briefs one to break the goal
    into a checklist; the tasks appear on their own. Or type them yourself.
+   With more than one worker free, the plan goes to a **🤝 team huddle** first
+   (see below).
 3. **⌨️ Build / 🔎 Research**: hand out tasks; each worker is briefed in its own
    terminal with the goal, the task, its time budget and what "done" means.
 4. **🎤 Review**: round them up (**R**), hold office hours (**O**), approve or
    send back changes. Approved tasks check themselves off.
-5. **🚀 Ship**: when every task is done —
+5. **🚀 Ship**: when every task is done — after a **🎬 demo** of what was built
+   (see below) —
    - *build goals* run your configured deploy command (shown before it runs,
      output streamed to your laptop's Deploy app). If it fails, one click hands
      the log to a worker to fix. With no deploy command, a worker opens a PR,
@@ -316,7 +319,31 @@ through one loop, and there's always exactly one obvious next step.
 
 Manual overrides are always there — tick a task, re-plan, mark shipped — so
 nothing gets stuck. Each goal's files live in `.domain/goals/<id>/`
-(`plan.md`, `deck.md`, `shipped.md`, `deploy.log`).
+(`plan.md`, `deck.md`, `shipped.md`, `deploy.log`, `huddle.md`, `demo.png`).
+
+### 🤝 The team huddle, and 🎬 the demo
+
+- **A huddle at the start of a goal.** When a worker's draft plan lands and
+  others are free (the goal's group, or anyone not on a task — up to four),
+  they don't just get handed tasks: the team gathers round the stand-up circle
+  and everyone weighs in. Each teammate reads the draft and writes a short note
+  — a concern or two, a suggestion, and the task they'd take — shown in the
+  **Team huddle** window (🤝 *Watch the huddle* in the loop) and as speech
+  bubbles in the office. Then the planner revises the plan from the notes, and
+  the revised tasks go on the goal; a task someone asked for is saved for them.
+  It's bounded: one short brief per teammate, three minutes to gather and three
+  to revise — whatever isn't in by then is left out, and if no revision comes
+  the draft stands. **⏭ Skip** sends the plan out as it is, any time.
+  `"huddle": false` in `domain.config.json` (or `DOMAIN_HUDDLE=0`) turns it off.
+- **A demo at the end.** When every task of a build goal is approved, the
+  office captures what was built and offers it to everyone in the office
+  (🎬 *Watch the demo*, also in the loop's Ship step): a **screenshot** of the
+  running app, taken by a headless Chrome or Edge, or — for anything without a
+  page — a **captured terminal run** and its output. What it captures, first
+  that applies: `"demo"` in `domain.config.json` (a URL to screenshot, or a
+  command to run), your `"preview"` URL, a dev server running on this machine,
+  then your `"check"` command. **↻ Capture again** after a fix. Set
+  `DOMAIN_BROWSER` if your browser isn't where it usually installs.
 
 ### 🛠 Running your team
 
@@ -802,6 +829,8 @@ local shell instead.
   "preview": "http://localhost:5173",
   "deploy": "npm run deploy",
   "check": "npm test",
+  "demo": "http://localhost:5173",
+  "huddle": true,
   "team": {
     "models": { "claude": ["opus", "sonnet", "haiku"], "codex": ["ollama/qwen3-coder"] },
     "defaultModel": { "claude": "sonnet" },
@@ -822,6 +851,8 @@ local shell instead.
 | `preview` | The URL your laptop's browser opens. |
 | `deploy` | The command **Ship it** runs (only ever this command). |
 | `check` | The command run on finished work before you review it. |
+| `demo` | What the demo at the end of a goal shows: a URL to screenshot, or a command whose output to capture (default: `preview`, a running dev server, then `check`). |
+| `huddle` | `false` turns off the team huddle on a goal's plan. |
 | `team` | Starting defaults for Team policy (it's edited in game after that). |
 
 Environment variables:
@@ -831,6 +862,8 @@ Environment variables:
 | `DOMAIN_CWD` | The project folder workers work in (default: where you start it). |
 | `DOMAIN_SIMULATE` | `1` runs scripted workers instead of real terminals. |
 | `DOMAIN_PREVIEW_URL`, `DOMAIN_DEPLOY_CMD`, `DOMAIN_CHECK_CMD` | Override the config file. |
+| `DOMAIN_DEMO`, `DOMAIN_HUDDLE` | Override `demo`, and turn the huddle off (`0`). |
+| `DOMAIN_BROWSER` | The Chrome, Edge or Chromium that takes demo screenshots (found on its own otherwise). |
 | `DOMAIN_PROJECTS_DIR` | Where GitHub clones go (default `Documents/domain/projects`). |
 | `DOMAIN_PREFS` | Where recent projects are kept (default `~/.domain/prefs.json`). |
 | `DOMAIN_GITHUB_API` | The GitHub API base (for GitHub Enterprise). |
@@ -956,9 +989,6 @@ Next up, after v1.0:
 - **macOS and Linux**, tested end to end (the builds exist; they haven't been
   run on real machines yet).
 - **VR**, back on track: the last fixes for drawing and reviews in the headset.
-- **More of the team loop**: a real team huddle at the start of a goal
-  (everyone weighs in on the plan), and a shared screenshot/demo of the
-  finished result in the final review.
 - **A repo per agent.** Today the office works on one project at a time
   (switching restarts it). Next: open several repos at once and pick one per
   agent or per task — each with its own worktrees, checks, merges and pull

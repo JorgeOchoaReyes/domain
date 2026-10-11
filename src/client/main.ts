@@ -67,6 +67,8 @@ import { agentsState, ingestAgents, installAgent, isInstalled, setAgentsSender }
 import { openHire, openTeam, type TeamContext } from "./ui/team.js";
 import { openPolicy } from "./ui/policy.js";
 import type { LoopHandlers } from "./ui/loop.js";
+import { openHuddle } from "./ui/huddle.js";
+import { ingestDemo, openDemo } from "./ui/demo.js";
 import { Hud } from "./ui/hud.js";
 import { TerminalOverlay } from "./ui/terminal.js";
 import { ReviewPanel } from "./ui/review.js";
@@ -330,6 +332,8 @@ const loopHandlers: LoopHandlers = {
   openDeck: (goal) => openDeck(goal),
   openLaptop: (app) => laptop.open(app),
   assign: (goalId, taskId, deskId) => openAssignFor(goalId, taskId, deskId),
+  openHuddle: (goal) => openHuddle(goal.id, { goal: goalById, desks: () => office.desks, send: (m) => net.send(m) }),
+  openDemo: (goal) => openDemo(goal.id, { goal: goalById, send: (m) => net.send(m) }),
   hire: () => {
     escapeModal();
     if (here !== "floor") travelTo({ label: "Work floor", icon: "🖥", ...SPAWN });
@@ -405,6 +409,10 @@ let here: RoomId = "standup";
 let hoopStreak = 0;
 let goals_ = { west: 0, east: 0 };
 
+function goalById(id: string): Goal | undefined {
+  return progress.goals.find((g) => g.id === id);
+}
+
 function deskById(id: string | null): Desk | undefined {
   return id ? office.desks.find((d) => d.id === id) : undefined;
 }
@@ -433,6 +441,7 @@ net.onMessage = (msg) => {
   ingestLessons(msg);
   ingestVoices(msg);
   ingestAlumni(msg);
+  ingestDemo(msg);
   ingestGithub(msg);
   if (msg.t === "project") showProject();
   if (msg.t === "guest") showGuestBadge();
@@ -448,6 +457,15 @@ net.onMessage = (msg) => {
         hud.toast(msg.text);
         if (msg.event === "planned" || msg.event === "deck") sound.xp();
         if (msg.event === "deployStarted") sound.bell();
+        // The team huddle and the demo are for everyone: Arnold offers to show them.
+        if ((msg.event === "huddle" || msg.event === "demo") && msg.goalId && !reviewing()) {
+          const goal = goalById(msg.goalId);
+          const watch = msg.event === "demo" ? loopHandlers.openDemo : loopHandlers.openHuddle;
+          // (A huddle is offered as it starts, not at each step.)
+          if (goal && (msg.event === "demo" || msg.text.startsWith("🤝 Huddle on the plan"))) {
+            assistant.say({ id: `${msg.event}-${msg.goalId}`, urgency: 2, text: msg.text, action: { label: msg.event === "demo" ? "🎬 Watch the demo" : "🤝 Watch the huddle", run: () => watch?.(goalById(msg.goalId) ?? goal) } });
+          }
+        }
       }
       break;
     case "welcome":

@@ -355,6 +355,12 @@ export type ClientMessage =
   | { t: "shipCancel"; goalId: string }
   /** Look for dev servers running on this machine (for the laptop's browser). */
   | { t: "probe" }
+  /** End a goal's team huddle now: the plan as it stands goes out. */
+  | { t: "huddleSkip"; goalId: string }
+  /** Capture a goal's demo (again): a screenshot of the running app, or a command's output. */
+  | { t: "demo"; goalId: string }
+  /** Ask for a goal's demo screenshot (answered with "demoImage"). */
+  | { t: "demoGet"; goalId: string }
   // --- projects and GitHub -------------------------------------------------
   /** Ask for the current project, recent ones and the GitHub account. */
   | { t: "projectInfo" }
@@ -503,14 +509,17 @@ export type ServerMessage =
   /** The whole log of the current (or last) deploy, sent on join. */
   | { t: "deployLog"; goalId: string; data: string }
   /** Something happened in the loop worth a toast. */
-  | { t: "loop"; goalId: string; event: LoopEvent; text: string };
+  | { t: "loop"; goalId: string; event: LoopEvent; text: string }
+  /** A goal's demo screenshot, as a data URL (null: there's none). */
+  | { t: "demoImage"; goalId: string; at: number; data: string | null };
 
 /**
  * planned: a worker's plan landed and its tasks were added; deck: a research
  * deck was updated; deployStarted / deployFailed: the deploy command started
- * or exited non-zero; shipped: a goal shipped or was delivered.
+ * or exited non-zero; shipped: a goal shipped or was delivered; huddle: the
+ * team huddle on a plan moved on; demo: a goal's demo was captured.
  */
-export type LoopEvent = "planned" | "deck" | "deployStarted" | "deployFailed" | "shipped" | "timeUp" | "checkFailed" | "merged" | "mergeFailed" | "warn";
+export type LoopEvent = "planned" | "deck" | "deployStarted" | "deployFailed" | "shipped" | "timeUp" | "checkFailed" | "merged" | "mergeFailed" | "warn" | "huddle" | "demo";
 
 /** An ElevenLabs voice, for the voice pickers. */
 export interface VoiceInfo {

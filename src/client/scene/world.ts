@@ -1,6 +1,7 @@
 import { buildUpstairs, type Upstairs } from "./upstairs.js";
 import { buildParkland, type Parkland } from "./parkland.js";
 import { UPSTAIRS, UP_HEIGHT, BREAK_SPOTS, waitSpot, TEAM_FLOOR, TEAM_DESK_IDS, floorOf, type WalkPt } from "../../shared/layout.js";
+import { huddleSpot } from "../../shared/huddle.js";
 import { buildTeamFloor, type TeamFloor } from "./teamfloor.js";
 import * as THREE from "three";
 // Only what moved gets its matrices recomputed (see there).
@@ -571,6 +572,13 @@ export class World {
     const hasTask = (id: string) => this.progress?.goals.some((g) => g.tasks.some((t) => t.deskId === id && t.status !== "done")) ?? false;
     const freeIds = desks.filter((d) => d.worker?.status === "idle" && !hasTask(d.id) && !spots.has(d.id)).map((d) => d.id);
     this.waitingAt.clear();
+    // A team huddle on a plan: the planner and everyone weighing in gather round the stand-up circle.
+    const huddleAt = new Map<string, { i: number; n: number }>();
+    for (const g of this.progress?.goals ?? []) {
+      if (!g.huddle) continue;
+      const who = [g.huddle.plannerDesk, ...g.huddle.deskIds];
+      who.forEach((d, i) => huddleAt.set(d, { i, n: who.length }));
+    }
     for (const desk of desks) {
       const w = desk.worker;
       if (!w) continue;
@@ -599,6 +607,9 @@ export class World {
           this.waitingAt.set(desk.id, s);
         }
       }
+
+      const hd = huddleAt.get(desk.id);
+      if (hd && !spots.has(desk.id)) dest = { ...huddleSpot(hd.i, hd.n), seated: false, key: `huddle-${hd.i}` };
 
       // One of your characters looks like itself; rebuild the bot if that changed.
       const look = w.identity?.look ?? null;
@@ -634,7 +645,7 @@ export class World {
       const terms = task ? briefLine(task) : "";
       const mentor = w.internOf ? this.desks.find((x) => x.id === w.internOf)?.worker : null;
       view.bot.name = w.identity?.name ?? (w.internOf ? `Intern of ${mentor?.identity?.name ?? w.internOf.replace("desk-", "desk ")}` : null);
-      const activity = this.waitingAt.has(desk.id) ? "🙋 At the stand-up, waiting for a task" : w.activity;
+      const activity = hd && !spots.has(desk.id) ? "🤝 In the team huddle" : this.waitingAt.has(desk.id) ? "🙋 At the stand-up, waiting for a task" : w.activity;
       view.bot.setCard(w.status, w.hiredBy, terms ? `${activity} · ${terms}` : activity, desk.id === this.presenting, w.doing ?? "");
     }
     for (const id of [...this.workers.keys()]) if (!seen.has(id)) this.removeWorker(id);

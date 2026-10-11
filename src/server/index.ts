@@ -8,6 +8,8 @@ import type { TeamMember } from "../shared/standupDraft.js";
 import { BAY_DESK_IDS, DESKS } from "../shared/layout.js";
 import { Lessons } from "./lessons.js";
 import { EodSync } from "./sync.js";
+import { Huddles } from "./huddle.js";
+import { captureDemo, demoImage, demoPlan, loadDemoSettings, simDemo } from "./demo.js";
 import { scanSkills } from "./skills.js";
 import { coerceAttachments, isLeash } from "../shared/policy.js";
 import { homedir } from "node:os";
@@ -36,7 +38,7 @@ import { personaBrief, type WorkerIdentity } from "../shared/team.js";
 import { Office } from "./office.js";
 import { isTrusted, trustProject } from "./prefs.js";
 import { Progress } from "./progress.js";
-import { isTone } from "../shared/progress.js";
+import { isTone, type Goal } from "../shared/progress.js";
 import {
   Deployer,
   GoalFiles,
@@ -234,7 +236,10 @@ progress.onChange = () => {
   progressScheduled = true;
   setImmediate(() => {
     progressScheduled = false;
-    broadcast({ t: "progress", progress: progress.snapshot() });
+    const snap = progress.snapshot();
+    broadcast({ t: "progress", progress: snap });
+    // A goal whose last task was just approved gets its demo.
+    demoDue(snap.goals);
   });
 };
 progress.onAward = (a) => broadcast({ t: "award", ...a });
@@ -448,12 +453,10 @@ const goalFiles = new GoalFiles(join(CWD, ".domain", "goals"), (goalId, file, te
   const goal = progress.getGoal(goalId);
   if (!goal) return;
   if (file === "plan") {
-    const added = progress.addPlannedTasks(goalId, parsePlan(text));
-    if (added) {
-      broadcast({ t: "loop", goalId, event: "planned", text: `🧠 The plan for “${goal.title}” is in: ${added} task${added === 1 ? "" : "s"} added` });
-      history.add({ kind: "goal", who: "office", text: `The plan for “${goal.title}” is in: ${added} task${added === 1 ? "" : "s"}`, goalId });
-      if (goal.group?.length) setTimeout(() => groupContinue(goalId, goal.createdBy), 1500).unref();
-    }
+    const tasks = parsePlan(text);
+    // A fresh draft goes to a team huddle first (unless that's turned off); the planner's revision ends it.
+    if (huddles.onPlan(goalId, tasks, loadDemoSettings(CWD).huddle ? huddleTeam(goal) : [])) return;
+    planLanded(goalId, tasks, []);
   } else if (file === "deck") {
     if (progress.setDeck(goalId, parseDeck(text), goalFiles.path(goalId, "deck"))) {
       broadcast({ t: "loop", goalId, event: "deck", text: `📊 The deck for “${goal.title}” was updated — ${progress.getGoal(goalId)?.deck?.slides.length ?? 0} slides` });
@@ -467,6 +470,92 @@ const goalFiles = new GoalFiles(join(CWD, ".domain", "goals"), (goalId, file, te
   }
 });
 goalFiles.start(() => progress.goalIds());
+
+/** A goal's plan is final: its tasks are added, and any a teammate asked for in the huddle are saved for them. */
+function planLanded(goalId: string, tasks: string[], claims: { deskId: string; task: string }[]): void {
+  const goal = progress.getGoal(goalId);
+  if (!goal) return;
+  const added = progress.addPlannedTasks(goalId, tasks);
+  const norm = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
+  for (const c of claims) {
+    const t = progress.getGoal(goalId)?.tasks.find((x) => norm(x.title) === norm(c.task) && x.status === "todo" && !x.deskId);
+    if (t && office.isStaffed(c.deskId)) progress.reserve(goalId, t.id, c.deskId);
+  }
+  if (added) {
+    broadcast({ t: "loop", goalId, event: "planned", text: `🧠 The plan for “${goal.title}” is in: ${added} task${added === 1 ? "" : "s"} added` });
+    history.add({ kind: "goal", who: "office", text: `The plan for “${goal.title}” is in: ${added} task${added === 1 ? "" : "s"}`, goalId });
+    if (goal.group?.length) setTimeout(() => groupContinue(goalId, goal.createdBy), 1500).unref();
+  }
+}
+
+/** Who weighs in on a goal's draft plan: its group, or else everyone free — not the planner, nobody mid-task. */
+function huddleTeam(goal: Goal): string[] {
+  const busy = new Set(progress.snapshot().goals.flatMap((g) => [...g.tasks.filter((t) => t.deskId && t.status !== "done").map((t) => t.deskId!), ...(g.id !== goal.id && g.planningDesk ? [g.planningDesk] : [])]));
+  const pool = goal.group?.length ? goal.group : activeDesks();
+  return pool.filter((d) => d !== goal.planningDesk && office.isStaffed(d) && !busy.has(d) && office.workerAt(d)?.status !== "presenting" && office.workerAt(d)?.status !== "asleep");
+}
+
+const huddles = new Huddles({
+  office: { brief: (d, text, activity, sim) => office.brief(d, text, activity, sim), nameOf: nameAt },
+  goal: (id) => progress.getGoal(id),
+  dir: (id) => goalFiles.ensure(id),
+  planPath: (id) => goalFiles.path(id, "plan"),
+  set: (id, h) => progress.setHuddle(id, h),
+  landed: (id, tasks, claims) => planLanded(id, tasks, claims),
+  note: (id, text) => {
+    broadcast({ t: "loop", goalId: id, event: "huddle", text });
+    history.add({ kind: "goal", who: "office", text: text.replace(/^🤝 /, ""), goalId: id });
+  },
+  said: (d, text) => broadcast({ t: "said", deskId: d, from: "agent", text: `🤝 ${text}` }),
+});
+
+/** The demo of a goal whose tasks are all approved: captured once, as soon as it's done. */
+const SERVER_STARTED = Date.now();
+const demosTried = new Set<string>();
+const demosRunning = new Set<string>();
+function demoDue(goals: Goal[]): void {
+  for (const g of goals) {
+    if (g.kind !== "build" || !g.doneAt || g.doneAt < SERVER_STARTED || g.shippedAt || g.demo || demosTried.has(g.id)) continue;
+    demosTried.add(g.id);
+    void runDemo(g.id);
+  }
+}
+
+/** Capture a goal's demo — a screenshot of the running app, or a command's output — and show it to everyone. */
+async function runDemo(goalId: string): Promise<void> {
+  const goal = progress.getGoal(goalId);
+  if (!goal || demosRunning.has(goalId)) return;
+  if (SIMULATE) {
+    progress.setDemo(goalId, simDemo(goal.title));
+    broadcast({ t: "loop", goalId, event: "demo", text: `🎬 The demo of “${goal.title}” is ready — everyone can watch it` });
+    return;
+  }
+  demosRunning.add(goalId);
+  try {
+    const settings = loadDemoSettings(CWD);
+    const plan = demoPlan(settings, settings.demo || settings.preview ? [] : await probeDevServers([PORT]));
+    if (!plan) {
+      broadcast({ t: "loop", goalId, event: "warn", text: `🎬 Nothing to demo for “${goal.title}” — set "demo" (a URL or a command) in domain.config.json, or start the app` });
+      return;
+    }
+    const source = plan.kind === "screenshot" ? plan.url : plan.command;
+    progress.setDemo(goalId, { kind: plan.kind, status: "running", source, output: "", image: false, exitCode: null, at: Date.now() });
+    const op = log.start(plan.kind === "terminal" ? "check" : "agent", `Demo of “${goal.title}”: ${plan.kind === "screenshot" ? `screenshot of ${source}` : source}`, plan.kind === "terminal" ? { command: source } : {});
+    const png = join(goalFiles.ensure(goalId), "demo.png");
+    const demo = await captureDemo(plan, { cwd: CWD, png });
+    op.done(demo.status === "ready", demo.output || undefined);
+    progress.setDemo(goalId, demo);
+    broadcast({
+      t: "loop",
+      goalId,
+      event: demo.status === "ready" ? "demo" : "warn",
+      text: demo.status === "ready" ? `🎬 The demo of “${goal.title}” is ready — everyone can watch it` : `🎬 The demo of “${goal.title}” didn't work out — see it in the Goals window`,
+    });
+    if (demo.image) broadcast({ t: "demoImage", goalId, at: demo.at, data: demoImage(png) });
+  } finally {
+    demosRunning.delete(goalId);
+  }
+}
 
 const deployer = new Deployer();
 deployer.onOutput = (goalId, data) => broadcast({ t: "deployOutput", goalId, data });
@@ -1406,6 +1495,21 @@ routes.set("standupVoice", (msg, _client, ws) => {
 });
 // The desktop app's 🎤: Windows voice typing, into the box that has focus.
 routes.set("dictate", () => void toggleDictation());
+// The team huddle on a plan, cut short: the plan as it stands goes out.
+routes.set("huddleSkip", (msg) => {
+  const goalId = str(msg.goalId, 64);
+  if (goalId) huddles.skip(goalId);
+});
+// A goal's demo, captured (again) on request; and its screenshot, for whoever asks.
+routes.set("demo", (msg) => {
+  const goalId = str(msg.goalId, 64);
+  if (goalId && progress.getGoal(goalId)) void runDemo(goalId);
+});
+routes.set("demoGet", (msg, _client, ws) => {
+  const goalId = str(msg.goalId, 64);
+  const demo = goalId ? progress.getGoal(goalId)?.demo : null;
+  if (goalId && demo?.image) send(ws, { t: "demoImage", goalId, at: demo.at, data: demoImage(join(goalFiles.dir(goalId), "demo.png")) });
+});
 // Resume yesterday: the team wakes, and the last stand-up's plan starts again with its tasks handed out.
 routes.set("resume", (_msg, client) => {
   const plan = progress.lastPlan;

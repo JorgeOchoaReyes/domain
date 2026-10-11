@@ -5,6 +5,7 @@ import { DEFAULT_POLICY, coercePolicy, type TaskBrief, type TeamPolicy } from ".
 import { MAX_TEAM, coerceCharacter, type Character } from "../shared/team.js";
 import { SECRET_MASK, coerceMcpServer, type McpServer } from "../shared/mcp.js";
 import type { PullRequestInfo } from "../shared/project.js";
+import type { GoalDemo, HuddleState } from "../shared/huddle.js";
 import {
   ACHIEVEMENTS,
   XP,
@@ -509,6 +510,22 @@ export class Progress {
     const g = this.goal(goalId);
     if (!g) return;
     g.pr = pr;
+    this.changed();
+  }
+
+  /** A goal's team huddle started, moved on, or ended (null). */
+  setHuddle(goalId: string, huddle: HuddleState | null): void {
+    const g = this.goal(goalId);
+    if (!g) return;
+    g.huddle = huddle ? structuredClone(huddle) : null;
+    this.changed();
+  }
+
+  /** A goal's demo is being captured, or was. */
+  setDemo(goalId: string, demo: GoalDemo | null): void {
+    const g = this.goal(goalId);
+    if (!g) return;
+    g.demo = demo;
     this.changed();
   }
 
