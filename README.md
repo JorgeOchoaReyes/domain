@@ -83,7 +83,8 @@ project, **File → Open project folder… (Ctrl+O)**.
    appears on its own. Hand out a task — the **assignment card** sets the model,
    a time budget, plan-first and what "done" means.
 5. Watch it work on its laptop, or on yours (**L**) — or go play in the
-   **game room** (**T**); you'll get a shout when a worker needs you.
+   **game room** (**T**); **🔔 Needs you** in the dock counts whatever is
+   waiting on you, and an urgent one gets a shout.
 6. **Round up** (**R**) and hold **office hours** (**O**): each worker presents,
    you approve it (it merges into your branch) or send back changes.
 7. When every task is done, **Ship it**.
@@ -98,6 +99,43 @@ pull request*, *hand off an idea*. Each is a short checklist that ticks itself
 off as you go, with a button on every step that does it for you.
 
 ![Arnold, your assistant, offering the tour](docs/screenshots/pip.jpg)
+
+### The dock, 🔔 Needs you, and toasts
+
+The dock across the top keeps five buttons — **🔔 Needs you** (`I`),
+**🎯 Goals** (`G`), **📺 Monitor** (`K`), **💻 Laptop** (`L`) and
+**📱 Phone** (`P`) — and **☰ More** for the rest: Stand-up (`U`), Focus
+session (`F`), Round up (`R`), Office hours (`O`), Fast travel (`T`), Team
+chat (`C`), the **🏢 Office** menu, 🥽 VR when there's a headset, Settings
+(`Esc`) and Controls (`H`). Every key works wherever its button lives; a dot
+on More means something in it has a count (people in line, unread answers).
+
+**🔔 Needs you** is one place for everything waiting on you, each with its own
+buttons: an agent's **question** (💬 Answer opens it big in the monitor, or
+🚶 Go there), an agent asking to **trust the project's files** (✅ Trust this
+project), a **stuck** agent (signed out, offline, its service erroring — 🛠 See
+the fix), finished work to **review** (🎤 Review now, or Office hours), an
+**"I'll take it" offer** (✅ Let them take it / 🔁 Someone else), a teammate
+asking to **borrow** one of your agents (✅ Lend / 🙅 Not now), a **huddle** or
+**demo** to watch, a worker's **answer** to reply to, and the deadline,
+time-budget and idle-hands reminders. The badge counts them — red when
+something's urgent — and the phone's **Alerts** shows the same list. `N`
+still jumps straight to the next question or review in the monitor. Arnold,
+the phone's buzz and each feature's own prompts are still there; they all
+point at things that are also in this one list.
+
+Below it, **Recent** keeps the routine news that no longer pops up: a plan
+landing, a merge, a deck updated, a huddle moving on, ideas changing hands,
+someone else's arcade score, the less urgent reminders. **Toasts** are now
+for what needs a look or answers what you just did: they're shorter (about
+three seconds, longer for warnings and errors), the same one twice in a few
+seconds becomes one toast with a **×2**, and a burst of everyday ones is
+capped (the rest go to Recent) — warnings and errors always get through.
+
+The look is one design system: the colours, radii, spacing, lines, shadows
+and fonts are CSS variables (`src/client/styles/main.css`), shared by the
+windows, the monitor, the laptop's apps, the phone and the inbox, with one
+style for buttons and segmented choices.
 
 ### The fastest start: ⚡ Quick start
 
@@ -139,7 +177,7 @@ nou hire reviewer             # a ready-made agent at a free desk (nou roles lis
 
 ```bash
 npm test             # unit tests
-npm run e2e:ui       # the whole office in Chrome, simulated agents (31 checks)
+npm run e2e:ui       # the whole office in Chrome, simulated agents (46 checks)
 npm run e2e:team     # a shared office: you and a teammate over the network, pods and borrowing (28 checks)
 npm run e2e:real     # real Claude Code agents on a throwaway repo, from hire to
                      # opened pull requests (per goal and per agent) — audits, checks,
@@ -493,24 +531,25 @@ pick up where you were.
 
 ### 📱 Your phone (P)
 
-The top bar keeps the everyday few — Goals, Phone, Laptop, Office, Chat.
-Everything else is on the phone, in your pocket, while you keep walking: a
-row for **Stand-up**, **Focus**, **Round up** and **Reviews**, then **Alerts** (what needs you
-now, with a button to deal with it), **Chat** (message everyone, or open any
-worker's channel), **Goals** with their deadlines, **Reviews** (the line, office
-hours, round up), **Workers** (chat, terminal, or go there), **History**,
-**Music** and **Travel**. The button in the corner buzzes with a count when
-something needs you.
+Everything the dock has is also on the phone, in your pocket, while you keep
+walking: a row for **Stand-up**, **Focus**, **Round up** and **Reviews**, then
+**Alerts** (the same list as 🔔 Needs you, with the same buttons), **Chat**
+(message everyone, or open any worker's channel), **Goals** with their
+deadlines, **Reviews** (the line, office hours, round up), **Workers** (chat,
+terminal, or go there), **History**, **Music** and **Travel**. Its button
+buzzes and a banner drops from it when there's news (tap it to open that
+app); the count of what needs you is on 🔔 Needs you.
 
 ### 🔔 Reminders and deadlines
 
 Give a goal a **due date** (in Goals, or when you set it at stand-up) and you're
 reminded an hour out, fifteen minutes out and when it slips. You also hear —
-with a chime, in Alerts and from Arnold — when a worker has been **waiting on you**
+with a chime, in 🔔 Needs you and from Arnold — when a worker has been **waiting on you**
 for a minute and a half, when someone's been **waiting to present** for five
 minutes, when a task's **time budget** is about to run out, when the **session**
 is ending, and when a worker is **free** while tasks sit unassigned. Urgent ones
-come back every few minutes until they're dealt with.
+pop up and come back every few minutes until they're dealt with; the rest wait
+in Needs you.
 
 ### 🗣 Say it
 
@@ -655,7 +694,7 @@ before.
 
 ## Run the office (🏢)
 
-The **🏢 Office** button holds everything about running the office itself.
+**☰ More → 🏢 Office** holds everything about running the office itself.
 
 ![The Office menu](docs/screenshots/office-menu.jpg)
 
@@ -859,7 +898,8 @@ Like Slack, with your workers: **#team** reaches everyone at once, and each
 worker has its own channel with its whole history (a character's history
 follows it from hire to hire). Your message reaches the worker as an
 instruction in its terminal; it answers in the channel, and answers pop up as
-toasts wherever you are. Each channel also shows:
+a short toast wherever you are — and wait in 🔔 Needs you with a 💬 Reply
+button. Each channel also shows:
 
 - **🧠 Now** — what's on its screen right now, with ⏎ / Esc / 1 / 2 keys for
   its prompts.
@@ -911,7 +951,7 @@ can pin and hand off too.
 
 ## VR
 
-With a headset, **🥽 VR** appears in the dock. Click it and you're standing in
+With a headset, **🥽 VR** appears under **☰ More** in the dock. Click it and you're standing in
 the office:
 
 | Controller | Does |
@@ -1039,6 +1079,9 @@ Environment variables:
 | `V`           | Switch first / third person (also in Settings) |
 | `B`           | Skateboard on / off — twice as fast, and you glide |
 | `C`           | Team chat |
+| `I`           | 🔔 Needs you: everything waiting on you, each with its button — and Recent, the routine news |
+| `N`           | The next question or review, opened big in the Agent monitor |
+| `K`           | Agent monitor |
 | `Q`           | Put your coffee down |
 | Driving       | `E` by a car gets in · `W`/`S` gas and brake (or reverse) · `A`/`D` steer · `Space` handbrake · `E` gets out |
 | `E`           | Use whatever the floating **E** marks: hire, a waiting worker (give it a task), a car, terminal, office hours, the idea boards, the jukeboxes, coffee, arcades, the pool table, hoops, the ball, the elevator, your laptop where you left it, darts, the piano, the vending machine, treadmills, the breathing mats, the bookshelf, the telescope, fishing, the garden, the campfire, the microwave, the radio, the lamp, the teddy, the cat, paper toss, the office vending machine, air hockey, pinball, the donuts, Biscuit the dog |
@@ -1122,9 +1165,6 @@ Next up, after v1.0:
 - **macOS and Linux**, tested end to end (the builds exist; they haven't been
   run on real machines yet).
 - **VR**, back on track: the last fixes for drawing and reviews in the headset.
-- **A design cleanup.** The HUD has grown: fewer, clearer dock buttons, one
-  place for what needs you (questions, reviews, offers), quieter toasts, and
-  a consistent look across the monitor, laptop, phone and windows.
 - **Voice in the desktop app, on a real Mac.** The 🎤 button starts Windows
   voice typing (Win+H, checked on Windows 11) and macOS dictation (Start
   Dictation, covered by unit tests only); next, trying it on a real Mac, and

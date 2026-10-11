@@ -6,7 +6,7 @@
 
 /* ---------- Huddle ---------- */
 .hd-status, .dm-status { margin: 0 0 10px; font-size: 14px; font-weight: 800; }
-.dm-status code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; background: #f3ece3; border: 1px solid #e0d4c4; border-radius: 6px; padding: 0 5px; }
+.dm-status code { font-family: var(--font-mono); font-size: 12px; background: #f3ece3; border: 1px solid #e0d4c4; border-radius: 6px; padding: 0 5px; }
 .hd-grid { display: grid; grid-template-columns: 1fr 1.2fr; gap: 12px; }
 .hd-grid h4 { margin: 0 0 8px; font-size: 13px; font-weight: 900; }
 .hd-draft, .hd-team { padding: 10px 12px; border: 3px solid var(--ink); border-radius: 14px; background: #fff; box-shadow: 0 3px 0 var(--ink); }
@@ -24,4 +24,4 @@
 
 /* ---------- Demo ---------- */
 .dm-shot { display: block; width: 100%; max-height: 62vh; object-fit: contain; border: 3px solid var(--ink); border-radius: 12px; background: #fff; box-shadow: 0 3px 0 var(--ink); }
-.dm-term { margin: 0; max-height: 58vh; overflow: auto; padding: 12px 14px; border-radius: 12px; background: #1b1d2e; color: #e8e8f0; font: 12px/1.45 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
+.dm-term { margin: 0; max-height: 58vh; overflow: auto; padding: 12px 14px; border-radius: 12px; background: var(--night-ink); color: #e8e8f0; font: 12px/1.45 var(--font-mono); white-space: pre-wrap; word-break: break-word; }

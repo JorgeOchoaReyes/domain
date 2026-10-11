@@ -19,8 +19,11 @@ export interface ArcadeSink {
   setBoard(id: ArcadeId, board: readonly { name: string; score: number }[]): void;
 }
 
-/** Take the scores from a server message (anything else is ignored). */
-export function ingestArcade(msg: ServerMessage, cabinets: ArcadeSink, toast: (text: string) => void, me: string): void {
+/**
+ * Take the scores from a server message (anything else is ignored).
+ * `toast(text, quiet)`: quiet news (someone else's score) goes to Recent, not a toast.
+ */
+export function ingestArcade(msg: ServerMessage, cabinets: ArcadeSink, toast: (text: string, quiet: boolean) => void, me: string): void {
   if (msg.t !== "arcadeScores") return;
   boards = msg.boards ?? {};
   for (const id of ARCADE_GAMES) cabinets.setBoard(id, officeBoard(id));
@@ -28,6 +31,6 @@ export function ingestArcade(msg: ServerMessage, cabinets: ArcadeSink, toast: (t
   if (!n) return;
   const game = ALL_ARCADES.find((a) => a.id === n.game)?.name ?? n.game;
   const who = n.name === me ? "You" : n.name;
-  if (n.rank === 0) toast(`🏆 ${who} set the office's ${game} high score: ${n.score.toLocaleString()}`);
-  else if (n.name === me) toast(`🕹 You're #${n.rank + 1} on the office's ${game} board (${n.score.toLocaleString()})`);
+  if (n.rank === 0) toast(`🏆 ${who} set the office's ${game} high score: ${n.score.toLocaleString()}`, n.name !== me);
+  else if (n.name === me) toast(`🕹 You're #${n.rank + 1} on the office's ${game} board (${n.score.toLocaleString()})`, false);
 }

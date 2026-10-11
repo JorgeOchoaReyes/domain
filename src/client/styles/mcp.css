@@ -15,7 +15,7 @@
 .mcp-main code { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mcp-main small { font-size: 11px; color: var(--muted); font-weight: 700; }
 .mcp-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 900; padding: 2px 8px; border-radius: 999px; border: 2px solid var(--ink); white-space: nowrap; max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
-.mcp-badge.ok { background: #c9f5e6; }
+.mcp-badge.ok { background: var(--good-tint); }
 .mcp-badge.auth { background: #ffe8a8; }
 .mcp-badge.error { background: #ffd6e0; }
 .mcp-badge.checking { background: #cde7ff; }
@@ -31,8 +31,6 @@
 .mcp-form { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 3px solid var(--ink); border-radius: 14px; background: var(--paper-2); }
 .mcp-form label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 800; margin: 0; }
 .mcp-form input[type=text], .mcp-form input[type=password], .mcp-form textarea { font: inherit; font-size: 13px; border: 2px solid var(--ink); border-radius: 10px; padding: 6px 9px; background: #fff; color: var(--ink); }
-.mcp-form .seg button { font: 800 13px var(--font); border: 3px solid var(--ink); border-radius: 12px; background: #fff; padding: 5px 10px; cursor: pointer; box-shadow: 0 2px 0 var(--ink); color: var(--ink); display: inline-flex; gap: 6px; align-items: center; }
-.mcp-form .seg button.on { background: var(--ink); color: var(--paper); }
 .f-env-head { font-size: 13px; font-weight: 800; }
 .f-env { display: flex; flex-direction: column; gap: 6px; }
 .f-env-row { display: grid; grid-template-columns: 180px 1fr auto; gap: 6px; }

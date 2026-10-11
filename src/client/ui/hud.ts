@@ -6,6 +6,7 @@ import { esc, openModal } from "./modal.js";
 import { workerName } from "./team.js";
 import type { ProgressState } from "../../shared/progress.js";
 import { modelLabel } from "../../shared/policy.js";
+import { ToastGate, type ToastLevel } from "../../shared/toasts.js";
 
 function ago(t: number): string {
   const s = Math.max(0, Math.round((Date.now() - t) / 1000));
@@ -17,9 +18,10 @@ function ago(t: number): string {
 
 /**
  * The 2D chrome over the office: the floor's name and the dock across the
- * top, the Workers and People panels down the right, the hint bar, toasts,
- * and the hire and round-up windows. It raises callbacks and holds no game
- * state of its own.
+ * top (🔔 Needs you, Goals, Monitor, Laptop, the phone, and ☰ More for the
+ * rest), the Workers and People panels down the right, the hint bar, toasts
+ * (quieted by ToastGate, with Recent for what didn't pop up), and the help
+ * and round-up windows. It raises callbacks and holds no game state of its own.
  */
 
 const STATUS_LABEL: Record<WorkerStatus, string> = {
@@ -32,8 +34,29 @@ const STATUS_LABEL: Record<WorkerStatus, string> = {
   asleep: "asleep",
 };
 
+/** A line in the inbox's Recent list. */
+export interface RecentNote {
+  text: string;
+  level: ToastLevel;
+  at: number;
+}
+
+/** An entry in the dock's More menu. */
+export interface MenuItem {
+  act: string;
+  icon: string;
+  label: string;
+  /** Its keyboard shortcut, shown on the right. */
+  key?: string;
+  title: string;
+  run(): void;
+  /** "end": settings and controls, last. */
+  group?: "main" | "end";
+}
+
 export interface HudHandlers {
   onOpenWorker(deskId: string): void;
+  onInbox(): void;
   onRoundup(): void;
   onOfficeHours(): void;
   onGoals(): void;
@@ -56,14 +79,19 @@ export class Hud {
   private peopleEl!: HTMLElement;
   private peopleCount!: HTMLElement;
   private sideEl!: HTMLElement;
-  private hoursBtn!: HTMLButtonElement;
   private toastsEl!: HTMLElement;
-  private alertEl!: HTMLElement;
+  private moreBtn!: HTMLButtonElement;
+  private moreEl!: HTMLElement;
+  private inboxBtn!: HTMLButtonElement;
+  private gate = new ToastGate();
+  /** Routine news and toasts that didn't show: the inbox's Recent list (newest first). */
+  readonly recent: RecentNote[] = [];
+  /** Something was added to Recent. */
+  onRecent: (() => void) | null = null;
   private hintHtml = "";
   private bannerEl!: HTMLElement;
   private everConnected = false;
   private feedEl!: HTMLElement;
-  private focusBtn!: HTMLButtonElement;
   private goalsCount!: HTMLElement;
   /** Where the player card sits, beside the floor's name. */
   leftEl!: HTMLElement;
@@ -84,34 +112,41 @@ export class Hud {
         </div>
       </div>
       <div class="dock">
-        <button class="btn dock-btn moved" data-act="standup" title="Stand-up: set the goal and tone (U)">☀️ <span class="lbl">Stand-up</span></button>
-        <button class="btn dock-btn" data-act="goals" title="Goals (G)">🎯 <span class="lbl">Goals</span> <span class="svc-count goals-n hidden">0</span></button>
-        <button class="btn dock-btn sec moved" data-act="focus" title="Focus session (F)">⏱ <span class="lbl">Focus</span></button>
-        <button class="btn dock-btn sec moved" data-act="roundup" title="Call workers to your office (R)">📣 <span class="lbl">Round up</span></button>
-        <button class="btn dock-btn sec moved" data-act="hours" title="Hold office hours (O)">🎤 <span class="lbl">Office hours</span> <span class="svc-count hidden">0</span></button>
-        <button class="btn dock-btn" data-act="laptop" title="Your laptop: browser, workers, loop, decks (L)">💻 <span class="lbl">Laptop</span></button>
-        <button class="btn dock-btn" data-act="monitor" title="Agent monitor: every agent's live CLI at once — watch and answer them (K)">📺 <span class="lbl">Monitor</span></button>
-        <button class="btn dock-btn sec moved" data-act="travel" title="Fast travel (T)">🌀 <span class="lbl">Travel</span></button>
-        <button class="btn dock-btn dock-icon" data-act="settings" title="Settings: speed, mouse, view (Esc)" aria-label="Settings">⚙️</button>
-        <button class="btn dock-btn dock-icon dock-help" data-act="help" title="Controls (H)" aria-label="Controls">?</button>
+        <button class="btn dock-btn dock-inbox" data-act="inbox" title="Needs you (I): questions, reviews, offers and requests — each with its button · N jumps to the next" aria-haspopup="true">🔔 <span class="lbl">Needs you</span><span class="dock-badge hidden">0</span></button>
+        <button class="btn dock-btn" data-act="goals" title="Goals (G): plan, break into tasks, hand them out">🎯 <span class="lbl">Goals</span><span class="dock-badge soft goals-n hidden">0</span></button>
+        <button class="btn dock-btn" data-act="monitor" title="Agent monitor (K): every agent's live CLI at once — watch and answer them">📺 <span class="lbl">Monitor</span></button>
+        <button class="btn dock-btn" data-act="laptop" title="Your laptop (L): team chat, browser, workers, the loop, decks, deploys">💻 <span class="lbl">Laptop</span></button>
+        <div class="dock-more-wrap">
+          <button class="btn dock-btn" data-act="more" title="More: stand-up, focus, round up, office hours, travel, chat, the Office, settings, controls" aria-haspopup="true" aria-expanded="false">☰ <span class="lbl">More</span><span class="dock-dot hidden"></span></button>
+          <div class="dock-pop more-menu hidden" role="menu"></div>
+        </div>
       </div>`;
     this.root.appendChild(top);
     this.metaEl = top.querySelector(".project-meta")!;
     this.connEl = top.querySelector(".conn-dot")!;
-    this.hoursBtn = top.querySelector('[data-act="hours"]')!;
-    top.querySelector('[data-act="roundup"]')!.addEventListener("click", () => this.handlers.onRoundup());
-    this.hoursBtn.addEventListener("click", () => this.handlers.onOfficeHours());
-    top.querySelector('[data-act="help"]')!.addEventListener("click", () => this.openHelp());
+    this.moreBtn = top.querySelector('[data-act="more"]')!;
+    this.moreEl = top.querySelector(".more-menu")!;
+    this.inboxBtn = top.querySelector('[data-act="inbox"]')!;
+    this.inboxBtn.addEventListener("click", () => this.handlers.onInbox());
     top.querySelector('[data-act="goals"]')!.addEventListener("click", () => this.handlers.onGoals());
-    this.focusBtn = top.querySelector('[data-act="focus"]')!;
-    this.focusBtn.addEventListener("click", () => this.handlers.onFocus());
-    top.querySelector('[data-act="standup"]')!.addEventListener("click", () => this.handlers.onStandup());
-    top.querySelector('[data-act="travel"]')!.addEventListener("click", () => this.handlers.onTravel());
     top.querySelector('[data-act="laptop"]')!.addEventListener("click", () => this.handlers.onLaptop());
     top.querySelector('[data-act="monitor"]')!.addEventListener("click", () => this.handlers.onMonitor());
-    top.querySelector('[data-act="settings"]')!.addEventListener("click", () => this.handlers.onSettings());
+    this.moreBtn.addEventListener("click", () => this.toggleMore());
     this.goalsCount = top.querySelector(".goals-n")!;
     this.leftEl = top.querySelector(".tb-left")!;
+    // The rarely-used ones, in the More menu (their keys still work everywhere).
+    this.addMenuItem({ act: "standup", icon: "☀️", label: "Stand-up", key: "U", title: "Set the goal, the tone and who does what", run: () => this.handlers.onStandup() });
+    this.addMenuItem({ act: "focus", icon: "⏱", label: "Focus session", key: "F", title: "A timed sprint: finish it for XP and your streak", run: () => this.handlers.onFocus() });
+    this.addMenuItem({ act: "roundup", icon: "📣", label: "Round up", key: "R", title: "Call workers to your office to present", run: () => this.handlers.onRoundup() });
+    this.addMenuItem({ act: "hours", icon: "🎤", label: "Office hours", key: "O", title: "The next worker in line presents", run: () => this.handlers.onOfficeHours() });
+    this.addMenuItem({ act: "travel", icon: "🌀", label: "Fast travel", key: "T", title: "Jump to any room — or a worker who needs you", run: () => this.handlers.onTravel() });
+    this.addMenuItem({ act: "settings", icon: "⚙️", label: "Settings", key: "Esc", title: "Speed, mouse, view, graphics, sound", run: () => this.handlers.onSettings(), group: "end" });
+    this.addMenuItem({ act: "help", icon: "⌨️", label: "Controls", key: "H", title: "Every key and what it does", run: () => this.openHelp(), group: "end" });
+    // A click anywhere else puts the menus away.
+    document.addEventListener("pointerdown", (e) => {
+      const t = e.target as HTMLElement;
+      if (!this.moreEl.classList.contains("hidden") && !t.closest?.(".dock-more-wrap")) this.closeMore();
+    });
 
     this.bannerEl = document.createElement("div");
     this.bannerEl.className = "conn-banner hidden";
@@ -139,18 +174,13 @@ export class Hud {
     this.hintEl.className = "hint hidden";
     this.root.appendChild(this.hintEl);
 
-    this.alertEl = document.createElement("button");
-    this.alertEl.className = "line-alert hidden";
-    this.alertEl.addEventListener("click", () => this.handlers.onOfficeHours());
-    this.root.appendChild(this.alertEl);
-
     this.toastsEl = document.createElement("div");
     this.toastsEl.id = "toasts";
     this.root.appendChild(this.toastsEl);
 
     const help = document.createElement("div");
     help.className = "panel keys";
-    help.innerHTML = `<span class="key">WASD</span>walk <span class="key">⇧</span>run <span class="key">␣</span>jump <span class="key">E</span>use <span class="key">T</span>travel <span class="key">V</span>view <span class="key">G</span>goals <span class="key">H</span>help`;
+    help.innerHTML = `<span class="key">WASD</span>walk <span class="key">⇧</span>run <span class="key">␣</span>jump <span class="key">E</span>use <span class="key">T</span>travel <span class="key">V</span>view <span class="key">I</span>needs you <span class="key">G</span>goals <span class="key">H</span>help`;
     this.root.appendChild(help);
   }
 
@@ -159,7 +189,7 @@ export class Hud {
     const open = progress.goals.filter((g) => !g.doneAt).length;
     this.goalsCount.textContent = String(open);
     this.goalsCount.classList.toggle("hidden", open === 0);
-    this.focusBtn.classList.toggle("on", progress.session !== null);
+    this.moreEl.querySelector('[data-act="focus"]')?.classList.toggle("on", progress.session !== null);
 
     this.feedEl.innerHTML = progress.feed.length
       ? progress.feed
@@ -192,9 +222,7 @@ export class Hud {
       (line.length ? ` · ${line.length} in line` : "") +
       (waiting ? ` · ${waiting} need${waiting === 1 ? "s" : ""} you` : "");
 
-    const count = this.hoursBtn.querySelector(".svc-count")!;
-    count.textContent = String(line.length);
-    count.classList.toggle("hidden", line.length === 0);
+    this.setMenuCount("hours", ready);
 
     this.workersCount.textContent = String(staffed.length);
     const inLine = new Map(line.map((p, i) => [p.deskId, i + 1]));
@@ -221,16 +249,6 @@ export class Hud {
           `<li><span class="dot" style="background:${SHIRT_COLORS[p.look.shirt]}"></span><span class="name">${esc(p.name)}${p.id === selfId ? ' <span class="you">(you)</span>' : ""}</span></li>`,
       )
       .join("");
-
-    if (ready > 0) {
-      this.alertEl.innerHTML = `🔔 <b>${ready}</b> ready to present outside your office · <span class="key">O</span> start the review`;
-      this.alertEl.classList.remove("hidden");
-    } else if (line.length > 0) {
-      this.alertEl.innerHTML = `📝 ${line.length} preparing their reports…`;
-      this.alertEl.classList.remove("hidden");
-    } else {
-      this.alertEl.classList.add("hidden");
-    }
   }
 
   /** The dark hint bar at the bottom: what E (or another key) does here. */
@@ -241,26 +259,152 @@ export class Hud {
     this.hintEl.classList.toggle("hidden", !html);
   }
 
-  /** A toast with markup (achievements, XP). `html` must already be escaped. */
-  /** Hears every toast as plain text (e.g. to float it in front of you in VR). */
+  /** Hears every toast that shows, as plain text (e.g. to float it in front of you in VR). */
   onToast: ((text: string) => void) | null = null;
 
-  toastHtml(html: string, kind: string, ms = 4200): void {
-    const el = document.createElement("div");
-    el.className = `toast ${kind}`;
-    el.innerHTML = html;
-    this.onToast?.(el.textContent ?? "");
-    this.toastsEl.prepend(el);
-    setTimeout(() => el.remove(), ms);
+  /**
+   * A toast with markup (achievements, XP). `html` must already be escaped.
+   * `kind` is its look ("ach", "xp", "warn", "error" or ""); celebrations stay a little longer.
+   */
+  toastHtml(html: string, kind: string, ms?: number): void {
+    const level: ToastLevel = kind === "error" ? "error" : kind === "warn" ? "warn" : kind === "ach" || kind === "xp" ? "win" : "info";
+    this.show(html, true, level, kind, ms);
   }
 
-  toast(text: string, kind: "" | "warn" | "error" = ""): void {
+  /**
+   * A toast. Routine news ("note") never pops up: it goes to the inbox's
+   * Recent list. The same thing twice becomes one toast with a ×2, and a burst
+   * of everyday ones is capped (see ToastGate); warnings and errors always show.
+   */
+  toast(text: string, kind: "" | ToastLevel = ""): void {
+    const level: ToastLevel = kind === "" ? "info" : kind;
+    this.show(text, false, level, level === "warn" || level === "error" ? level : "");
+  }
+
+  /** Routine news: into Recent, no toast. */
+  note(text: string): void {
+    this.toast(text, "note");
+  }
+
+  private show(content: string, html: boolean, level: ToastLevel, cls: string, ms?: number): void {
+    const probe = document.createElement("div");
+    if (html) probe.innerHTML = content;
+    else probe.textContent = content;
+    const text = probe.textContent ?? "";
+    const d = this.gate.decide(text, level, Date.now());
+    if (d.action === "log") {
+      this.addRecent(text, level);
+      return;
+    }
+    const life = ms ?? d.ms;
+    if (d.action === "merge") {
+      const el = [...this.toastsEl.children].find((x) => (x as HTMLElement).dataset.key === d.key) as HTMLElement | undefined;
+      if (el) {
+        let n = el.querySelector<HTMLElement>(".toast-n");
+        if (!n) {
+          n = document.createElement("span");
+          n.className = "toast-n";
+          el.appendChild(n);
+        }
+        n.textContent = `×${d.count}`;
+        this.toastsEl.prepend(el);
+        clearTimeout(Number(el.dataset.timer));
+        el.dataset.timer = String(setTimeout(() => el.remove(), life));
+        return;
+      }
+    }
     const el = document.createElement("div");
-    el.className = `toast ${kind}`;
-    el.textContent = text;
+    el.className = `toast ${cls}`.trim();
+    el.dataset.key = d.key;
+    if (html) el.innerHTML = content;
+    else el.textContent = content;
+    // Warnings, errors and wins are kept in Recent too, after they fade.
+    if (level !== "info") this.addRecent(text, level);
     this.onToast?.(text);
     this.toastsEl.prepend(el);
-    setTimeout(() => el.remove(), 3800);
+    el.dataset.timer = String(setTimeout(() => el.remove(), life));
+  }
+
+  private addRecent(text: string, level: ToastLevel): void {
+    this.recent.unshift({ text, level, at: Date.now() });
+    if (this.recent.length > 40) this.recent.length = 40;
+    this.onRecent?.();
+  }
+
+  // --- the dock -----------------------------------------------------------------------------
+
+  /** Add an entry to the More menu (features add theirs: the Office, chat, VR). */
+  addMenuItem(item: MenuItem): HTMLButtonElement {
+    const b = document.createElement("button");
+    b.className = "more-item";
+    b.dataset.act = item.act;
+    b.setAttribute("role", "menuitem");
+    b.title = item.title;
+    b.innerHTML = `<span class="mi-icon">${item.icon}</span><span class="mi-label">${esc(item.label)}</span><span class="dock-badge soft hidden"></span>${item.key ? `<span class="key">${esc(item.key)}</span>` : ""}`;
+    b.addEventListener("click", () => {
+      this.closeMore();
+      item.run();
+    });
+    b.dataset.group = item.group ?? "main";
+    // The "end" group (settings, controls) stays last, after a divider.
+    const firstEnd = this.moreEl.querySelector<HTMLElement>('[data-group="end"]');
+    if (item.group !== "end" && firstEnd) firstEnd.before(b);
+    else this.moreEl.appendChild(b);
+    return b;
+  }
+
+  /** A count on a More menu entry (0 hides it); the More button gets a dot while any shows. */
+  setMenuCount(act: string, n: number, urgent = false): void {
+    const badge = this.moreEl.querySelector<HTMLElement>(`[data-act="${act}"] .dock-badge`);
+    if (!badge) return;
+    badge.textContent = String(n);
+    badge.classList.toggle("hidden", n === 0);
+    badge.classList.toggle("soft", !urgent);
+    const any = [...this.moreEl.querySelectorAll(".dock-badge")].some((x) => !x.classList.contains("hidden"));
+    this.moreBtn.querySelector(".dock-dot")!.classList.toggle("hidden", !any);
+  }
+
+  /** Put a button in the dock, after the one with this data-act. */
+  placeInDock(btn: HTMLElement, after: string): void {
+    this.root.querySelector(`.dock [data-act="${after}"]`)?.after(btn);
+  }
+
+  toggleMore(): void {
+    if (this.moreEl.classList.contains("hidden")) this.openMore();
+    else this.closeMore();
+  }
+
+  /** The More menu opened (the inbox puts itself away). */
+  onMoreOpen: (() => void) | null = null;
+
+  openMore(): void {
+    this.onMoreOpen?.();
+    this.moreEl.classList.remove("hidden");
+    this.moreBtn.setAttribute("aria-expanded", "true");
+    this.moreBtn.classList.add("on");
+  }
+
+  /** Put the More menu away; true if it was open. */
+  closeMore(): boolean {
+    if (this.moreEl.classList.contains("hidden")) return false;
+    this.moreEl.classList.add("hidden");
+    this.moreBtn.setAttribute("aria-expanded", "false");
+    this.moreBtn.classList.remove("on");
+    return true;
+  }
+
+  /** The 🔔 Needs you button (the inbox hangs under it). */
+  get inboxButton(): HTMLButtonElement {
+    return this.inboxBtn;
+  }
+
+  /** Its count: red when something's urgent, soft otherwise. */
+  setInboxBadge(count: number, urgent: boolean): void {
+    const b = this.inboxBtn.querySelector<HTMLElement>(".dock-badge")!;
+    b.textContent = String(count);
+    b.classList.toggle("hidden", count === 0);
+    b.classList.toggle("soft", !urgent);
+    this.inboxBtn.classList.toggle("ping", urgent);
   }
 
   // --- windows ---------------------------------------------------------------
@@ -277,6 +421,7 @@ export class Hud {
       ["U", "Stand-up: say your day out loud (🎤) and it becomes the plan — summary, end-of-day goals, tasks handed out — or Resume yesterday in one click"],
       ["L", "Your laptop: a browser for what's being built, workers' screens, the loop, decks and deploys — near a couch or table you sit down and it stays there"],
       ["K", "Agent monitor: every agent's live CLI at once, whoever needs you first — answer with a message, a task or a key (1, 2, 3, Enter, Esc) without leaving your seat · also the monitor wall in your office, the laptop's 📺 Monitor and the phone"],
+      ["I", "Needs you: one list of everything waiting on you — agents' questions, stuck agents, work to review, “I'll take it” offers, requests to borrow your agents, huddles and demos, deadlines — each with its button · also 🔔 in the dock and the phone's Alerts · below it, Recent: the routine news that didn't pop up"],
       ["N", "The next thing that needs you: an agent's question, then finished work to review — opened big in the Agent monitor, ready to answer, approve or send back"],
       ["P", "Your phone: alerts, chat, goals and deadlines, reviews, workers, history, music and travel — keep walking with it out"],
       ["M", "Show or hide the minimap"],
@@ -296,7 +441,8 @@ export class Hud {
       icon: "⌨️",
       body: `<div class="help-grid">${rows.map(([k, v]) => `<span>${k.split(" ").map((x) => `<span class="key">${esc(x)}</span>`).join("")}</span><span>${esc(v)}</span>`).join("")}</div>
         <p class="setting-note"><b>How you level up:</b> set goals, put workers on their tasks, and approve their work in reviews — each approved task checks itself off. Finish focus sessions every day to keep your 🔥 streak.</p>
-        <p class="setting-note"><b>VR:</b> with a headset, 🥽 VR in the dock puts you in the office. Left stick walks, right turns, the trigger presses what the laser points at (or draws on an idea board), A uses, B opens the menu, and holding a grip talks.</p>
+        <p class="setting-note"><b>The dock:</b> 🔔 Needs you, 🎯 Goals, 📺 Monitor, 💻 Laptop and 📱 Phone. Everything else — stand-up, focus, round up, office hours, travel, chat, the Office, settings and these controls — is under ☰ More, and every key above works wherever it lives.</p>
+        <p class="setting-note"><b>VR:</b> with a headset, 🥽 VR in ☰ More puts you in the office. Left stick walks, right turns, the trigger presses what the laser points at (or draws on an idea board), A uses, B opens the menu, and holding a grip talks.</p>
         <p class="setting-note">In a review, talk to the worker with 🎤 (or type): your words go straight into its terminal and it answers out loud. Draw on the review board and it travels with your feedback.</p>`,
     });
   }
