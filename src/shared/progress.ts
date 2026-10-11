@@ -9,6 +9,7 @@ import type { AgentPullRequest, PullRequestInfo } from "./project.js";
 import type { Character } from "./team.js";
 import type { McpServer } from "./mcp.js";
 import type { Estimate, EstimateSample, Took } from "./estimate.js";
+import { coerceDemo, type GoalDemo, type HuddleState } from "./huddle.js";
 
 export type TaskStatus = "todo" | "doing" | "review" | "done";
 
@@ -110,6 +111,10 @@ export interface Goal {
   dueAt?: number | null;
   /** The desks working it as a group: tasks go out across them as each finishes. */
   group?: string[] | null;
+  /** The team huddle on its draft plan, while it's on. */
+  huddle?: HuddleState | null;
+  /** What was built, captured when every task was approved (build goals). */
+  demo?: GoalDemo | null;
 }
 
 /** A timed focus session the whole office works in. */
@@ -379,6 +384,8 @@ export function coerceGoal(raw: Goal): Goal {
     deck: raw.deck && Array.isArray(raw.deck.slides) ? raw.deck : null,
     dueAt: typeof raw.dueAt === "number" ? raw.dueAt : null,
     group: Array.isArray(raw.group) ? raw.group.filter((d): d is string => typeof d === "string").slice(0, 12) : null,
+    huddle: null,
+    demo: coerceDemo(raw.demo),
   };
 }
 
