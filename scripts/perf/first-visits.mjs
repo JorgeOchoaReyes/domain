@@ -37,7 +37,11 @@ await cmd("Page.navigate", { url: "http://localhost:5199/" });
 for (let i = 0; i < 60 && !(await ev(() => !!window.domain)); i++) await sleep(500);
 await sleep(2000);
 await ev(() => [...document.querySelectorAll("button")].find((b) => /Enter the office/.test(b.textContent ?? ""))?.click());
-await sleep(3000);
+// Wait for the warm-up behind the loading screen, and keep the quality where it is:
+// slow headless frames would otherwise drop it mid-run, recompiling every material.
+for (let i = 0; i < 60 && !(await ev(() => document.getElementById("loading")?.classList.contains("done"))); i++) await sleep(250);
+await ev(() => { window.domain.world.autoQuality = false; });
+await sleep(1500);
 const spots = [
   ["open office", -6, 0, 0],
   ["your office", 13, 9, Math.PI],

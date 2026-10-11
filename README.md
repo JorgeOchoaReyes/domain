@@ -1115,10 +1115,12 @@ docs/screenshots/        the pictures in this README
 
 Next up, after v1.0:
 
-- **Smoother still.** The first look at your office, the lobby and floor 2
-  still drops a few frames once per session (50–67 ms); the outline pass costs
-  as much as the scene itself; and static furniture could be merged into far
-  fewer draw calls. Measure with `scripts/perf/`.
+- **Smoother still, the rest.** First looks no longer hitch, and static
+  furniture is drawn merged (about 40% fewer draw calls in the scene, its
+  outlines and its shadows). Still to do: the outline pass is a second draw
+  of everything on screen (now ~0.7× the scene's calls), and the people,
+  the Kenney models and the props you can use aren't merged. Measure with
+  `scripts/perf/`.
 - **macOS and Linux**, tested end to end (the builds exist; they haven't been
   run on real machines yet).
 - **VR**, back on track: the last fixes for drawing and reviews in the headset.

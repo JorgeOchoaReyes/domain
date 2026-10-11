@@ -756,6 +756,7 @@ function buildLobby(add: Add, solid: (x: number, z: number, hw: number, hd: numb
     g.add(mesh(box(0.06, 2.6, 0.08), edge, half / 2 - 0.03, 1.3, 0, false));
     g.add(mesh(box(0.06, 2.6, 0.08), edge, -half / 2 + 0.03, 1.3, 0, false));
     g.position.z = FRONT_DOOR.z;
+    g.userData.dynamic = true;
     add(g);
     return g;
   };

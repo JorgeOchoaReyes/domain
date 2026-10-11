@@ -16,6 +16,8 @@ import { openPool } from "../ui/pool.js";
  */
 
 export interface PoolScene {
+  /** The table and all on it (the world merges its static parts: see mergeStatic). */
+  group: THREE.Group;
   game: PoolGame;
   /** How many workers are standing at the table on a break (they shoot when it's theirs). */
   setPlayers(n: number): void;
@@ -85,6 +87,7 @@ export function addPool(props: Props): PoolScene {
   const ballGeo = new THREE.SphereGeometry(R, 14, 10);
   const balls = game.balls.map((b) => {
     const m = mesh(ballGeo, toon(BALL_COLORS[b.n] ?? "#ffffff"), 0, TOP + R, 0, false);
+    m.userData.dynamic = true;
     group.add(m);
     return m;
   });
@@ -94,6 +97,7 @@ export function addPool(props: Props): PoolScene {
   cue.add(stick);
   cue.add(mesh(new THREE.CylinderGeometry(0.0075, 0.0075, 0.02, 8), toon("#5bc0eb"), 0, 0.01, 0, false));
   cue.visible = false;
+  cue.userData.dynamic = true;
   group.add(cue);
 
   const place = () => {
@@ -203,6 +207,7 @@ export function addPool(props: Props): PoolScene {
   };
 
   return {
+    group,
     game,
     setPlayers(n) {
       players = n;

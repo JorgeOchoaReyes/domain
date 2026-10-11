@@ -213,7 +213,10 @@ export function buildGameRoom(): GameRoom {
   const disco = discoBall();
   disco.position.set((ROOM.minX + ROOM.maxX) / 2, WALL_HEIGHT - 0.75, (ROOM.minZ + ROOM.maxZ) / 2);
   add(disco);
+  // These move (see update): never merged with the static furniture (mergeStatic).
+  disco.userData.dynamic = true;
   const spots = new THREE.Group();
+  spots.userData.dynamic = true;
   const spotMats: THREE.MeshBasicMaterial[] = [];
   for (let i = 0; i < 14; i++) {
     const m = new THREE.MeshBasicMaterial({ color: NEON[i % NEON.length], transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending });
@@ -258,6 +261,7 @@ export function buildGameRoom(): GameRoom {
   const ring = new THREE.Mesh(new THREE.RingGeometry(WORK_PAD.r - 0.06, WORK_PAD.r + 0.04, 40), new THREE.MeshBasicMaterial({ color: "#ffffff" }));
   ring.rotation.x = -Math.PI / 2;
   ring.position.set(WORK_PAD.x, 0.02, WORK_PAD.z);
+  ring.userData.dynamic = true;
   add(ring);
   const beam = new THREE.Mesh(
     new THREE.CylinderGeometry(WORK_PAD.r * 0.9, WORK_PAD.r, 2.2, 32, 1, true),

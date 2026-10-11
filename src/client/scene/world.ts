@@ -8,6 +8,7 @@ import { buildTeamFloor, type TeamFloor } from "./teamfloor.js";
 import * as THREE from "three";
 // Only what moved gets its matrices recomputed (see there).
 import "./fastMatrices.js";
+import { drawnBy, isMergedPart, mergeStatic, mergeStats, pinsOf } from "./mergeStatic.js";
 import { OutlineEffect } from "three/examples/jsm/effects/OutlineEffect.js";
 import type { Desk, Look, Peer, Presentation } from "../../shared/protocol.js";
 import type { Idea } from "../../shared/ideas.js";
@@ -67,6 +68,8 @@ import { disposeSprite, fitLabels, label, textSprite } from "./toon.js";
  */
 
 const PLAYER_RADIUS = 0.35;
+/** How often a board out of sight is repainted (one at a time; see paintABoard). */
+const AWAY_PAINT_MS = 4000;
 const WORKER_SPEED = 3.6;
 
 type Pt = { x: number; z: number };
@@ -274,6 +277,11 @@ export class World {
         this.areaLights.push({ light, home });
       }
     }
+    // Static furniture is drawn merged, one mesh per material and patch of floor (see
+    // mergeStatic): far fewer draw calls in the scene, the outlines and the shadows. What
+    // the builders handed back for us to drive (anchors, boards, the gong…) stays as it is.
+    const mergeRoots = [this.office.group, this.rooms.group, ...Object.values(this.rooms.areas), this.gameRoom.group, this.upstairs.group, this.teamFloor.group, ...this.moreTeamFloors.map((f) => f.group), this.park.group, this.extras.grounds, this.extras.upstairs, this.pool.group];
+    mergeStatic(mergeRoots, pinsOf([this.office, this.rooms, this.gameRoom, this.upstairs, this.teamFloor, ...this.moreTeamFloors, this.park, this.extras, this.pool], mergeRoots));
     // The cars go in after: they move, so the see-through pass (fixed boxes) must never hide bits of them — their roofs vanished as you got in.
     this.rooms.areas.grounds.add(street.group);
     // Props' models load after this: each joins the camera's see-through pass as it arrives.
@@ -393,6 +401,7 @@ export class World {
   // --- state ------------------------------------------------------------------
 
   sync(desks: Desk[], line: Presentation[], peers: Peer[], selfId: string): void {
+    this.synced();
     this.desks = desks;
     this.line = line;
     const taken = new Set(desks.filter((d) => d.worker).map((d) => d.id));
@@ -1067,7 +1076,27 @@ export class World {
       b.tex.needsUpdate = true;
       return;
     }
+    // Nothing you can see needed it: now and then, repaint one you can't, so none goes stale.
+    // The first look at the monitor wall had a whole session of terminal output to catch up
+    // on — a 25–45 ms frame; a little every few seconds, nobody notices.
+    if (now - this.awayPaintAt < AWAY_PAINT_MS) return;
+    for (const b of this.boards()) {
+      if (!b.dirty || now - b.lastAt < AWAY_PAINT_MS || b.visible()) continue;
+      b.dirty = false;
+      const key = b.key();
+      if (key === b.lastKey) continue;
+      b.lastKey = key;
+      b.lastAt = now;
+      b.paint();
+      b.tex.needsUpdate = true;
+      this.awayPaintAt = now;
+      return;
+    }
   }
+  private awayPaintAt = 0;
+  /** Resolved by the first sync() (the office from the server). */
+  private synced: () => void = () => {};
+  private firstSync = new Promise<void>((r) => (this.synced = r));
 
   resize(): void {
     const w = window.innerWidth;
@@ -1092,21 +1121,31 @@ export class World {
     // halves the shadow pass).
     this.shadowTick = (this.shadowTick + 1) % 2;
     this.renderer.shadowMap.needsUpdate = this.quality === "high" || this.shadowTick === 0;
-    if (this.outlines) {
-      // The outline pass walks the scene twice to swap materials: only what's visible
-      // (whole floors and areas are hidden at a time — no need to walk them).
-      const traverse = this.scene.traverse;
-      this.scene.traverse = this.scene.traverseVisible;
-      try {
-        this.effect.render(this.scene, this.camera);
-      } finally {
-        this.scene.traverse = traverse;
-      }
-    } else this.renderer.render(this.scene, this.camera);
+    if (this.outlines) this.drawOutlined();
+    else this.renderer.render(this.scene, this.camera);
     relight();
     this.trackFrame();
   }
   private shadowTick = 0;
+
+  /** How the furniture merge went (for the perf scripts). */
+  get merged(): typeof mergeStats {
+    return mergeStats;
+  }
+
+  /** The scene, then its outlines. */
+  private drawOutlined(): void {
+    // The outline pass walks the scene twice to swap materials: only what's visible
+    // (whole floors and areas are hidden at a time, and merged furniture's originals
+    // are drawn by their merged pieces — no need to walk them).
+    const traverse = this.scene.traverse;
+    this.scene.traverse = this.scene.traverseVisible;
+    try {
+      this.effect.render(this.scene, this.camera);
+    } finally {
+      this.scene.traverse = traverse;
+    }
+  }
 
   /** Lights moved out of their rooms (see the constructor), and the room each belongs to. */
   private areaLights: { light: THREE.Light; home: THREE.Object3D }[] = [];
@@ -1133,8 +1172,10 @@ export class World {
    * the game hitches. Hidden areas are shown for the one off-screen frame.
    */
   async precompile(): Promise<void> {
-    // The model files first (they're small and local), so they're warmed up too — but never wait long.
-    await Promise.race([modelsPlaced(), new Promise((r) => setTimeout(r, 4000))]);
+    // The model files first (they're small and local), so they're warmed up too, and the
+    // office from the server (its workers are drawn, and its boards painted, below: the first
+    // paint of the monitor wall's terminals took 30–50 ms) — but never wait long.
+    await Promise.race([Promise.all([modelsPlaced(), this.firstSync]), new Promise((r) => setTimeout(r, 4000))]);
     // Every board painted once now, seen or not, so the first look at one is just a look.
     for (const b of this.boards()) {
       b.paint();
@@ -1142,33 +1183,44 @@ export class World {
       b.lastKey = b.key();
       b.dirty = false;
     }
-    const hidden: THREE.Object3D[] = [];
     // Everything is drawn once, wherever it is: three.js uploads an object's
     // geometry and textures the first time it's drawn, and doing that the
     // first time you looked at the lobby or stepped outside froze the game for
     // up to a quarter of a second. Behind the loading screen, nobody notices.
-    const culled: THREE.Object3D[] = [];
-    this.scene.traverse((o) => {
-      if (!o.visible) {
-        hidden.push(o);
-        o.visible = true;
-      }
-      if (o.frustumCulled) {
-        culled.push(o);
-        o.frustumCulled = false;
-      }
-    });
+    // (Merged furniture's originals stay hidden: their merged pieces draw them.)
+    const showAll = (): (() => void) => {
+      const hidden: THREE.Object3D[] = [];
+      const culled: THREE.Object3D[] = [];
+      this.scene.traverse((o) => {
+        if (!o.visible && !isMergedPart(o)) {
+          hidden.push(o);
+          o.visible = true;
+        }
+        if (o.frustumCulled) {
+          culled.push(o);
+          o.frustumCulled = false;
+        }
+      });
+      return () => {
+        for (const o of hidden) o.visible = false;
+        for (const o of culled) o.frustumCulled = true;
+      };
+    };
+    let restore = showAll();
     try {
       await this.renderer.compileAsync(this.scene, this.camera);
-      // The outline pass makes its own materials the first time it draws each one (and the shadow pass its own).
+      // The frames drawn while that compiled hid the areas you can't see again: show it all
+      // once more for the draw that compiles the outline and shadow materials (three makes
+      // those the first time it draws each thing — so far, only what's seen from the door).
+      restore();
+      restore = showAll();
       this.renderer.shadowMap.needsUpdate = true;
-      if (this.outlines) this.effect.render(this.scene, this.camera);
+      if (this.outlines) this.drawOutlined();
       else this.renderer.render(this.scene, this.camera);
     } catch {
       /* compiling ahead is only an optimization */
     } finally {
-      for (const o of hidden) o.visible = false;
-      for (const o of culled) o.frustumCulled = true;
+      restore();
     }
   }
 
@@ -1335,9 +1387,10 @@ export class World {
     const len = toHead.length();
     this.ray.set(cam, toHead.normalize());
     const now = new Set<THREE.Object3D>();
+    // A merged piece of furniture is hidden as one (what draws the mesh: see mergeStatic).
     for (const o of this.occludable) {
-      if (o.box.distanceToPoint(cam) < 1.1) now.add(o.mesh);
-      else if (len > 0.3 && this.ray.intersectBox(o.box, this.hit) && this.hit.distanceTo(cam) < len - 0.35) now.add(o.mesh);
+      if (o.box.distanceToPoint(cam) < 1.1) now.add(drawnBy(o.mesh));
+      else if (len > 0.3 && this.ray.intersectBox(o.box, this.hit) && this.hit.distanceTo(cam) < len - 0.35) now.add(drawnBy(o.mesh));
     }
     for (const m of this.hiddenNow) if (!now.has(m)) m.visible = true;
     for (const m of now) m.visible = false;
