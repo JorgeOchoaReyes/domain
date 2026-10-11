@@ -523,7 +523,7 @@ A laptop in your hands, anywhere: **💬 Team** to message anyone, give someone
 a task or ask for an update; a **Browser** showing the app your workers
 are building (your preview URL, or any local dev server it finds), **Workers**
 with each one's live terminal, the **Loop** for your goal, **Decks** for
-research goals, and the **Deploy** console.
+research goals, the **Deploy** console, and **💻 Mine**, your own terminals.
 
 The browser has tabs: **＋** for a new one (it lists your running dev
 servers), **×** (or a middle-click) to close one; each keeps its own page and
@@ -532,6 +532,37 @@ history, and they're remembered.
 Press **L** by a couch, a table, an armchair or the campfire and you sit down
 and set it up there. It stays where you left it: walk back and press **E** to
 pick up where you were.
+
+### 💻 Your own terminal (laptop → Mine)
+
+Do your own work without leaving the office: **L → 💻 Mine** (or sit at your
+desk in your office and press **E** again) opens real terminals on this
+computer. **＋ New tab** starts a shell in the project — PowerShell on Windows
+(PowerShell 7 if you have it; Command Prompt and Git Bash are offered too),
+your `$SHELL` elsewhere. The **▾** next to it picks the shell and where it
+starts: the project or any repo you have open.
+
+The same menu offers **🤖 Claude Code (mine)** (and any other agent CLI you
+have installed): your own plain session in that folder. It isn't a worker — no
+desk, no brief, no report files, not in the monitor, the inbox, the chat or
+the review line. Just your tab.
+
+Tabs live on the server: close the laptop or reload the page and they're
+still there, with their recent output (up to six tabs). **✕** on a tab ends its
+shell; they all end when the office stops. Select to copy, paste as usual,
+Ctrl+[ sends Esc (Esc closes the laptop).
+
+The header has **🧩 Open in VS Code** (when `code` is on your PATH),
+**📂 Open folder** (Explorer, Finder, or your file manager), and
+**🎯 Hand this to the team**: a task to whoever's free (someone's hired if
+nobody is), about that folder, with the tab's last 40 lines attached if you
+like.
+
+**Host only.** These are real shells on your computer: guests who join over
+your network — teammates and visitors alike — don't get the app, can't send
+any of its messages (the server checks every one), and are never sent a byte
+of its output. A tab only starts in the project or an open repo, in a shell
+from the server's own list.
 
 ### 📱 Your phone (P)
 

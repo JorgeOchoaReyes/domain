@@ -18,6 +18,8 @@ import { ingestLoop, loopState, onLoop, renderLoop, type LoopHandlers } from "./
 import { openDeck, paintDeckSlide } from "./deck.js";
 import { MonitorView, type MonitorActions } from "./monitor.js";
 import "../styles/loop.css";
+import { MineApp } from "./mine.js";
+import { guestRole } from "./join.js";
 
 /**
  * Your own laptop, open anywhere (L): a little desktop with a dock of apps.
@@ -31,12 +33,13 @@ import "../styles/loop.css";
  * - 🎯 Loop: where each goal is in the loop, and the next thing to do.
  * - 📊 Decks: research goals' slide decks, to present or download.
  * - 🚀 Deploy: the deploy command's output, live.
+ * - 💻 Mine: your own terminals on this computer (host only; see mine.ts).
  *
  * Feed it every server message with onMessage(); it keeps its own copy of
  * the office and progress.
  */
 
-export type LaptopApp = "team" | "monitor" | "repo" | "browser" | "workers" | "loop" | "decks" | "deploy";
+export type LaptopApp = "team" | "monitor" | "repo" | "browser" | "workers" | "loop" | "decks" | "deploy" | "mine";
 
 const APPS: { id: LaptopApp; icon: string; label: string }[] = [
   { id: "team", icon: "💬", label: "Team" },
@@ -47,6 +50,7 @@ const APPS: { id: LaptopApp; icon: string; label: string }[] = [
   { id: "loop", icon: "🎯", label: "Loop" },
   { id: "decks", icon: "📊", label: "Decks" },
   { id: "deploy", icon: "🚀", label: "Deploy" },
+  { id: "mine", icon: "💻", label: "Mine" },
 ];
 
 const HIRE_BUTTON = `<button class="btn small lt-hire" title="Hire at the next free desk — no need to walk to one">＋ Hire a worker</button>`;
@@ -93,6 +97,9 @@ export class MyLaptop {
   // The Monitor app: every terminal at once.
   private monitorView: MonitorView | null = null;
 
+  /** 💻 Mine: your own terminals (host only). */
+  private mine = new MineApp((m) => this.actions.send(m), () => this.close());
+
   /** ＋ Hire a worker: the hire card for the next free desk, without walking to one (set by main). */
   hireAny: (() => void) | null = null;
 
@@ -125,6 +132,7 @@ export class MyLaptop {
   /** Every server message goes through here. */
   onMessage(msg: ServerMessage): void {
     ingestLoop(msg);
+    if (msg.t === "mine" || msg.t === "mineOutput" || msg.t === "mineScrollback") return this.mine.onMessage(msg);
     switch (msg.t) {
       case "welcome":
       case "office":
@@ -168,7 +176,7 @@ export class MyLaptop {
       <div class="lt-screen">
         <div class="lt-bar">
           <span class="lt-logo">🏢 domain OS</span>
-          <nav class="lt-tabs">${APPS.map((a) => `<button data-app="${a.id}"><span>${a.icon}</span> ${a.label}</button>`).join("")}</nav>
+          <nav class="lt-tabs">${APPS.filter((a) => a.id !== "mine" || !guestRole()).map((a) => `<button data-app="${a.id}"><span>${a.icon}</span> ${a.label}</button>`).join("")}</nav>
           <span class="lt-clock"></span>
           <button class="lt-close" title="Close (Esc)" aria-label="Close">✕</button>
         </div>
@@ -209,6 +217,8 @@ export class MyLaptop {
   }
 
   private show(app: LaptopApp): void {
+    // Your own terminals are the host's alone.
+    if (app === "mine" && guestRole()) app = "team";
     this.app = app;
     this.renderKey = "";
     this.root.querySelectorAll<HTMLElement>(".lt-tabs [data-app]").forEach((b) => b.classList.toggle("on", b.dataset.app === app));
@@ -222,6 +232,7 @@ export class MyLaptop {
     else if (app === "browser") this.showBrowser();
     else if (app === "workers") this.showWorkers();
     else if (app === "deploy") this.showDeploy();
+    else if (app === "mine") this.mine.mount(this.content);
     else this.soft();
   }
 
@@ -672,6 +683,7 @@ export class MyLaptop {
         if (this.watching) this.actions.send({ t: "resize", deskId: this.watching, cols: this.term.cols, rows: this.term.rows });
       }
       if (this.app === "deploy" && this.dfit && this.dHost.isConnected) this.dfit.fit();
+      if (this.app === "mine") this.mine.refit();
     } catch {
       /* no size yet */
     }

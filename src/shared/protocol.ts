@@ -16,6 +16,7 @@ import type { GithubAccount, GithubIssue, GithubRepo, OpLog, PrPer, ProjectInfo,
 import type { Character, WorkerIdentity } from "./team.js";
 import type { McpHealth, McpSeen, McpServer } from "./mcp.js";
 import type { BorrowEvent, PodsState } from "./pods.js";
+import type { MineState } from "./mine.js";
 
 /** What a guest on your local network may do in your office. */
 export type GuestRole = "visitor" | "teammate";
@@ -378,6 +379,15 @@ export type ClientMessage =
   | { t: "shipCancel"; goalId: string }
   /** Look for dev servers running on this machine (for the laptop's browser). */
   | { t: "probe" }
+  /** 💻 Mine (host only): your own terminals — list them, open one (a shell or your own agent CLI, in the project or an open repo), watch, type, resize, close. */
+  | { t: "mineGet" }
+  | { t: "mineOpen"; shell?: string; agent?: AgentKind; folder?: string; cols?: number; rows?: number }
+  | { t: "mineAttach"; tabId: string }
+  | { t: "mineInput"; tabId: string; data: string }
+  | { t: "mineResize"; tabId: string; cols: number; rows: number }
+  | { t: "mineClose"; tabId: string }
+  /** Open a folder (the project or an open repo) in VS Code, or in your file manager. */
+  | { t: "mineReveal"; folder: string; how: "code" | "files" }
   /** End a goal's team huddle now: the plan as it stands goes out. */
   | { t: "huddleSkip"; goalId: string }
   /** Capture a goal's demo (again): a screenshot of the running app, or a command's output. */
@@ -583,6 +593,10 @@ export type ServerMessage =
   | { t: "localModels"; models: string[]; info: Record<string, LocalModelInfo> }
   /** Dev servers found running on this machine, in reply to a probe. */
   | { t: "devServers"; urls: string[] }
+  /** 💻 Mine (only ever sent to the host): your terminals, and which one just opened. */
+  | { t: "mine"; state: MineState; opened?: string }
+  | { t: "mineOutput"; tabId: string; data: string }
+  | { t: "mineScrollback"; tabId: string; data: string }
   /** Output from a running deploy, as it happens. */
   | { t: "deployOutput"; goalId: string; data: string }
   /** The whole log of the current (or last) deploy, sent on join. */

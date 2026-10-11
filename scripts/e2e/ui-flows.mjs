@@ -3,7 +3,7 @@
 // spoken stand-up with who does what, work done (the phone pings, Arnold offers a
 // review), office hours with real slides, the monitor (N, approve), reviews from the
 // phone, a task to everyone (someone offers), messaging, the CCTV wall and its chair,
-// sitting in your office, the end-of-day recap and Resume yesterday — plus the dock
+// sitting in your office, your own terminal (💻 Mine), the end-of-day recap and Resume yesterday — plus the dock
 // (More), quieter toasts, and 🔔 Needs you (the inbox, and the phone's same list).
 //
 //   npm run e2e:ui           (needs Chrome; set CHROME to its path if it's elsewhere)
@@ -60,7 +60,12 @@ const killTree = (p) => {
     else p.kill();
   } catch {}
 };
-process.on("exit", () => [server, page].forEach(killTree));
+let chrome = null;
+// Everything it started goes when it ends — passing, failing or interrupted (the server takes its shells with it).
+process.on("exit", () => [server, page, chrome].filter(Boolean).forEach(killTree));
+for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => process.exit(130));
+process.on("uncaughtException", (e) => { console.error(e); process.exit(1); });
+process.on("unhandledRejection", (e) => { console.error(e); process.exit(1); });
 for (let i = 0; i < 60; i++) {
   try {
     await fetch(`http://localhost:${PAGE_PORT}/`);
@@ -71,7 +76,7 @@ for (let i = 0; i < 60; i++) {
 }
 await new Promise((r) => setTimeout(r, 3000));
 const CHROME = process.env.CHROME ?? (process.platform === "win32" ? "C:/Program Files/Google/Chrome/Application/chrome.exe" : process.platform === "darwin" ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" : "google-chrome");
-const chrome = spawn(CHROME, ["--headless=new", `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${mkdtempSync(join(tmpdir(), "cdp-"))}`, "--window-size=1500,900", "--enable-gpu", "--ignore-gpu-blocklist", "--use-angle=d3d11", ...(VOICE_WAV ? ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream", `--use-file-for-fake-audio-capture=${VOICE_WAV}%noloop`, "--autoplay-policy=no-user-gesture-required"] : []), "about:blank"]);
+chrome = spawn(CHROME, ["--headless=new", "--mute-audio", `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${mkdtempSync(join(tmpdir(), "cdp-"))}`, "--window-size=1500,900", "--enable-gpu", "--ignore-gpu-blocklist", "--use-angle=d3d11", ...(VOICE_WAV ? ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream", `--use-file-for-fake-audio-capture=${VOICE_WAV}%noloop`, "--autoplay-policy=no-user-gesture-required"] : []), "about:blank"]);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let tabs;
 for (let i = 0; i < 40; i++) {
@@ -161,6 +166,18 @@ await sleep(200);
 const toasts = await ev(() => ({ same: [...document.querySelectorAll("#toasts .toast")].filter((t) => /Same thing/.test(t.textContent)).map((t) => t.textContent), routine: [...document.querySelectorAll("#toasts .toast")].some((t) => /Routine news/.test(t.textContent)), recent: window.domain.hud.recent.some((r) => /Routine news/.test(r.text)) }));
 check("toasts: the same one three times is one toast ×3", toasts?.same.length === 1 && /×3/.test(toasts.same[0]), JSON.stringify(toasts?.same));
 check("toasts: routine news doesn't pop up — it's in Recent", toasts && !toasts.routine && toasts.recent);
+
+// --- 0c. Your desk: sit (E), then E again is your computer, on 💻 Mine (nobody's presenting yet) ---
+await ev(() => window.domain.player.placeAt(13.6, 7.7, 0));
+await sleep(600);
+await key("e");
+await sleep(600);
+await key("e");
+await sleep(800);
+check("your desk: E, E opens your computer on 💻 Mine", !!(await ev(() => !!document.querySelector('.lt-tabs [data-app="mine"].on'))));
+await closeAll();
+await key("w");
+await sleep(400);
 
 // --- 0. A team of three ---------------------------------------------------------------
 for (const [i, role] of [[0, "builder"], [1, "reviewer"]]) {
@@ -368,6 +385,46 @@ check("armchair: E sits you down", !!(await ev(() => window.domain.player.sittin
 await key("w");
 await sleep(500);
 check("armchair: W gets you up", !(await ev(() => window.domain.player.sitting)));
+
+// --- 7c. 💻 Mine: your own terminal, a real shell on this computer -----------------------------
+await closeAll();
+await ev(() => window.domain.laptop.open("mine"));
+await sleep(800);
+check("laptop: 💻 Mine is an app", !!(await ev(() => !!document.querySelector('.lt-tabs [data-app="mine"].on') && !!document.querySelector(".mn"))));
+await ev(() => document.querySelector(".mn-new").click());
+const mineTabs = await until(() => document.querySelectorAll(".mn-tab").length, 10000, 250);
+check("Mine: ＋ New tab opens a shell", mineTabs === 1, `${mineTabs} tab(s)`);
+const mineLines = () => ev(() => [...document.querySelectorAll(".mn-term .xterm-rows > div")].map((d) => d.textContent.trim()));
+// The shell's prompt first, then type into it like a person would.
+await until(() => [...document.querySelectorAll(".mn-term .xterm-rows > div")].some((d) => d.textContent.trim()), 15000, 500);
+await sleep(1500);
+await ev(() => document.querySelector(".mn-term .xterm-helper-textarea").focus());
+await cmd("Input.insertText", { text: "echo hello-from-mine" });
+await sleep(200);
+await key("Enter", "Enter", 13);
+let said = null;
+for (let i = 0; i < 30 && !said; i++) {
+  await sleep(500);
+  said = (await mineLines())?.find((l) => l === "hello-from-mine") ?? null;
+}
+check("Mine: echo hello-from-mine prints it", !!said, JSON.stringify((await mineLines())?.filter(Boolean).slice(-4)));
+await shot("7c-mine.png");
+await closeAll();
+await sleep(400);
+await ev(() => window.domain.laptop.open("mine"));
+const kept = await until(() => [...document.querySelectorAll(".mn-term .xterm-rows > div")].some((d) => d.textContent.trim() === "hello-from-mine") && document.querySelectorAll(".mn-tab").length, 8000, 250);
+check("Mine: the tab (and its output) is still there after closing the laptop", kept === 1, String(kept));
+await ev(() => { const net = window.domain.net; const send = net.send.bind(net); net.send = (m) => { (window.__sent ??= []).push(m); send(m); }; });
+await ev(() => document.querySelector(".mn-hand").click());
+await ev(() => { const t = document.querySelector(".mn-handoff textarea"); t.value = "Look at the output from my shell"; t.closest("form").requestSubmit(); });
+const handed = await until(() => window.domain.progress().goals.flatMap((g) => g.tasks).find((t) => /^In project: Look at the output/.test(t.title))?.title, 8000, 500);
+const handedNote = await ev(() => (window.__sent ?? []).filter((m) => m.t === "quickTask").map((m) => m.files?.[0]?.text ?? "").join("\n"));
+check("Mine: … with the tab's last lines attached", /hello-from-mine/.test(handedNote ?? ""), (handedNote ?? "").split("\n").slice(-2).join(" | "));
+check("Mine: 🎯 Hand this to the team makes a task for the folder", !!handed, handed ?? "");
+await ev(() => document.querySelector(".mn-tab [data-close]").click());
+const gone = await until(() => document.querySelector(".mn-none") ? "closed" : null, 8000, 250);
+check("Mine: ✕ closes the tab (and ends its shell)", gone === "closed");
+await closeAll();
 
 // --- 8. End of day: stop -> recap ---------------------------------------------------------------
 await closeAll();

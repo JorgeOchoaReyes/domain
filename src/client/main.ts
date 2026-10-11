@@ -2187,10 +2187,12 @@ function interact(): void {
   if (world.inMyOffice(x, z) && world.nearReviewDesk(x, z)) {
     // Someone ready: office hours. Nobody yet: just sit down at your desk.
     if (office.presentations.some((p) => p.report)) startOfficeHours();
+    // Already sat at your desk: your computer, on your own terminals (💻 Mine).
+    else if (player.sitting && !guestRole()) laptop.open("mine");
     else {
       player.sit(REVIEW_SPOT.x, REVIEW_SPOT.z, 0);
       world.setSeated(true);
-      hud.toast("🪑 At your desk · R rounds everyone up · W to get up");
+      hud.toast(guestRole() ? "🪑 At your desk · R rounds everyone up · W to get up" : "🪑 At your desk · E your computer (💻 Mine) · R rounds everyone up · W to get up");
     }
     return;
   }
@@ -2257,7 +2259,9 @@ function hintWork(): string | null {
     if (world.nearReviewDesk(x, z)) {
       return ready
         ? `<span class="title">⭐ Your desk</span> <span class="key">E</span> Start office hours · ${ready} ready`
-        : `<span class="title">⭐ Your desk</span> <span class="key">E</span> Sit down · nobody ready yet · <span class="key">R</span> round up workers`;
+        : player.sitting && !guestRole()
+          ? `<span class="title">⭐ Your desk</span> <span class="key">E</span> Your computer (💻 Mine) · <span class="key">R</span> round up workers · <span class="key">W</span> get up`
+          : `<span class="title">⭐ Your desk</span> <span class="key">E</span> Sit down · nobody ready yet · <span class="key">R</span> round up workers`;
     }
     if (world.cctv.seated) return `<span class="title">📺 CCTV</span> <span class="key">←</span><span class="key">→</span> switch · <span class="key">↑</span><span class="key">↓</span> all / one · <span class="key">C</span> cycle · <span class="key">E</span> full monitor · <span class="key">W</span> get up`;
     if (world.nearMonitorWall(x, z)) return `<span class="title">📺 Monitor wall</span> <span class="key">E</span> Sit and watch every agent, CCTV-style`;

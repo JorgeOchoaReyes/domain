@@ -1,0 +1,28 @@
+/* 💻 Mine: your own terminals on the laptop. */
+.lt-content[data-app="mine"] { flex-direction: column; }
+.mn { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }
+.mn-bar { display: flex; align-items: center; gap: 8px; padding: 6px 8px; background: var(--night-ink, #2b2d42); }
+.mn-tabs { flex: 1; min-width: 0; display: flex; gap: 4px; overflow-x: auto; }
+.mn-tab { display: flex; align-items: center; gap: 6px; font: inherit; font-size: 12px; font-weight: 800; color: var(--night-text); background: var(--night-2); border: 2px solid var(--night-line); border-radius: 9px 9px 4px 4px; padding: 4px 6px 4px 10px; cursor: pointer; white-space: nowrap; }
+.mn-tab small { font-weight: 700; color: var(--night-muted); }
+.mn-tab.on { background: var(--night); border-color: var(--accent); color: #fff; }
+.mn-tab.ended { opacity: .6; }
+.mn-tab i { font-style: normal; width: 18px; height: 18px; display: grid; place-items: center; border-radius: 6px; color: var(--night-muted); }
+.mn-tab i:hover { background: var(--bad); color: #fff; }
+.mn-none { font-size: 12px; font-weight: 700; color: var(--night-muted); padding: 4px; }
+.mn-new-wrap { position: relative; display: flex; gap: 2px; flex: none; }
+.mn-new-wrap .mn-new { border-radius: 9px 0 0 9px; }
+.mn-new-wrap .mn-more { border-radius: 0 9px 9px 0; padding-inline: 8px; }
+.mn-pick { position: absolute; right: 0; top: calc(100% + 6px); z-index: 5; display: flex; flex-direction: column; gap: 8px; padding: 10px; min-width: 280px; background: var(--card); border: var(--line-thin, 2px solid var(--ink)); border-radius: var(--r-md, 12px); box-shadow: 0 6px 18px rgba(0,0,0,.25); font-size: 13px; font-weight: 800; }
+.mn-pick label { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+.mn-pick select { flex: 1; font: inherit; font-weight: 700; padding: 4px 6px; border: 2px solid var(--ink); border-radius: 8px; background: #fff; color: var(--ink); }
+.mn-head { display: flex; gap: 8px; align-items: center; padding: 6px 10px; font-size: 13px; background: #fff; border-bottom: 2px solid var(--hairline); min-height: 34px; }
+.mn-head .grow { flex: 1; }
+.mn-where-now { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mn-where-now[data-flash] { color: var(--good); font-weight: 800; }
+.mn-handoff { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; background: var(--accent-tint); border-bottom: 2px solid var(--hairline); }
+.mn-handoff textarea { font: inherit; font-size: 13px; padding: 6px 8px; border: 2px solid var(--ink); border-radius: 8px; resize: vertical; }
+.mn-attach { font-size: 12px; font-weight: 800; display: flex; gap: 6px; align-items: center; }
+.mn-hand-acts { display: flex; gap: 6px; }
+.mn-body { flex: 1; min-height: 0; display: flex; }
+.mn-term.mn-blank { opacity: .35; }
