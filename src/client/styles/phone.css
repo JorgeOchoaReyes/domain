@@ -1,22 +1,17 @@
 /* ---------- The phone ---------- */
 .phone-btn { position: relative; }
-.phone-btn.on { background: #ffe8d6; }
-.phone-btn.ping:not(.on) { animation: ph-buzz 2.4s ease-in-out infinite; }
-.ph-badge:empty { display: none; }
-.ph-badge { position: absolute; top: -9px; right: -9px; min-width: 22px; height: 22px; padding: 0 5px; border-radius: 11px; background: var(--bad, #ef476f); color: #fff; font: 900 12px/22px var(--font); border: 2px solid var(--ink); }
-@keyframes ph-buzz { 0%, 86%, 100% { transform: rotate(0); } 88% { transform: rotate(-10deg); } 92% { transform: rotate(10deg); } 96% { transform: rotate(-6deg); } }
 
 .phone {
   position: absolute; right: 12px; bottom: 12px; z-index: 30; width: 320px; height: min(640px, calc(100vh - 24px));
-  background: #15161f; border-radius: 38px; padding: 12px; box-shadow: 0 18px 40px rgba(0, 0, 0, .45), inset 0 0 0 3px #3a3d5c;
+  background: #15161f; border-radius: 38px; padding: 12px; box-shadow: 0 18px 40px rgba(0, 0, 0, .45), inset 0 0 0 3px var(--night-line);
   display: flex; flex-direction: column; animation: ph-up .22s ease-out; font-family: var(--font);
 }
 .phone.hidden { display: none; }
 @keyframes ph-up { from { transform: translateY(40px); opacity: 0; } }
 .ph-notch { position: absolute; top: 18px; left: 50%; transform: translateX(-50%); width: 88px; height: 22px; border-radius: 12px; background: #000; z-index: 2; }
-.ph-status { display: flex; justify-content: space-between; padding: 8px 20px 4px; color: #fff; font-size: 12px; font-weight: 800; background: #fff8ef; border-radius: 28px 28px 0 0; color: var(--ink); }
-.ph-screen { flex: 1; overflow-y: auto; background: #fff8ef; padding: 12px 12px 16px; display: flex; flex-direction: column; gap: 8px; color: var(--ink); }
-.ph-bar { display: flex; align-items: center; justify-content: space-between; background: #fff8ef; border-radius: 0 0 28px 28px; padding: 6px 18px 10px; }
+.ph-status { display: flex; justify-content: space-between; padding: 8px 20px 4px; color: #fff; font-size: 12px; font-weight: 800; background: var(--paper); border-radius: 28px 28px 0 0; color: var(--ink); }
+.ph-screen { flex: 1; overflow-y: auto; background: var(--paper); padding: 12px 12px 16px; display: flex; flex-direction: column; gap: 8px; color: var(--ink); }
+.ph-bar { display: flex; align-items: center; justify-content: space-between; background: var(--paper); border-radius: 0 0 28px 28px; padding: 6px 18px 10px; }
 .ph-bar button { border: 0; background: none; cursor: pointer; font: 900 18px var(--font); color: var(--ink); padding: 2px 8px; }
 .ph-bar .ph-home { width: 110px; height: 6px; border-radius: 3px; background: var(--ink); padding: 0; }
 
@@ -24,7 +19,7 @@
 .ph-time { font-size: 46px; font-weight: 900; letter-spacing: -.02em; line-height: 1; }
 .ph-date { font-size: 13px; font-weight: 700; color: var(--muted); margin-top: 4px; }
 .ph-session { margin-top: 8px; font-weight: 900; color: #e76f51; }
-.ph-pill { margin-top: 8px; border: 2px solid var(--ink); border-radius: 999px; background: #ffd166; font: 800 13px var(--font); padding: 4px 12px; cursor: pointer; }
+.ph-pill { margin-top: 8px; border: 2px solid var(--ink); border-radius: 999px; background: var(--warn); font: 800 13px var(--font); padding: 4px 12px; cursor: pointer; }
 .ph-next { border: 2px solid var(--ink); border-radius: 14px; background: #fff; padding: 8px 10px; font: 800 12px var(--font); text-align: left; cursor: pointer; color: var(--ink); }
 .ph-next.u3 { background: #ffe0e6; }
 .ph-next.u2 { background: #fff1cc; }
@@ -33,28 +28,28 @@
 .ph-app { border: 0; background: none; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 4px; font: 800 11px var(--font); color: var(--ink); }
 .ph-icon { position: relative; width: 56px; height: 56px; border-radius: 16px; display: grid; place-items: center; font-size: 26px; border: 2px solid var(--ink); box-shadow: 0 3px 0 var(--ink); }
 .ph-app:hover .ph-icon { transform: translateY(-2px); }
-.ph-icon i { position: absolute; top: -7px; right: -7px; min-width: 20px; height: 20px; border-radius: 10px; background: #ef476f; color: #fff; font: 900 11px/20px var(--font); font-style: normal; border: 2px solid var(--ink); }
+.ph-icon i { position: absolute; top: -7px; right: -7px; min-width: 20px; height: 20px; border-radius: 10px; background: var(--bad); color: #fff; font: 900 11px/20px var(--font); font-style: normal; border: 2px solid var(--ink); }
 
 .ph-head { display: flex; align-items: center; justify-content: space-between; }
 .ph-head h3 { margin: 0; font-size: 18px; font-weight: 900; }
 .ph-link { border: 0; background: none; font: 800 13px var(--font); color: var(--accent); cursor: pointer; }
-.ph-card { display: flex; flex-direction: column; gap: 3px; border: 2px solid #eadfce; border-radius: 14px; background: #fff; padding: 8px 10px; font-size: 12px; font-weight: 600; text-align: left; color: var(--ink); font-family: var(--font); }
+.ph-card { display: flex; flex-direction: column; gap: 3px; border: 2px solid var(--hairline); border-radius: 14px; background: #fff; padding: 8px 10px; font-size: 12px; font-weight: 600; text-align: left; color: var(--ink); font-family: var(--font); }
 button.ph-card { cursor: pointer; }
 .ph-card b { font-size: 13px; font-weight: 900; }
 .ph-card b small { font-weight: 700; color: var(--muted); }
-.ph-card.u3 { border-color: #ef476f; background: #fff3f5; }
+.ph-card.u3 { border-color: var(--bad); background: #fff3f5; }
 .ph-card.u2 { border-color: #ffc94d; }
 .ph-meta { color: var(--muted); font-weight: 700; }
 .ph-meta em { font-style: normal; }
 .ph-meta em.over { color: #d62839; font-weight: 900; }
 .ph-sub { color: var(--muted); font-size: 11px; }
-.ph-bar-p { height: 6px; border-radius: 3px; background: #eee5d8; overflow: hidden; }
-.ph-bar-p span { display: block; height: 100%; background: #06d6a0; }
+.ph-bar-p { height: 6px; border-radius: 3px; background: var(--hairline); overflow: hidden; }
+.ph-bar-p span { display: block; height: 100%; background: var(--good); }
 .ph-acts { display: flex; gap: 6px; margin-top: 4px; }
 .ph-acts button, .ph-wide { border: 2px solid var(--ink); border-radius: 10px; background: #fff; font: 800 12px var(--font); padding: 4px 8px; cursor: pointer; color: var(--ink); }
 .ph-wide { width: 100%; padding: 8px; }
-.ph-wide.primary { background: #ffd166; }
-.ph-row { display: flex; align-items: center; gap: 10px; border: 0; border-bottom: 1px solid #eee5d8; background: none; padding: 6px 2px; cursor: pointer; text-align: left; font-family: var(--font); color: var(--ink); }
+.ph-wide.primary { background: var(--warn); }
+.ph-row { display: flex; align-items: center; gap: 10px; border: 0; border-bottom: 1px solid var(--hairline); background: none; padding: 6px 2px; cursor: pointer; text-align: left; font-family: var(--font); color: var(--ink); }
 .ph-row.on b { color: var(--accent); }
 .ph-row span:last-child { display: flex; flex-direction: column; min-width: 0; }
 .ph-row b { font-size: 13px; font-weight: 900; }
@@ -73,15 +68,24 @@ button.ph-card { cursor: pointer; }
 .ph-quick { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; }
 .ph-quick button { border: 2px solid var(--ink); border-radius: 12px; background: #fff; font: 800 11px var(--font); padding: 6px 2px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 2px; color: var(--ink); }
 .ph-quick button span { font-size: 18px; }
-.ph-quick button i { font-style: normal; background: #ef476f; color: #fff; border-radius: 8px; padding: 0 5px; }
-.ph-rv-note { margin-top: 4px; font: 600 12px var(--font); border: 2px solid #eadfce; border-radius: 10px; padding: 5px 8px; outline: none; }
+.ph-quick button i { font-style: normal; background: var(--bad); color: #fff; border-radius: 8px; padding: 0 5px; }
+.ph-rv-note { margin-top: 4px; font: 600 12px var(--font); border: 2px solid var(--hairline); border-radius: 10px; padding: 5px 8px; outline: none; }
 .ph-rv-note:focus { border-color: var(--accent); }
 .ph-card.done { opacity: .45; pointer-events: none; }
 
 /* A notification: the phone buzzes and a banner drops from it */
 .phone-btn.buzz { animation: ph-buzz-once .6s ease-in-out 2; }
 @keyframes ph-buzz-once { 25% { transform: rotate(-12deg); } 50% { transform: rotate(12deg); } 75% { transform: rotate(-8deg); } }
-.ph-banners { position: fixed; top: 74px; right: 16px; z-index: 60; display: flex; flex-direction: column; gap: 8px; width: min(340px, calc(100vw - 32px)); pointer-events: none; }
+.ph-banners { position: fixed; top: 74px; right: 16px; z-index: 35; display: flex; flex-direction: column; gap: 8px; width: min(340px, calc(100vw - 32px)); pointer-events: none; }
 .ph-banner { pointer-events: auto; display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 10px 14px; border: 3px solid var(--ink); border-radius: 16px; background: rgba(255, 250, 243, .97); box-shadow: 0 4px 0 var(--ink); font: 800 13px var(--font); color: var(--ink); cursor: pointer; animation: ph-drop .25s ease-out; }
 .ph-banner-app { font-size: 11px; color: var(--muted); }
 @keyframes ph-drop { from { transform: translateY(-16px); opacity: 0; } }
+
+/* Needs you on the phone: the same list as the dock's inbox, phone-sized */
+.ph-inbox { padding: 0; }
+.ph-inbox .ib-item { padding: 8px 10px; }
+.ph-inbox .ib-acts .btn.small { font-size: 11px; padding: 3px 7px; }
+.ph-count { font: 900 12px var(--font); color: #fff; background: var(--accent); border: var(--line-thin); border-radius: var(--r-pill); padding: 0 7px; }
+.ph-next i { font-style: normal; color: var(--muted); }
+/* Under a window or a dock popover the phone's banners step aside: Needs you has what they said. */
+body:has(.backdrop) .ph-banners, body:has(.dock-pop:not(.hidden)) .ph-banners { display: none; }

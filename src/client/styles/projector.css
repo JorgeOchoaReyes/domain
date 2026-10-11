@@ -9,11 +9,11 @@
 .pj-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .pj-dots { display: flex; gap: 4px; }
 .pj-dots i { width: 8px; height: 8px; border-radius: 50%; background: #4a4d6e; }
-.pj-dots i.on { background: #ffd166; }
-.pj-auto.on { background: #ffd166; }
+.pj-dots i.on { background: var(--warn); }
+.pj-auto.on { background: var(--warn); }
 .pj-say { flex: 1; min-width: 200px; font: inherit; font-size: 14px; border: 2px solid var(--ink); border-radius: 10px; padding: 6px 10px; background: #fff; color: var(--ink); }
 .pj-log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
 .pj-log:empty { display: none; }
-.pj-log li b { color: #ffd166; margin-right: 4px; }
+.pj-log li b { color: var(--warn); margin-right: 4px; }
 .pj-log li.you b { color: #8ecae6; }
 body.projecting .hint, body.projecting .dock-keys { display: none; }

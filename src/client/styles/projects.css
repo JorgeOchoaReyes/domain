@@ -13,7 +13,7 @@
 .pj-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
 .pj-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border: 2px solid var(--ink); border-radius: 999px; background: #fff; font-size: 12px; font-weight: 800; color: var(--ink); text-decoration: none; }
 .pj-chip.gh:hover { background: #24292f; color: #fff; }
-.pj-chip.warn { background: #fff3c4; }
+.pj-chip.warn { background: var(--warn-tint); }
 .pj-chip.muted { color: var(--muted); border-color: #cfc6b8; }
 .pj-warn { margin: 8px 0 0; font-size: 13px; font-weight: 800; color: #8a5a00; }
 .pj-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
@@ -29,7 +29,7 @@
 .pj-r-main b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pj-r-main code { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pj-desc { font-size: 11px; font-weight: 600; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pj-lock { font-size: 10px; font-weight: 900; color: #8a5a00; background: #fff3c4; border-radius: 999px; padding: 0 6px; margin-left: 4px; }
+.pj-lock { font-size: 10px; font-weight: 900; color: #8a5a00; background: var(--warn-tint); border-radius: 999px; padding: 0 6px; margin-left: 4px; }
 .pj-r-when { font-size: 11px; font-weight: 700; color: var(--muted); white-space: nowrap; }
 .pj-signin { margin-bottom: 10px; }
 .pj-signin-btn { display: inline-flex; align-items: center; gap: 8px; background: #24292f; color: #fff; }
@@ -49,9 +49,9 @@
 
 /* A goal's pull request. */
 .pr-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border: 2px solid var(--ink); border-radius: 999px; font-size: 12px; font-weight: 900; text-decoration: none; color: var(--ink); background: #fff; }
-.pr-chip.success { background: #c9f5e6; }
+.pr-chip.success { background: var(--good-tint); }
 .pr-chip.failure { background: #ffd6e0; }
-.pr-chip.pending { background: #fff3c4; }
+.pr-chip.pending { background: var(--warn-tint); }
 .pr-chip.merged { background: #e9ddff; }
 .pr-chip.closed { background: #eee; color: var(--muted); }
 .gd-pr { margin-top: 6px; }

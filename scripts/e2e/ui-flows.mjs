@@ -3,7 +3,8 @@
 // spoken stand-up with who does what, work done (the phone pings, Arnold offers a
 // review), office hours with real slides, the monitor (N, approve), reviews from the
 // phone, a task to everyone (someone offers), messaging, the CCTV wall and its chair,
-// sitting in your office, the end-of-day recap and Resume yesterday.
+// sitting in your office, the end-of-day recap and Resume yesterday — plus the dock
+// (More), quieter toasts, and 🔔 Needs you (the inbox, and the phone's same list).
 //
 //   npm run e2e:ui           (needs Chrome; set CHROME to its path if it's elsewhere)
 //
@@ -110,6 +111,25 @@ await ev(() => [...document.querySelectorAll("button")].find((b) => /Enter the o
 await sleep(2500);
 await closeAll();
 
+// --- 0a. The dock: a few clear buttons, the rest under More ---------------------------
+const dock = await ev(() => [...document.querySelectorAll(".dock > .btn, .dock-more-wrap > .btn")].map((b) => b.dataset.act));
+check("dock: a few clear buttons (Needs you … More)", dock?.length <= 6 && dock[0] === "inbox" && dock.at(-1) === "more" && ["goals", "monitor", "laptop", "phone"].every((a) => dock.includes(a)), JSON.stringify(dock));
+await ev(() => document.querySelector('.dock [data-act="more"]').click());
+await sleep(300);
+const more = await ev(() => !document.querySelector(".more-menu").classList.contains("hidden") && [...document.querySelectorAll(".more-menu .more-item")].map((b) => b.dataset.act));
+check("More: stand-up, focus, round up, office hours, travel, chat, Office, settings, controls", Array.isArray(more) && ["standup", "focus", "roundup", "hours", "travel", "chat", "office", "settings", "help"].every((a) => more.includes(a)), JSON.stringify(more));
+await shot("0a-more-menu.png");
+await key("Escape", "Escape", 27);
+await sleep(300);
+check("More: Esc puts it away (and doesn't open settings)", !!(await ev(() => document.querySelector(".more-menu").classList.contains("hidden") && !document.querySelector(".settings-modal"))));
+
+// --- 0b. Quieter toasts ------------------------------------------------------------------
+await ev(() => { for (let k = 0; k < 3; k++) window.domain.hud.toast("🧪 Same thing, said three times", "warn"); window.domain.hud.note("🧪 Routine news, quietly"); });
+await sleep(200);
+const toasts = await ev(() => ({ same: [...document.querySelectorAll("#toasts .toast")].filter((t) => /Same thing/.test(t.textContent)).map((t) => t.textContent), routine: [...document.querySelectorAll("#toasts .toast")].some((t) => /Routine news/.test(t.textContent)), recent: window.domain.hud.recent.some((r) => /Routine news/.test(r.text)) }));
+check("toasts: the same one three times is one toast ×3", toasts?.same.length === 1 && /×3/.test(toasts.same[0]), JSON.stringify(toasts?.same));
+check("toasts: routine news doesn't pop up — it's in Recent", toasts && !toasts.routine && toasts.recent);
+
 // --- 0. A team of three ---------------------------------------------------------------
 for (const [i, role] of [[0, "builder"], [1, "reviewer"]]) {
   await ev((a) => window.domain.openHire(window.domain.office().desks[a[0]].id), [i, role]);
@@ -154,6 +174,20 @@ check("work done: phone notification", !!ready && !/Need a decision: Need|“Fin
 check("work done: Arnold offers Review now", !!(await ev(() => [...document.querySelectorAll("button")].some((b) => /Review now/.test(b.textContent)))));
 check("work done: lined up outside your office", !!(await ev(() => window.domain.office().presentations.filter((p) => p.report).length >= 1)));
 await shot("2-ready-ping.png");
+
+// --- 2a. One place for what needs you: the inbox --------------------------------------------
+const badge = await until(() => Number(document.querySelector('.dock [data-act="inbox"] .dock-badge:not(.hidden)')?.textContent ?? 0), 8000, 500);
+check("Needs you: the dock counts it", badge >= 1, `${badge}`);
+await key("i");
+await sleep(500);
+const inboxRows = await ev(() => !document.querySelector(".inbox-pop").classList.contains("hidden") && [...document.querySelectorAll(".inbox-pop .ib-item")].map((li) => li.textContent.replace(/\s+/g, " ").trim()));
+check("Needs you (I): finished work, with Review now", Array.isArray(inboxRows) && inboxRows.some((r) => /finished|plan for|decision/.test(r) && /Review now/.test(r)), JSON.stringify(inboxRows).slice(0, 200));
+await shot("2a-inbox.png");
+const phoneSame = await ev(() => { window.domain.phone.open("alerts"); const n = document.querySelectorAll(".ph-inbox .ib-item").length; window.domain.phone.close(); return n; });
+check("phone Alerts: the same list", phoneSame >= 1 && Math.abs(phoneSame - inboxRows.length) <= 1, `${phoneSame} on the phone, ${inboxRows.length} in the inbox`);
+await key("i");
+await sleep(300);
+check("Needs you: I again puts it away", !!(await ev(() => document.querySelector(".inbox-pop").classList.contains("hidden"))));
 
 // --- 2b. Office hours: the deck is real slides --------------------------------------------
 await closeAll();
@@ -218,6 +252,8 @@ await ev(() => { document.querySelector(".tm-compose textarea").value = "Update 
 const offered = await until(() => document.querySelector('.tm-log [data-answer="take"]') && [...document.querySelectorAll(".tm-log .tm-m")].at(-1)?.textContent, 10000);
 check("laptop: someone offers to take it", !!offered, (offered ?? "").replace(/\s+/g, " ").slice(0, 100));
 await shot("5-offer.png");
+const inboxOffer = await ev(() => window.domain.inboxItems().find((x) => x.kind === "offer")?.actions.map((a) => a.id).join(","));
+check("Needs you: the offer is there too, with its buttons", inboxOffer === "take,next", inboxOffer ?? "");
 await ev(() => document.querySelector('.tm-log [data-answer="take"]').click());
 const took = await until(async () => {
   const t = window.domain.progress().goals.flatMap((g) => g.tasks).find((t) => /README/.test(t.title));
@@ -296,11 +332,13 @@ check("Resume yesterday: same plan, session on", !!resumed, resumed ?? "");
 
 // --- 10. Agent CLIs: versions and updates; restarting a worker -------------------------------------
 await closeAll();
-await ev(() => document.querySelector('.dock [data-act="office"]').click());
+await ev(() => document.querySelector('.dock [data-act="more"]').click());
+await sleep(300);
+await ev(() => document.querySelector('.more-menu [data-act="office"]').click());
 await sleep(600);
 await ev(() => [...document.querySelectorAll(".om-tile")].find((b) => /Agent CLIs/.test(b.textContent ?? ""))?.click());
 const cliRows = await until(() => document.querySelectorAll(".ac-list li").length, 5000, 250);
-check("Office → Agent CLIs lists every agent", cliRows === 4, `${cliRows} rows`);
+check("More → Office → Agent CLIs lists every agent", cliRows === 4, `${cliRows} rows`);
 const looked = await until(() => window.domain.agents()?.checkedAt > 0 && [...document.querySelectorAll(".ac-status")].map((e) => e.textContent).join(" | "), 60000);
 check("Agent CLIs: versions looked up", !!looked, looked ?? "");
 await shot("10-agent-clis.png");
