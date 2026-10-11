@@ -1,6 +1,6 @@
-import { readFileSync, statSync } from "node:fs";
-import { userInfo } from "node:os";
-import { basename, resolve } from "node:path";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir, userInfo } from "node:os";
+import { basename, join, resolve } from "node:path";
 import { MAX_ATTACH_BYTES } from "../shared/policy.js";
 import { createInterface } from "node:readline";
 import WebSocket from "ws";
@@ -13,6 +13,8 @@ import { ROLES, roleCharacter } from "../shared/roles.js";
 import { deckOf, parseSlide } from "../shared/slides.js";
 import type { StandupDraft } from "../shared/standupDraft.js";
 import type { RepoStatus } from "../shared/project.js";
+import { pickRepo, repoChoices, type RepoChoice } from "../shared/project.js";
+import { mcpTarget, SECRET_MASK, type McpSeen, type McpServer } from "../shared/mcp.js";
 import { ANY_LOCAL, accuracyLabel, basisLabel, estimateAccuracy, estimateLabel, estimateTask, tookLabel } from "../shared/estimate.js";
 
 /**
@@ -42,13 +44,17 @@ const HELP = `nou — your command line for the office
   nou back NAME "…"            send it back with what to change
   nou standup "…"              say what you want today: Claude plans it and picks who does what
   nou repo                     where each open repo stands: your branch, agents' branches, pull requests
-  nou repo add PATH            open another repo alongside the project (no restart)
+  nou repo find [TEXT]         repos on this computer (and on GitHub, when signed in) you could open, numbered
+  nou repo add NAME|N|PATH     open another repo alongside the project (no restart): one nou repo find
+                               found (by name or number — a GitHub one is cloned first), or any folder
   nou repo close REPO          close it (its branches are kept)
   nou repo hire REPO           new hires work there
   nou move NAME REPO           move an agent to another open repo
   nou pr [GOAL] [--per agent|goal] [--agent NAME]
                                ship a goal to GitHub as a pull request — one for the goal, or one
                                per agent from its own branch (default: the team policy); --agent: just theirs
+  nou mcp                      the office's MCP tools, and the ones your agent CLIs already load
+  nou mcp add NAME             give every new hire one your CLIs load (copied into the office's list)
   nou roles                    the ready-made agents
   nou hire ROLE [--desk N] [--repo REPO]
                                hire one (e.g. nou hire reviewer)
@@ -442,12 +448,63 @@ async function run(conn: Conn, cmd: string, words: string[], flags: Record<strin
 
     case "repo": {
       const sub = (words[0] ?? "").toLowerCase();
-      if (["add", "close", "hire"].includes(sub)) {
+      if (sub === "find") {
+        const text = words.slice(1).join(" ").trim();
+        // Look again each time you ask (the office remembers the last look for the window).
+        const found = await findChoices(conn, text, true);
+        if (!found) {
+          console.log(red("The office didn't answer."));
+          return 1;
+        }
+        saveFound(found.list);
+        console.log(foundText(found.list, found.msg, text));
+        return 0;
+      }
+      if (sub === "add") {
         const what = words.slice(1).join(" ").trim();
-        if (!what) return usage(`nou repo ${sub} ${sub === "add" ? "PATH" : "REPO"}`);
-        // A folder is named from where you are; the office knows open repos by name too.
-        const path = sub === "add" ? resolve(what) : what;
-        conn.send({ t: sub === "add" ? "repoAdd" : sub === "close" ? "repoClose" : "repoHire", path });
+        if (!what) return usage("nou repo add NAME|NUMBER|PATH");
+        let path: string | null = null;
+        if (looksLikePath(what)) path = resolve(what);
+        else {
+          // A number is from the last nou repo find; a name, from what's found now.
+          const list = (/^\d+$/.test(what) ? loadFound() : null) ?? (await findChoices(conn, ""))?.list ?? [];
+          const pick = pickRepo(list, what);
+          if (typeof pick === "string") {
+            console.error(red(pick));
+            return 1;
+          }
+          if (pick.kind === "local") path = pick.repo.path;
+          else {
+            console.log(`⬇ Cloning ${bold(pick.repo.fullName)} and opening it alongside…`);
+            conn.send({ t: "projectClone", url: pick.repo.cloneUrl || pick.repo.fullName, add: true });
+            const name = pick.repo.fullName.split("/")[1]?.toLowerCase() ?? "";
+            const got = await conn.next(
+              (m): m is Extract<ServerMessage, { t: "project" }> => m.t === "project" && (m.repos ?? []).some((r) => r.name.toLowerCase().startsWith(name)),
+              300_000,
+            );
+            if (!got) {
+              console.log(yellow("The clone didn't finish yet — see its Logs (Projects → Logs)."));
+              return 1;
+            }
+            console.log(openReposText(got));
+            return 0;
+          }
+        }
+        conn.send({ t: "repoAdd", path });
+        const got = await conn.next((m): m is Extract<ServerMessage, { t: "project" }> => m.t === "project", 15_000);
+        if (!got) {
+          console.log(yellow("The office didn't confirm — see its Logs (Projects → Logs)."));
+          return 1;
+        }
+        console.log(openReposText(got));
+        return 0;
+      }
+      if (["close", "hire"].includes(sub)) {
+        const what = words.slice(1).join(" ").trim();
+        if (!what) return usage(`nou repo ${sub} REPO`);
+        // The office knows open repos by name, folder, or the start of a name.
+        const path = what;
+        conn.send({ t: sub === "close" ? "repoClose" : "repoHire", path });
         const got = await conn.next((m): m is Extract<ServerMessage, { t: "project" }> => m.t === "project", 15_000);
         if (!got) {
           console.log(yellow("The office didn't confirm — see its Logs (Projects → Logs)."));
@@ -463,6 +520,33 @@ async function run(conn: Conn, cmd: string, words: string[], flags: Record<strin
         return 1;
       }
       console.log(repoText(got.status));
+      return 0;
+    }
+
+    case "mcp": {
+      const sub = (words[0] ?? "").toLowerCase();
+      conn.send({ t: "mcpScan" });
+      const seen = await conn.next((m): m is Extract<ServerMessage, { t: "mcpSeen" }> => m.t === "mcpSeen", 15_000);
+      if (sub === "add") {
+        const name = words.slice(1).join(" ").trim();
+        if (!name) return usage("nou mcp add NAME");
+        conn.send({ t: "mcpAdopt", name });
+        const want = name.replace(/^[a-z]+:/, "").toLowerCase();
+        const got = await conn.next(
+          (m): m is Extract<ServerMessage, { t: "progress" }> =>
+            m.t === "progress" && m.progress.mcp.some((s) => s.everyone && s.enabled && s.name.toLowerCase().startsWith(want)),
+          10_000,
+        );
+        const s = got?.progress.mcp.find((x) => x.everyone && x.name.toLowerCase().startsWith(want));
+        if (!s) {
+          console.error(red(`None of your agent CLIs loads an MCP server called “${name}” — nou mcp lists them.`));
+          return 1;
+        }
+        console.log(green(`🔌 ${s.name}: every new hire gets it now.`) + dim(" (checking it — nou mcp shows how it went)"));
+        return 0;
+      }
+      if (sub) return usage("nou mcp [add NAME]");
+      console.log(mcpText(conn.progress.mcp, seen?.seen ?? []));
       return 0;
     }
 
@@ -669,6 +753,91 @@ async function run(conn: Conn, cmd: string, words: string[], flags: Record<strin
   console.error(red(`Unknown command: ${cmd}`));
   console.log(HELP);
   return 1;
+}
+
+// --- finding repos and MCP tools ----------------------------------------------------------------
+
+/** Ask the office which repos you could open (matching `text`), as the numbered list nou shows. */
+async function findChoices(conn: Conn, text: string, fresh = false): Promise<{ list: RepoChoice[]; msg: Extract<ServerMessage, { t: "repoFound" }> } | null> {
+  conn.send({ t: "repoFind", text, ...(fresh ? { fresh: true } : {}) });
+  const msg = await conn.next((m): m is Extract<ServerMessage, { t: "repoFound" }> => m.t === "repoFound", 30_000);
+  return msg ? { list: repoChoices(msg.local, msg.github), msg } : null;
+}
+
+/** Where the last nou repo find's numbered list is kept (so nou repo add 2 means what you saw). */
+export function foundFile(): string {
+  return process.env.NOU_FOUND_FILE ?? join(tmpdir(), "nou-repo-find.json");
+}
+
+function saveFound(list: RepoChoice[]): void {
+  try {
+    writeFileSync(foundFile(), JSON.stringify({ at: Date.now(), list }));
+  } catch {
+    /* numbers just won't carry over */
+  }
+}
+
+/** The last list, when it's from the last hour. */
+export function loadFound(): RepoChoice[] | null {
+  try {
+    const raw = JSON.parse(readFileSync(foundFile(), "utf8")) as { at?: number; list?: RepoChoice[] };
+    return Array.isArray(raw.list) && Date.now() - (raw.at ?? 0) < 3_600_000 ? raw.list : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A path rather than a name: has a slash, starts with . or ~ or a drive, or is a folder here. */
+export function looksLikePath(s: string, cwd = process.cwd()): boolean {
+  if (/[\\/]/.test(s) || /^[.~]/.test(s) || /^[A-Za-z]:/.test(s)) return true;
+  try {
+    return existsSync(resolve(cwd, s)) && statSync(resolve(cwd, s)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/** nou repo find: the numbered list. */
+export function foundText(list: RepoChoice[], msg: Extract<ServerMessage, { t: "repoFound" }>, text = ""): string {
+  const out: string[] = [];
+  const local = list.filter((c) => c.kind === "local");
+  const gh = list.filter((c) => c.kind === "github");
+  const num = (c: RepoChoice) => pad(dim(`${list.indexOf(c) + 1}.`), 4 + (TTY ? 8 : 0));
+  out.push(bold(`💻 On this computer${text ? ` matching “${text}”` : ""}`) + dim(msg.truncated ? "  (stopped looking after a moment — there may be more)" : ""));
+  if (!local.length) out.push(dim("   none found (it looks in the project's folder, ~/projects, ~/code, ~/src, ~/dev, ~/Documents/GitHub, ~/source/repos, ~/repos)"));
+  for (const c of local) {
+    const r = (c as Extract<RepoChoice, { kind: "local" }>).repo;
+    out.push(`   ${num(c)}${pad(bold(r.name), 22 + (TTY ? 8 : 0))}${pad(r.branch ? `🌿 ${r.branch}` : "", 18)}${r.github ? cyan(r.github) + " " : ""}${dim(r.path)}`);
+  }
+  out.push("", bold("🐙 On GitHub"));
+  if (msg.github === null) out.push(dim(`   ${msg.githubError ?? "sign in with GitHub to see your repos (Projects → Sign in with GitHub)"}`));
+  else if (!gh.length) out.push(dim("   none (that aren't on this computer already)"));
+  for (const c of gh) {
+    const r = (c as Extract<RepoChoice, { kind: "github" }>).repo;
+    out.push(`   ${num(c)}${pad(bold(r.fullName), 30 + (TTY ? 8 : 0))}${r.private ? yellow("private ") : ""}${dim(r.description.slice(0, 60))}`);
+  }
+  if (list.length) out.push("", dim(`Open one alongside: nou repo add 1  (or its name${gh.length ? " — a GitHub one is cloned first" : ""})`));
+  return out.join("\n");
+}
+
+/** nou mcp: the office's servers, then the ones your CLIs load (secrets never shown). */
+export function mcpText(office: McpServer[], seen: McpSeen[]): string {
+  const out: string[] = [bold("🔌 The office's MCP tools")];
+  if (!office.length) out.push(dim("   none yet"));
+  for (const s of office) {
+    const who = !s.enabled ? dim("off") : s.everyone ? green("everyone") : yellow("picked characters");
+    const env = Object.keys(s.env).map((k) => `${k}=${SECRET_MASK}`).join(" ");
+    out.push(`   ${pad(bold(s.name), 18 + (TTY ? 8 : 0))}${pad(who, 18 + (TTY ? 9 : 0))}${dim(mcpTarget(s))}${env ? dim(`  ${env}`) : ""}${s.auth === "github" ? dim("  (your GitHub sign-in)") : ""}`);
+  }
+  const wide = new Set(office.filter((s) => s.enabled && s.everyone).map((s) => s.name.toLowerCase()));
+  out.push("", bold("🧰 Found in your agent CLIs"));
+  if (!seen.length) out.push(dim("   none in Claude Code, Codex, Gemini CLI or OpenCode settings"));
+  for (const s of seen) {
+    const env = (s.envKeys ?? []).map((k) => `${k}=${SECRET_MASK}`).join(" ");
+    const has = wide.has(s.name.toLowerCase());
+    out.push(`   ${pad(bold(s.name), 18 + (TTY ? 8 : 0))}${pad(AGENT_LABELS[s.agent], 13)}${has ? green("✓ everyone has it ") : dim(`nou mcp add ${s.name} `)}${dim(`${s.target}${env ? `  ${env}` : ""}  (${s.source})`)}`);
+  }
+  return out.join("\n");
 }
 
 /** The open repos, where new hires work, and who works where. */

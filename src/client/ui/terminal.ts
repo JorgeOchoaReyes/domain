@@ -2,7 +2,8 @@ import { copyAll, copyOnSelect } from "./termcopy.js";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
-import { AGENT_LABELS, type Worker, type WorkerStatus } from "../../shared/protocol.js";
+import { AGENT_LABELS, type ClientMessage, type Worker, type WorkerStatus } from "../../shared/protocol.js";
+import { openRepos, workerRepoHtml, wireWorkerRepo } from "./projects.js";
 import { SIGN_IN, type TroubleKind } from "../../shared/trouble.js";
 import { STATUS_BULB } from "../scene/characters.js";
 import { esc, openModal, type Modal } from "./modal.js";
@@ -24,6 +25,9 @@ export interface TerminalHandlers {
   onClose(): void;
   /** A one-click fix for a stuck worker. */
   onFix?(fix: Fix): void;
+  /** Moving the worker to another repo (workerRepo), and "＋ Add a repo…" from its repo dropdown. */
+  send?(m: ClientMessage): void;
+  addRepoThen?(then: (path: string) => void): void;
 }
 
 type Fix = "restart" | "update" | "signin";
@@ -112,7 +116,7 @@ export class TerminalOverlay {
       icon: "💻",
       className: "term",
       body: this.host,
-      footer: `<span class="pill status"></span><span class="grow">Esc closes · Ctrl+[ sends Esc to the agent</span><button class="btn small term-copy" title="Copy what's selected — or all of it">📋 Copy</button><button class="btn small term-big" title="Bigger / smaller">⤢ Enlarge</button><button class="btn small term-restart" title="Start its CLI again, back in its last conversation">🔄 Restart</button><button class="btn danger fire">👋 Send home</button>`,
+      footer: `<span class="pill status"></span><span class="term-repo"></span><span class="grow">Esc closes · Ctrl+[ sends Esc to the agent</span><button class="btn small term-copy" title="Copy what's selected — or all of it">📋 Copy</button><button class="btn small term-big" title="Bigger / smaller">⤢ Enlarge</button><button class="btn small term-restart" title="Start its CLI again, back in its last conversation">🔄 Restart</button><button class="btn danger fire">👋 Send home</button>`,
       onClose: () => {
         this.modal = null;
         this.deskId = null;
@@ -165,6 +169,15 @@ export class TerminalOverlay {
   /** Keep the window in step with its worker: the status, and what's wrong if it's stuck. */
   setWorker(w: Worker): void {
     this.setStatus(w.status);
+    // The repo it works in, to move it to another (or add one and move it there).
+    const slot = this.modal?.footer?.querySelector<HTMLElement>(".term-repo");
+    const repoKey = JSON.stringify([w.repo ?? "", openRepos().map((r) => r.path)]);
+    if (slot && this.deskId && this.handlers?.send && slot.dataset.key !== repoKey) {
+      slot.dataset.key = repoKey;
+      slot.innerHTML = workerRepoHtml(this.deskId, w.repo);
+      const send = this.handlers.send;
+      wireWorkerRepo(slot, send, (then) => this.handlers?.addRepoThen?.(then));
+    }
     const bar = this.bar;
     if (!bar) return;
     const t = w.trouble;

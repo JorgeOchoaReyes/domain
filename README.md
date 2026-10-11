@@ -164,13 +164,18 @@ nou watch Bolt                # one agent's terminal, live
 nou review / nou review Grace # what's waiting, or one whole deck
 nou approve Grace "Nice"      # or: nou back Grace "Cover the empty case too"
 nou repo                      # your branch vs GitHub, agents' branches, pull requests
-nou repo add ../api           # open another repo alongside (no restart); nou repo close api
+nou repo find                 # repos on this computer (and on GitHub, signed in) you could open, numbered
+nou repo find api             # …just the ones matching "api"
+nou repo add 2                # open number 2 alongside (no restart) — a GitHub one is cloned first
+nou repo add api              # or by name; or any folder: nou repo add ../api; nou repo close api
 nou hire builder --repo api   # hire into it (or: nou repo hire api, for every new hire)
 nou task "Add the endpoint" --to Bolt --repo api   # Bolt moves to api for this one
 nou move Bolt site            # or move an agent for good
 nou pr "Dark mode"            # ship a goal as a pull request (--per agent: one per agent;
                               #   --agent Bolt: just Bolt's branch)
 nou hire reviewer             # a ready-made agent at a free desk (nou roles lists them)
+nou mcp                       # the office's MCP tools, and the ones your agent CLIs already load
+nou mcp add context7          # give every new hire one your CLIs load (secrets stay on this computer)
 ```
 
 ### Test it end to end
@@ -762,16 +767,47 @@ before.
 
 ### Projects and GitHub
 
-Which project your workers are on, the ones you've opened before, and
-GitHub — without pasting tokens.
+Which repos your workers work in, adding more, and GitHub — without pasting
+tokens or typing paths. It's never more than a click away:
 
-- **Recent projects**: switch in a click (the app restarts on it).
-- **Open a folder**: the native folder picker, or paste a path.
-- **Start from GitHub**: **Sign in with GitHub** uses git's own sign-in (Git
+- **The project card** at the top left of the screen: the project and its
+  branch, **📦 N repos**, your GitHub account (or **Sign in to GitHub**) and
+  **＋ Add repo** — each opens this window.
+- **☰ More → 📦 Repos & GitHub** (and **🔌 MCP tools**), or More → 🏢 Office.
+- **The laptop's 📦 Repo app** (L, or 4): **＋ Add a repo**, **🔌 MCP tools**,
+  every open repo with who works there (and **Close**), and a GitHub part —
+  your sign-in, your repos with search, **Clone + add** in one click.
+
+**＋ Add a repo** (the big button at the top of the window) opens a chooser:
+
+- **On this computer**: the git repos it found, with search and one-click
+  **＋ Add** (or **Open** to switch the office to it). It looks — reading
+  `.git` only, no git commands — in the project's own folder and in
+  `~/projects`, `~/code`, `~/src`, `~/dev`, `~/Documents/GitHub`,
+  `~/source/repos` and `~/repos`, at most three folders deep and for at most
+  1.5 seconds, never into `node_modules`, hidden folders or build output, and
+  remembers what it found for two minutes. Repos already open and the office's
+  own worktrees (`.domain/worktrees`, `.claude/worktrees`) aren't listed. Set
+  `DOMAIN_REPO_ROOTS` (folders separated like `PATH`) to look elsewhere.
+- **From GitHub**: **Sign in with GitHub** uses git's own sign-in (Git
   Credential Manager opens the browser once; domain never stores your token),
-  then pick one of your repos or paste `owner/repo` / a URL. It's cloned into
-  `Documents/domain/projects/`, with the clone's progress shown live, and the
-  office opens on it.
+  then search your repos and **Clone + add** one — or paste `owner/repo` / a
+  URL. It's cloned into `Documents/domain/projects/` with its progress shown
+  live, and opened alongside.
+- **A folder path**: paste one, or the native folder picker in the desktop app.
+- **A new, empty repo**: name it; it runs `git init` in a folder next to the
+  project, with a README and a first commit, and opens it. *Also create it on
+  GitHub* (off unless you tick it) makes a private repo under your account and
+  pushes to it.
+
+Below it, **Open repos** lists each one with its agents, **Hire here** and
+**Close**. **Recent projects** switch the office in a click (the app restarts
+on it).
+
+Every repo dropdown — the hire card's **📦 Repo**, a character's repo in
+**Your team**, a worker's repo in its terminal and in the laptop's Workers
+app, the assignment card's **📂 Repo** — ends with **＋ Add a repo…**: the same
+chooser, and the new repo is picked once it opens.
 - **Ship as a pull request**: on a GitHub project, a finished goal's next step
   is **Open a pull request** — the work is pushed to `domain/<goal>` and a PR
   opens against the default branch, with the goal, its tasks and the session's
@@ -786,11 +822,11 @@ GitHub — without pasting tokens.
   and so is an agent whose PR is still open. Every PR's checks are followed
   and shown on the goal.
 - **GitHub issues → tasks**: import open issues into a goal from the Goals window.
-- **Several repos at once**: **Add** (next to Open, on a recent project, a
-  path, or a clone with *Open the clone alongside*) opens another repo
-  alongside the project — no restart. Each worker works in one repo: the one
-  it was hired into (**Hire here** picks where new hires go; the project
-  until you pick another) or moved to (each worker has a repo picker in the
+- **Several repos at once**: whatever you add opens alongside the project —
+  no restart. Each worker works in one repo: the one it was hired into (the
+  hire card's **📦 Repo**; else its character's own repo, if that's open; else
+  where **Hire here** says — the project until you pick another) or moved to
+  (a worker's repo picker — in its terminal, the laptop's Workers app, or the
   Projects window; it restarts there on a branch of its own). A task can name
   another repo in the assignment card (**📂 Repo**) or with
   `nou task … --repo NAME`: the worker moves there first. Each repo has its
@@ -857,9 +893,15 @@ session only — your agents' own settings are never changed:
 | Gemini CLI | `GEMINI_CLI_SYSTEM_SETTINGS_PATH` |
 | OpenCode | `OPENCODE_CONFIG` |
 
-The window also lists the servers your agents **already load** from their own
-configs, and a health check shows each one's tools, *needs sign-in*, or the
-error. Secret values (tokens, headers) never leave the server or show in logs.
+Open it from **☰ More → 🔌 MCP tools**, the laptop's 📦 Repo app, or More →
+🏢 Office. **Found in your CLIs** lists the servers Claude Code, Codex, Gemini
+CLI and OpenCode **already load** from their own configs; one the office
+doesn't give everyone yet has **＋ Add for everyone**, which copies it (command
+or URL, and its env or headers) into the office's list — `nou mcp add NAME`
+does the same. A health check shows each one's tools, *needs sign-in*, or the
+error. Secret values (tokens, env values, headers, and secret-looking
+arguments like `--api-key …`) never leave the server or show in logs: you see
+`NAME=••••••`.
 
 ![MCP tools](docs/screenshots/mcp.jpg)
 

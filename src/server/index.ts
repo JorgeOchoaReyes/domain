@@ -37,7 +37,7 @@ import { allowed } from "./permissions.js";
 import { MODULES } from "./modules.js";
 import { describeLaunch, mcpCleanup, mcpLaunch, scanAgents, serversFor, withGithubAuth } from "./mcp.js";
 import type { ClientRec, Route, ServerCtx } from "./ctx.js";
-import { personaBrief, type WorkerIdentity } from "../shared/team.js";
+import { hireRepoChoice, personaBrief, type WorkerIdentity } from "../shared/team.js";
 import { Office } from "./office.js";
 import { OpenRepos } from "./repos.js";
 import { isTrusted, trustProject } from "./prefs.js";
@@ -808,7 +808,10 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
         const identity: WorkerIdentity | null = character
           ? { characterId: character.id, name: character.name, look: character.look, voice: character.voice }
           : null;
-        if (office.hire(msg.deskId, agent, client.name, model, leash, policy.isolate, identity, repos.forHire(msg.repo))) {
+        // Its repo: the one picked on the hire card, else the character's own (when open), else where new hires work.
+        const where = hireRepoChoice(msg.repo, character, (q) => repos.find(q), repos.hireRepo);
+        if (office.hire(msg.deskId, agent, client.name, model, leash, policy.isolate, identity, where.repo)) {
+          if (where.note) broadcast({ t: "loop", goalId: "", event: "warn", text: where.note });
           warnIfTooBig(model);
           const autoless = autoModeWarning(agent, model, leash);
           if (autoless) broadcast({ t: "loop", goalId: "", event: "warn", text: autoless });

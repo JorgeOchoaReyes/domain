@@ -1,9 +1,9 @@
 import { AGENT_LABELS } from "../shared/protocol.js";
 import type { AgentPullRequest, PrPer, RepoStatus } from "../shared/project.js";
 import { execFile, spawn } from "node:child_process";
-import { existsSync, mkdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import type { WebSocket } from "ws";
 import type { Goal } from "../shared/progress.js";
 import type { GithubIssue, ProjectInfo, RepoWorker } from "../shared/project.js";
@@ -11,6 +11,8 @@ import { parseGithubRemote } from "../shared/project.js";
 import type { ClientRec, Routes, ServerCtx } from "./ctx.js";
 import { GitHub, SignInNeeded } from "./github.js";
 import { loadPrefs, prefsPath, rememberProject, samePath, savePrefs } from "./prefs.js";
+import { findRepos as scanForRepos, isOfficeWorktree, notOpen, readRepo, scanRoots } from "./repoScan.js";
+import { repoFolderName, repoMatches, type GithubRepo } from "../shared/project.js";
 
 /**
  * Projects and GitHub: which folder the office works in, the ones you've
@@ -33,6 +35,10 @@ export interface ProjectDeps {
   pickFolder?: () => Promise<string | null>;
   /** Poll open pull requests this often (ms); 0 = never. */
   pollMs?: number;
+  /** Where to look for repos on this computer (default: the usual code folders, see repoScan). */
+  scanRoots?: string[];
+  /** Where a new, empty repo goes (default: next to the project). */
+  newReposDir?: string;
 }
 
 export interface ProjectsApi {
@@ -333,6 +339,72 @@ export function createProjects(ctx: ServerCtx, deps: ProjectDeps = {}): Projects
     }
   }
 
+  // --- finding repos to open, and starting new ones -------------------------------------------
+  /** Your GitHub repos, briefly remembered (each look is a GitHub call). */
+  let ghRepos: { at: number; repos: GithubRepo[] } | null = null;
+
+  /** Repos you could open: on this computer (not open yet), and on GitHub when you're signed in. */
+  async function findRepos(text: string, fresh: boolean, ws: WebSocket): Promise<void> {
+    const open = ctx.repos?.all() ?? [ctx.cwd];
+    const scan = scanForRepos({ roots: deps.scanRoots ?? scanRoots(ctx.repos?.main ?? ctx.cwd), fresh });
+    const local = notOpen(scan.repos, open).filter((repo) => repoMatches({ kind: "local", repo }, text));
+    let gh: GithubRepo[] | null = null;
+    let githubError: string | undefined;
+    try {
+      // Only a sign-in git already holds: nothing pops up from here.
+      if (!github.account) await github.signIn(false);
+      if (github.account) {
+        if (fresh || !ghRepos || Date.now() - ghRepos.at > 60_000) ghRepos = { at: Date.now(), repos: await github.repos() };
+        const here = new Set(open.map((p) => readRepo(p)?.github?.toLowerCase()).filter(Boolean));
+        gh = ghRepos.repos.filter((repo) => !here.has(repo.fullName.toLowerCase()) && repoMatches({ kind: "github", repo }, text));
+      }
+    } catch (e) {
+      githubError = e instanceof Error ? e.message : String(e);
+    }
+    ctx.send(ws, { t: "repoFound", local, github: gh, ...(githubError ? { githubError } : {}), ...(scan.truncated ? { truncated: true } : {}) });
+  }
+
+  /** Where a new repo goes: next to the project (not among the office's worktrees). */
+  function newReposDir(): string {
+    if (deps.newReposDir) return deps.newReposDir;
+    const main = resolve(ctx.repos?.main ?? ctx.cwd);
+    const home = isOfficeWorktree(main) ? main.replace(/[\\/]\.(domain|claude)[\\/]worktrees([\\/].*)?$/i, "") : main;
+    return dirname(home);
+  }
+
+  /** A new, empty repo next to the project: git init, a first commit, opened alongside; on GitHub too only when asked. */
+  async function createRepo(name: string, onGithub: boolean, priv: boolean): Promise<void> {
+    const n = repoFolderName(name);
+    if (!n) return void fail("New repo", "Give it a name (letters, digits, dashes).");
+    if (!ctx.repos) return void fail("New repo", "This office works on one project at a time.");
+    const dir = join(newReposDir(), n);
+    if (existsSync(dir)) return void fail(`New repo ${n}`, `${dir} already exists — add it instead (＋ Add a repo → A folder).`);
+    try {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "README.md"), `# ${n}\n`);
+    } catch (e) {
+      return void fail(`New repo ${n}`, (e as Error).message);
+    }
+    const init = await gitLogged(ctx, dir, ["init", "-q"], `New repo ${n}`, "clone");
+    if (!init.ok) return;
+    await git(dir, ["symbolic-ref", "HEAD", "refs/heads/main"]);
+    await git(dir, ["add", "README.md"]);
+    // A first commit, so workers can branch from it (it needs your git name and email).
+    const first = await gitLogged(ctx, dir, ["commit", "-q", "-m", `Start ${n}`], `First commit in ${n}`, "clone");
+    if (onGithub) {
+      try {
+        const r = await github.createRepo(n, priv, "clone");
+        if (r.cloneUrl) {
+          await git(dir, ["remote", "add", "origin", r.cloneUrl]);
+          if (first.ok) await gitLogged(ctx, dir, ["push", "-u", "origin", "main"], `Pushing ${n} to GitHub`, "clone");
+        }
+      } catch (e) {
+        fail(`Create ${n} on GitHub`, e instanceof SignInNeeded ? "Sign in to GitHub first." : e instanceof Error ? e.message : String(e));
+      }
+    }
+    await addRepo(dir);
+  }
+
   async function signedInAccount(ws: WebSocket, interactive: boolean): Promise<boolean> {
     try {
       if (!owner) await info();
@@ -561,6 +633,10 @@ export function createProjects(ctx: ServerCtx, deps: ProjectDeps = {}): Projects
       void pickFolder().then((p) => {
         if (p) void addRepo(p);
       });
+    },
+    repoFind: (m, _c, ws) => void findRepos(typeof m.text === "string" ? m.text.slice(0, 200) : "", m.fresh === true, ws),
+    repoCreate: (m) => {
+      if (typeof m.name === "string") void createRepo(m.name, m.github === true, m.private === true);
     },
     repoClose: (m) => {
       if (typeof m.path === "string") closeRepo(m.path);

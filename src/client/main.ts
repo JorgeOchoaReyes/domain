@@ -63,7 +63,7 @@ import { askPasscode, guestBadge, guestRole, needsPasscode, openNearby, showDisc
 import { githubTools, ingestMcp, openMcp } from "./ui/mcp.js";
 import { ingestLogs, openLogs } from "./ui/logs.js";
 import { openOfficeMenu, type OfficeTile } from "./ui/officemenu.js";
-import { ingestProjects, openProjects, projectBadge, projectState } from "./ui/projects.js";
+import { addRepoThen, ingestProjects, openProjects, projectBadge, projectState, setProjectSender } from "./ui/projects.js";
 import { ingestGithub } from "./ui/github.js";
 import { agentsState, ingestAgents, installAgent, isInstalled, setAgentsSender } from "./ui/agents.js";
 import { openAgentClis } from "./ui/agentclis.js";
@@ -287,7 +287,7 @@ const shotMeter = new ShotMeter();
 hud.addMenuItem({ act: "office", icon: "🏢", label: "Office…", title: "Projects & GitHub, your team, voices, lessons, history, MCP tools, invite people, logs", run: () => openOfficeMenuNow() });
 /** The Office menu's tiles (features add theirs here). */
 const officeTiles: OfficeTile[] = [
-  { key: "projects", icon: "github", title: "Projects & GitHub", text: "Which project your workers are on — switch, or clone one from GitHub", run: () => openProjects(projectActions()) },
+  { key: "projects", icon: "github", title: "Projects & GitHub", text: "The repos your workers work in — add one from this computer or GitHub, or switch", run: () => openProjects(projectActions()) },
   { key: "team", icon: "👥", title: "Your team", text: "Characters with names, looks, voices and personas you hire again and again", run: () => openTeam(teamCtx()) },
   { key: "voices", icon: "🗣", title: "Voices", text: "Lifelike ElevenLabs voices for your workers, with your API key", run: () => openVoices((m) => net.send(m), !guestRole()) },
   { key: "lessons", icon: "📚", title: "Lessons", text: "What your team has learned from your feedback and each other — and the end-of-day sync", run: () => openLessons((m) => net.send(m), guestRole() !== "visitor") },
@@ -295,7 +295,7 @@ const officeTiles: OfficeTile[] = [
   { key: "chat", icon: "💬", title: "Team chat", text: "Message any worker, or everyone — see what each is doing and what it has done", run: () => openChat() },
   { key: "ideas", icon: "💡", title: "Idea board", text: "Sketch an idea and hand it to a worker, or make it a goal — also at the whiteboards", run: () => openIdeas(null) },
   { key: "clis", icon: "⬆", title: "Agent CLIs", text: "Which version of each coding agent you have — update, or stay on one that works", hostOnly: true, run: () => openAgentClis((m) => net.send(m), () => openLogs()) },
-  { key: "mcp", icon: "mcp", title: "MCP tools", text: "Tools your workers can use — add once, give to whoever needs them", hostOnly: true, run: () => openMcp({ progress: () => progress, send: (m) => net.send(m), isHost: () => !guestRole() }) },
+  { key: "mcp", icon: "mcp", title: "MCP tools", text: "Tools your workers can use — add once, give to whoever needs them", hostOnly: true, run: () => openMcpNow() },
   { key: "invite", icon: "📡", title: "Invite people", text: "Share your office with people on your Wi-Fi, with a passcode", hostOnly: true, run: () => openInviteNow() },
   { key: "nearby", icon: "📶", title: "Join a nearby office", text: "Offices shared on your network", hostOnly: true, run: () => openNearby({ send: (m) => net.send(m) }) },
   { key: "logs", icon: "log", title: "Logs", text: "Every git, GitHub, MCP, check and deploy step, with output", run: () => openLogs() },
@@ -304,6 +304,12 @@ function openOfficeMenuNow(): void {
   if (modalOpen()) return;
   openOfficeMenu(officeTiles, !!guestRole());
 }
+function openMcpNow(): void {
+  openMcp({ progress: () => progress, send: (m) => net.send(m), isHost: () => !guestRole() });
+}
+// Repos and MCP tools straight from More, too (not only inside the Office menu).
+hud.addMenuItem({ act: "repos", icon: "📦", label: "Repos & GitHub", title: "The repos your workers work in — add one from this computer, GitHub, a folder, or a new one", run: () => openProjects(projectActions()) });
+const mcpMenuItem = hud.addMenuItem({ act: "mcp", icon: "🔌", label: "MCP tools", title: "Tools your workers can use — and the ones your agent CLIs already have", run: () => openMcpNow() });
 const lanChipEl = document.createElement("div");
 lanChipEl.className = "lan-chip-slot";
 hudRoot.querySelector(".project")?.appendChild(lanChipEl);
@@ -379,6 +385,11 @@ laptop.hireAny = () => {
   if (d) hire(d);
   else hud.toast("🪑 Every desk's taken — let someone go first", "warn");
 };
+// The laptop's Repo app: ＋ Add a repo (the Projects window's chooser), and MCP tools.
+setProjectSender((m) => net.send(m));
+laptop.openProjects = (add) => openProjects(projectActions(), add ? { add } : {});
+laptop.openMcp = () => openMcpNow();
+laptop.addRepoThen = (then) => addRepoThen(projectActions(), then);
 const goals = new GoalsWindow({
   loop: loopHandlers,
   create: (title, why, tasks, kind, dueAt) => net.send({ t: "goalCreate", title, why, tasks, kind, dueAt: dueAt ?? null }),
@@ -461,7 +472,7 @@ net.onMessage = (msg) => {
   ingestGithub(msg);
   ingestPods(msg);
   ingestArcade(msg, world.gameRoom, (text, quiet) => hud.toast(text, quiet ? "note" : ""), myName);
-  if (msg.t === "project") showProject();
+  if (msg.t === "project" || msg.t === "githubAccount" || msg.t === "guest") showProject();
   if (msg.t === "guest") showGuestBadge();
   switch (msg.t) {
     case "loop":
@@ -789,6 +800,8 @@ function openTerminal(deskId: string): void {
     onClose: () => {
       terminalPending = null;
     },
+    send: (m) => net.send(m),
+    addRepoThen: (then) => addRepoThen(projectActions(), then),
     onFix: (fix) => {
       const w = deskById(deskId)?.worker;
       if (!w) return;
@@ -816,12 +829,13 @@ function hire(desk: Desk): void {
         pendingOpen = desk.id;
       },
       getAlumni: () => net.send({ t: "alumniGet" }),
-      onHire: (choice) => {
-        net.send(
-          typeof choice === "string"
-            ? { t: "hire", deskId: desk.id, agent: "claude", characterId: choice }
-            : { t: "hire", deskId: desk.id, agent: choice.agent as AgentKind, model: choice.model, leash: choice.leash },
-        );
+      onHire: (choice, repo) => {
+        net.send({
+          ...(typeof choice === "string"
+            ? { t: "hire" as const, deskId: desk.id, agent: "claude" as AgentKind, characterId: choice }
+            : { t: "hire" as const, deskId: desk.id, agent: choice.agent as AgentKind, model: choice.model, leash: choice.leash }),
+          ...(repo ? { repo } : {}),
+        });
         pendingOpen = desk.id;
       },
     },
@@ -838,6 +852,7 @@ function teamCtx(): TeamContext {
     onEditPolicy: () => openPolicyNow(),
     scanMcp: () => net.send({ t: "mcpScan" }),
     getSkills: () => net.send({ t: "skillsGet" }),
+    addRepoThen: (then) => addRepoThen(projectActions(), then),
   };
 }
 
@@ -862,10 +877,18 @@ function showProject(): void {
   if (!badge) {
     badge = document.createElement("div");
     badge.className = "project-badge-slot";
-    hudRoot.querySelector(".project")?.appendChild(badge);
-    badge.addEventListener("click", () => openProjects(projectActions()));
+    const panel = hudRoot.querySelector<HTMLElement>(".project");
+    panel?.appendChild(badge);
+    // The goal card sits just under the project card, however tall that gets.
+    if (panel) new ResizeObserver(() => document.documentElement.style.setProperty("--project-bottom", `${Math.round(panel.getBoundingClientRect().bottom)}px`)).observe(panel);
+    // The project, its repos, GitHub, ＋ Add repo: each opens the Projects & GitHub window (on its part).
+    badge.addEventListener("click", (e) => {
+      const what = (e.target as HTMLElement).closest<HTMLElement>("[data-pj]")?.dataset.pj ?? "open";
+      openProjects(projectActions(), what === "add" ? { add: "local" } : what === "github" ? { add: "github" } : {});
+    });
   }
   badge.innerHTML = projectBadge();
+  mcpMenuItem.hidden = !!guestRole();
 }
 
 /**
@@ -887,6 +910,7 @@ function openAssignFor(goalId: string, taskId: string, deskId?: string, backToGo
     deskId,
     busy,
     history: progress.estimates,
+    addRepoThen: (then) => addRepoThen(projectActions(), then),
     onAssign: (desk, brief) => {
       net.send({ t: "taskAssign", goalId, taskId, deskId: desk, brief });
       sound.click();

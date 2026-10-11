@@ -12,7 +12,7 @@ import type { ChatPeek, ChatThread, ChatWork } from "./chat.js";
 import type { HistoryEvent } from "./history.js";
 import type { GoalKind, ProgressState, SessionSummary, ToneId } from "./progress.js";
 import type { Leash, TaskBrief, TeamPolicy } from "./policy.js";
-import type { GithubAccount, GithubIssue, GithubRepo, OpLog, PrPer, ProjectInfo, PullRequestInfo, RecentProject, RepoStatus, RepoWorker } from "./project.js";
+import type { FoundRepo, GithubAccount, GithubIssue, GithubRepo, OpLog, PrPer, ProjectInfo, PullRequestInfo, RecentProject, RepoStatus, RepoWorker } from "./project.js";
 import type { Character, WorkerIdentity } from "./team.js";
 import type { McpHealth, McpSeen, McpServer } from "./mcp.js";
 import type { BorrowEvent, PodsState } from "./pods.js";
@@ -412,6 +412,10 @@ export type ClientMessage =
   /** Sign in to GitHub through git's own credential manager (opens the browser once). */
   | { t: "githubSignIn" }
   | { t: "githubRepos" }
+  /** Repos found on this computer (and on GitHub when signed in) that aren't open yet, matching `text`. Answered with "repoFound". */
+  | { t: "repoFind"; text?: string; fresh?: boolean }
+  /** A new, empty repo: `git init` in a folder next to the project, opened alongside it; on GitHub too only when `github` is set. */
+  | { t: "repoCreate"; name: string; github?: boolean; private?: boolean }
   | { t: "githubIssues" }
   /** Turn GitHub issues into tasks (on a goal, or a new goal when null). */
   | { t: "issuesImport"; goalId: string | null; numbers: number[] }
@@ -433,6 +437,8 @@ export type ClientMessage =
   | { t: "mcpScan" }
   /** Health-check one server (by key) or all of them. */
   | { t: "mcpCheck"; key?: string }
+  /** Copy a server an agent CLI already loads (by name, or one agent's) into the office's list, for everyone. */
+  | { t: "mcpAdopt"; name: string; agent?: AgentKind }
   // --- local multiplayer -----------------------------------------------------------
   /** Open the office to your local network with a passcode. */
   | { t: "lanStart"; role: GuestRole }
@@ -538,6 +544,8 @@ export type ServerMessage =
   | { t: "projectSwitching"; path: string; name: string }
   | { t: "githubAccount"; account: GithubAccount | null; error?: string }
   | { t: "githubRepos"; repos: GithubRepo[]; error?: string }
+  /** Repos you could open: on this computer (not open yet), and on GitHub (null when not signed in). */
+  | { t: "repoFound"; local: FoundRepo[]; github: GithubRepo[] | null; githubError?: string; truncated?: boolean }
   | { t: "githubIssues"; issues: GithubIssue[]; error?: string }
   /** A goal's pull request was opened or its state changed. */
   | { t: "pr"; goalId: string; pr: PullRequestInfo; deskId?: string }

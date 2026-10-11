@@ -17,6 +17,7 @@ import { workerName } from "./team.js";
 import { ingestLoop, loopState, onLoop, renderLoop, type LoopHandlers } from "./loop.js";
 import { openDeck, paintDeckSlide } from "./deck.js";
 import { MonitorView, type MonitorActions } from "./monitor.js";
+import { bindGithub, githubAccountHtml, githubListHtml, onProjectsChange, openRepos, projectState, requestGithubRepos, workerRepoHtml, wireWorkerRepo, type AddTab } from "./projects.js";
 import "../styles/loop.css";
 import { MineApp } from "./mine.js";
 import { guestRole } from "./join.js";
@@ -102,6 +103,11 @@ export class MyLaptop {
 
   /** ＋ Hire a worker: the hire card for the next free desk, without walking to one (set by main). */
   hireAny: (() => void) | null = null;
+  /** The Projects & GitHub window (on its add-a-repo part), the MCP window, and "＋ Add a repo…" from a dropdown (set by main). */
+  openProjects: ((add?: AddTab) => void) | null = null;
+  openMcp: (() => void) | null = null;
+  addRepoThen: ((then: (path: string) => void) => void) | null = null;
+  private ghFilter = "";
 
   constructor(
     private actions: LaptopActions,
@@ -111,6 +117,14 @@ export class MyLaptop {
     this.dHost.className = "lt-term";
     this.resizer.observe(this.termHost);
     this.resizer.observe(this.dHost);
+    // Repos opened or closed, the GitHub sign-in or its repos: the Repo app's top and GitHub parts, and the Workers header.
+    onProjectsChange(() => {
+      if (!this.isOpen) return;
+      if (this.app === "repo") {
+        this.renderRepoTop();
+        this.renderRepoGithub();
+      } else if (this.app === "workers") this.renderWorkerList();
+    });
     onLoop((msg) => {
       if (msg.t === "deployOutput") {
         if (this.dterm && this.dShownGoal === msg.goalId) this.dterm.write(msg.data);
@@ -269,14 +283,13 @@ export class MyLaptop {
   private renderRepo(): void {
     if (this.app !== "repo") return;
     const s = this.repo;
-    if (!s) {
-      this.content.innerHTML = `<p class="lt-note">Looking at the repo…</p>`;
-      return;
-    }
-    if (!s.isGit && !s.others?.length) {
-      this.content.innerHTML = `<div class="rp"><p class="lt-note">This project isn't a git repo yet — open one (File → Open project folder) or clone one from GitHub in Projects.</p></div>`;
-      return;
-    }
+    const shell = (inner: string) => {
+      this.content.innerHTML = `<div class="rp"><div class="rp-top"></div><section class="rp-card rp-gh"></section>${inner}</div>`;
+      this.renderRepoTop();
+      this.renderRepoGithub();
+    };
+    if (!s) return shell(`<p class="lt-note">Looking at the repo…</p>`);
+    if (!s.isGit && !s.others?.length) return shell(`<p class="lt-note">This project isn't a git repo yet — ＋ Add a repo, or clone one from GitHub below.</p>`);
     const commit = (c: RepoStatus["last"]) => (c ? `<code>${esc(c.sha)}</code> ${esc(c.subject)} <span class="rp-when">${esc(c.when)}</span>` : `<span class="rp-when">no commits</span>`);
     const sync =
       s.ahead === null
@@ -317,11 +330,71 @@ export class MyLaptop {
               : `<p class="lt-note">None open.</p>`
         }
       </section>`;
-    this.content.innerHTML = `<div class="rp">
-      ${[s, ...(s.others ?? [])].map(cards).join("")}
-      <p class="lt-note">Updated ${esc(new Date(s.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" }))} · <button class="btn small rp-refresh">↻ Refresh</button></p>
-    </div>`;
+    // Keep the GitHub search box (and its focus) across the status refreshes.
+    const typing = document.activeElement?.classList.contains("rp-gh-q") ?? false;
+    shell(`${[s, ...(s.others ?? [])].map(cards).join("")}
+      <p class="lt-note">Updated ${esc(new Date(s.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" }))} · <button class="btn small rp-refresh">↻ Refresh</button></p>`);
     this.content.querySelector(".rp-refresh")?.addEventListener("click", () => this.actions.send({ t: "repoStatus" }));
+    if (typing) this.content.querySelector<HTMLInputElement>(".rp-gh-q")?.focus();
+  }
+
+  /** The Repo app's top: ＋ Add a repo, MCP tools, and every open repo with who works there (and close). */
+  private renderRepoTop(): void {
+    const el = this.content.querySelector<HTMLElement>(".rp-top");
+    if (!el) return;
+    const all = openRepos();
+    const host = !projectState.guest;
+    const desks = this.office.desks.filter((d) => d.worker);
+    const main = all[0]?.path ?? "";
+    const same = (a: string, b: string) => a.replace(/[\\/]+$/, "").toLowerCase() === b.replace(/[\\/]+$/, "").toLowerCase();
+    el.innerHTML = `<div class="rp-bar">
+        <h3>📦 ${all.length} open repo${all.length === 1 ? "" : "s"}</h3><span class="grow"></span>
+        ${host ? `<button class="btn primary rp-add">＋ Add a repo</button><button class="btn rp-mcp" title="The tools your workers can use — and the ones your agent CLIs already have">🔌 MCP tools</button>` : ""}
+      </div>
+      <ul class="rp-open">${all
+        .map((r, n) => {
+          const who = desks.filter((d) => same(d.worker!.repo ?? main, r.path)).map((d) => workerName(d.worker!));
+          return `<li><span class="rp-o-main"><b>${r.github ? "🐙" : "📂"} ${esc(r.name)}</b>${n === 0 ? ` <span class="rp-pill">project</span>` : ""} <code>${esc(r.path)}</code>
+            <small>${r.branch ? `🌿 ${esc(r.branch)} · ` : ""}${who.length ? `👥 ${esc(who.join(", "))}` : "nobody works here yet"}</small></span>
+            ${n && host ? `<button class="btn small rp-close" data-path="${esc(r.path)}" title="Close it (its worktrees and branches are kept)">Close</button>` : ""}</li>`;
+        })
+        .join("")}</ul>`;
+    el.querySelector(".rp-add")?.addEventListener("click", () => this.openProjects?.("local"));
+    el.querySelector(".rp-mcp")?.addEventListener("click", () => this.openMcp?.());
+    el.querySelectorAll<HTMLButtonElement>(".rp-close").forEach((b) => b.addEventListener("click", () => this.actions.send({ t: "repoClose", path: b.dataset.path! })));
+  }
+
+  /** The Repo app's GitHub part: your sign-in, your repos with search, clone + add in one click. */
+  private renderRepoGithub(): void {
+    const el = this.content.querySelector<HTMLElement>(".rp-gh");
+    if (!el) return;
+    if (projectState.guest) {
+      el.remove();
+      return;
+    }
+    if (projectState.account && !projectState.repos.length && !projectState.reposLoading && !projectState.reposError) requestGithubRepos();
+    const had = el.querySelector<HTMLInputElement>(".rp-gh-q");
+    const focused = had && document.activeElement === had;
+    el.innerHTML = `<h3>🐙 GitHub</h3>${githubAccountHtml()}${
+      projectState.account
+        ? `<input type="text" class="rp-gh-q" placeholder="Search your repositories…" value="${esc(this.ghFilter)}" /><div class="rp-gh-list">${githubListHtml(this.ghFilter)}</div>`
+        : ""
+    }`;
+    const q = el.querySelector<HTMLInputElement>(".rp-gh-q");
+    q?.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape") e.stopPropagation();
+    });
+    q?.addEventListener("input", () => {
+      this.ghFilter = q.value;
+      const list = el.querySelector<HTMLElement>(".rp-gh-list")!;
+      list.innerHTML = githubListHtml(this.ghFilter);
+      bindGithub(list, () => this.renderRepoGithub());
+    });
+    if (focused && q) {
+      q.focus();
+      q.setSelectionRange(q.value.length, q.value.length);
+    }
+    bindGithub(el, () => this.renderRepoGithub());
   }
 
   // --- team: message anyone, hand out work, ask for updates -------------------------
@@ -610,7 +683,7 @@ export class MyLaptop {
     const list = this.content.querySelector<HTMLElement>(".wk-list");
     if (!list) return;
     const staffed = this.office.desks.filter((d) => d.worker);
-    const key = JSON.stringify([this.watching, staffed.map((d) => [d.id, d.worker!.status, d.worker!.activity])]);
+    const key = JSON.stringify([this.watching, openRepos().map((r) => r.path), staffed.map((d) => [d.id, d.worker!.status, d.worker!.activity, d.worker!.repo])]);
     if (key === this.renderKey) return;
     this.renderKey = key;
     list.innerHTML = staffed.length
@@ -628,8 +701,9 @@ export class MyLaptop {
     this.wireHire(list);
     const head = this.content.querySelector<HTMLElement>(".wk-head");
     const d = staffed.find((x) => x.id === this.watching);
-    if (head) head.innerHTML = d ? `<b>${esc(workerName(d.worker!))}</b> · ${esc(d.label)} · hired by ${esc(d.worker!.hiredBy)} <span class="grow"></span><span class="lt-note">Type to talk to it · select to copy · Ctrl+[ sends Esc</span><button class="btn small wk-copy">📋 Copy all</button>` : "";
+    if (head) head.innerHTML = d ? `<b>${esc(workerName(d.worker!))}</b> · ${esc(d.label)} · hired by ${esc(d.worker!.hiredBy)} ${workerRepoHtml(d.id, d.worker!.repo)} <span class="grow"></span><span class="lt-note">Type to talk to it · select to copy · Ctrl+[ sends Esc</span><button class="btn small wk-copy">📋 Copy all</button>` : "";
     head?.querySelector(".wk-copy")?.addEventListener("click", () => this.term && copyAll(this.term));
+    if (head) wireWorkerRepo(head, (m) => this.actions.send(m), (then) => this.addRepoThen?.(then));
   }
 
   private wireHire(el: HTMLElement): void {

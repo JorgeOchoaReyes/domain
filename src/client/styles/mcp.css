@@ -23,6 +23,8 @@
 .mcp-toggle { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 800; white-space: nowrap; cursor: pointer; }
 .mcp-toggle input { accent-color: var(--accent); }
 .mcp-empty { margin: 0; font-size: 13px; font-weight: 700; color: var(--muted); padding: 8px 10px; border: 2px dashed #d9d2c5; border-radius: 12px; }
+.mcp-found-note { margin: 0 0 8px; font-size: 13px; font-weight: 700; padding: 6px 10px; border-radius: 10px; background: var(--warn-tint, #fff3d6); }
+.mcp-adopt { white-space: nowrap; }
 .mcp-presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; }
 .mcp-preset { font: inherit; color: var(--ink); text-align: left; display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border: 3px solid var(--ink); border-radius: 12px; background: #fff; box-shadow: 0 3px 0 var(--ink); cursor: pointer; }
 .mcp-preset span { font-size: 11px; font-weight: 700; color: var(--muted); }

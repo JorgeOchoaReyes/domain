@@ -73,3 +73,29 @@
 .pj-movers { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 8px; }
 .pj-mover { display: flex; gap: 6px; align-items: center; font-size: 12px; font-weight: 700; }
 .pj-mover select { font: inherit; border: 2px solid var(--ink); border-radius: 8px; padding: 1px 4px; background: #fff; }
+
+/* ＋ Add a repo: one big button, and its chooser. */
+.pa-add-btn { align-self: center; font-size: 16px; padding: 10px 18px; white-space: nowrap; }
+.pa-add-btn.on { box-shadow: 0 2px 0 var(--ink); transform: translateY(2px); }
+.pa-chooser { border: 3px solid var(--ink); border-radius: 16px; background: #fff; padding: 12px 14px; }
+.pa-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.pa-tab { font: inherit; font-size: 13px; font-weight: 900; padding: 6px 12px; border: 2px solid var(--ink); border-radius: 999px; background: var(--paper-2); color: var(--ink); cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.pa-tab.on { background: var(--ink); color: #fff; }
+.pa-n { font-size: 11px; background: var(--accent, #ff8a5b); color: #fff; border-radius: 999px; padding: 0 6px; }
+.pa-part { display: flex; flex-direction: column; gap: 8px; }
+.pa-part .pj-repo-list { max-height: 300px; margin-top: 0; }
+.pj-row-in { display: flex; gap: 8px; align-items: center; }
+.pj-row-in input[type=text] { flex: 1; min-width: 0; }
+.pa-search { width: 100%; }
+
+/* The HUD's project card: the project, how many repos, GitHub, and ＋ Add repo — all one click. */
+.pj-hud { display: flex; flex-direction: column; gap: 4px; margin-top: 2px; }
+.pj-hud button { font: inherit; cursor: pointer; color: var(--ink); }
+.pj-hud-main { display: inline-flex; align-items: center; gap: 5px; border: 0; background: none; padding: 0; font-size: 12px; font-weight: 800; white-space: nowrap; }
+.pj-hud-main:hover b { text-decoration: underline; }
+.pj-hud-chips { display: flex; gap: 5px; flex-wrap: wrap; }
+.pj-hud-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 900; padding: 2px 9px; border: 2px solid var(--ink); border-radius: 999px; background: #fff; white-space: nowrap; }
+.pj-hud-chip:hover { transform: translateY(-1px); }
+.pj-hud-chip.gh { background: #24292f; color: #fff !important; }
+.pj-hud-chip.gh.on { background: #fff; color: var(--ink) !important; }
+.pj-hud-chip.add { background: var(--good-tint, #d8f5dd); }

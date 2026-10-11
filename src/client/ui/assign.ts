@@ -44,6 +44,8 @@ export interface AssignOptions {
   history?: EstimateSample[];
   onAssign(deskId: string, brief: TaskBrief): void;
   onEditPolicy(): void;
+  /** "＋ Add a repo": the Add-a-repo chooser, then `then` with the new repo's folder. */
+  addRepoThen?(then: (path: string) => void): void;
 }
 
 export function openAssignCard(o: AssignOptions): void {
@@ -187,9 +189,17 @@ export function openAssignCard(o: AssignOptions): void {
     el.innerHTML = [
       `<button data-repo="" class="${repo ? "" : "on"}">Its own · ${esc(own.name)}</button>`,
       ...repos.filter((r) => r !== own).map((r) => `<button data-repo="${esc(r.path)}" class="${repo && samePath(repo, r.path) ? "on" : ""}">${esc(r.name)}</button>`),
+      ...(o.addRepoThen ? [`<button data-repo="+add" class="as-add-repo" title="Open another repo — from this computer, GitHub, a folder, or a new one">＋ Add a repo</button>`] : []),
     ].join("");
     el.querySelectorAll<HTMLButtonElement>("button").forEach((b) =>
       b.addEventListener("click", () => {
+        if (b.dataset.repo === "+add") {
+          // Add one, then back to this card with it picked.
+          const brief: TaskBrief = { model, minutes, onTimeUp, planFirst, done: [...done], ...(auditor ? { auditor, rounds, auditWhen } : {}) };
+          modal.close();
+          o.addRepoThen!((path) => openAssignCard({ ...o, deskId, task: { ...o.task, brief: { ...brief, repo: path } } }));
+          return;
+        }
         repo = b.dataset.repo ?? "";
         renderRepos();
       }),

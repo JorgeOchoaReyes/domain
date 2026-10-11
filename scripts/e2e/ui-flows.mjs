@@ -48,11 +48,19 @@ if (process.env.E2E_VOICE) {
     execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", ps], { stdio: "ignore" });
   }
 }
+// A repo elsewhere on "this computer" for ＋ Add a repo → On this computer to find (the scan looks only here).
+const CODE = join(ROOT, "code");
+const SIDE = join(CODE, "side-app");
+mkdirSync(SIDE, { recursive: true });
+execFileSync("git", ["init", "-q", "-b", "main"], { cwd: SIDE });
+execFileSync("git", ["remote", "add", "origin", "https://github.com/acme/side-app.git"], { cwd: SIDE });
+writeFileSync(join(SIDE, "README.md"), "side");
+execFileSync("git", ["-c", "user.email=a@b", "-c", "user.name=a", "commit", "-qam", "init", "--allow-empty"], { cwd: SIDE });
 const SERVER_PORT = await freePort();
 const PAGE_PORT = await freePort();
 const CDP_PORT = await freePort();
 const shell = process.platform === "win32";
-const server = spawn("npx", ["tsx", "src/server/index.ts"], { shell, stdio: "ignore", env: { ...process.env, DOMAIN_SIMULATE: "1", PORT: String(SERVER_PORT), DOMAIN_CWD: PROJECT, DOMAIN_PREFS: join(ROOT, "prefs.json"), DOMAIN_ADDRESS: join(ROOT, "office.json") } });
+const server = spawn("npx", ["tsx", "src/server/index.ts"], { shell, stdio: "ignore", env: { ...process.env, DOMAIN_SIMULATE: "1", PORT: String(SERVER_PORT), DOMAIN_CWD: PROJECT, DOMAIN_REPO_ROOTS: CODE, GIT_AUTHOR_NAME: "e2e", GIT_AUTHOR_EMAIL: "e2e@example.com", GIT_COMMITTER_NAME: "e2e", GIT_COMMITTER_EMAIL: "e2e@example.com", DOMAIN_PREFS: join(ROOT, "prefs.json"), DOMAIN_ADDRESS: join(ROOT, "office.json") } });
 const page = spawn("npx", ["vite", "--port", String(PAGE_PORT), "--strictPort"], { shell, stdio: "ignore", env: { ...process.env, VITE_SERVER_PORT: String(SERVER_PORT) } });
 const killTree = (p) => {
   try {
@@ -63,9 +71,14 @@ const killTree = (p) => {
 let chrome = null;
 // Everything it started goes when it ends — passing, failing or interrupted (the server takes its shells with it).
 process.on("exit", () => [server, page, chrome].filter(Boolean).forEach(killTree));
-for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => process.exit(130));
+for (const sig of ["SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"]) process.on(sig, () => process.exit(130));
 process.on("uncaughtException", (e) => { console.error(e); process.exit(1); });
 process.on("unhandledRejection", (e) => { console.error(e); process.exit(1); });
+// A run that hangs ends itself (and its processes) rather than playing on.
+setTimeout(() => {
+  console.error("e2e: gave up after 20 minutes");
+  process.exit(1);
+}, 20 * 60_000).unref();
 for (let i = 0; i < 60; i++) {
   try {
     await fetch(`http://localhost:${PAGE_PORT}/`);
@@ -144,6 +157,60 @@ await shot("0a-more-menu.png");
 await key("Escape", "Escape", 27);
 await sleep(300);
 check("More: Esc puts it away (and doesn't open settings)", !!(await ev(() => document.querySelector(".more-menu").classList.contains("hidden") && !document.querySelector(".settings-modal"))));
+check("More: 📦 Repos & GitHub and 🔌 MCP tools, one click away", Array.isArray(more) && more.includes("repos") && more.includes("mcp"), JSON.stringify(more));
+
+// --- 0r. Repos and GitHub, in plain sight --------------------------------------------------
+const card = await until(() => document.querySelector(".pj-hud") && [...document.querySelectorAll(".pj-hud button")].map((b) => b.textContent.trim().replace(/\s+/g, " ")), 10000, 500);
+check("HUD project card: the repo count, GitHub, and ＋ Add repo", Array.isArray(card) && card.some((t) => /^📦 1 repo$/.test(t)) && card.some((t) => /Sign in to GitHub|@/.test(t)) && card.some((t) => /＋ Add repo/.test(t)), JSON.stringify(card));
+await ev(() => document.querySelector(".pj-hud-main").click());
+await until(() => document.querySelector(".projects-modal .pa-add-btn"), 8000, 250);
+await shot("0r1-projects-before.png");
+check("Projects: one big ＋ Add a repo button", !!(await ev(() => /＋ Add a repo/.test(document.querySelector(".projects-modal .pa-add-btn")?.textContent ?? ""))));
+await ev(() => document.querySelector(".projects-modal .pa-add-btn").click());
+const addTabs = await until(() => { const t = [...document.querySelectorAll(".pa-tab")].map((b) => b.dataset.tab); return t.length ? t : null; }, 5000, 250);
+check("＋ Add a repo: on this computer, from GitHub, a folder path, a new repo", JSON.stringify(addTabs) === JSON.stringify(["local", "github", "folder", "new"]), JSON.stringify(addTabs));
+const foundSide = await until(() => [...document.querySelectorAll(".pa-found li")].some((li) => /side-app/.test(li.textContent)) && [...document.querySelectorAll(".pa-found li")].map((li) => li.querySelector("b")?.textContent), 10000, 250);
+check("＋ Add a repo → On this computer finds the repo (and not the project)", Array.isArray(foundSide) && foundSide.length === 1, JSON.stringify(foundSide));
+await shot("0r2-add-chooser.png");
+await ev(() => [...document.querySelectorAll(".pa-found li")].find((li) => /side-app/.test(li.textContent)).querySelector(".pj-add").click());
+const opened = await until(() => { const l = [...document.querySelectorAll(".pj-open-repos li b")].map((b) => b.textContent); return l.length === 2 ? l : null; }, 10000, 250);
+check("one click Add: it's open alongside the project", !!opened && opened.some((t) => /side-app/.test(t)), JSON.stringify(opened));
+await ev(() => document.querySelector('.pa-tab[data-tab="new"]').click());
+await sleep(200);
+const ghOff = await ev(() => document.querySelector(".pa-new-gh") && !document.querySelector(".pa-new-gh").checked);
+check("a new repo: \"also on GitHub\" is off unless you tick it", !!ghOff);
+await ev(() => { const i = document.querySelector(".pa-new-name"); i.value = "e2e-fresh"; document.querySelector(".pa-create").click(); });
+const made = await until(() => { const l = [...document.querySelectorAll(".pj-open-repos li b")].map((b) => b.textContent); return l.length === 3 ? l : null; }, 15000, 250);
+check("a new, empty repo: git init next to the project, opened alongside", !!made && made.some((t) => /e2e-fresh/.test(t)), JSON.stringify(made));
+await ev(() => document.querySelector('.pa-tab[data-tab="local"]').click());
+await sleep(300);
+await shot("0r3-projects-after.png");
+const chips = await ev(() => [...document.querySelectorAll(".pj-hud-chip")].map((b) => b.textContent.trim()));
+check("HUD project card counts them", Array.isArray(chips) && chips.includes("📦 3 repos"), JSON.stringify(chips));
+await closeAll();
+await ev(() => window.domain.laptop.open("repo"));
+const lt = await until(() => document.querySelector(".rp-top .rp-add") && { add: document.querySelector(".rp-add").textContent.trim(), mcp: !!document.querySelector(".rp-mcp"), open: document.querySelectorAll(".rp-open li").length, gh: !!document.querySelector(".rp-gh") }, 8000, 250);
+check("laptop Repo app: ＋ Add a repo, 🔌 MCP tools, the open repos, GitHub", lt?.add === "＋ Add a repo" && lt.mcp && lt.open === 3 && lt.gh, JSON.stringify(lt));
+await sleep(1200);
+await shot("0r4-laptop-repo.png");
+await closeAll();
+await ev(() => document.querySelector('.dock [data-act="more"]').click());
+await sleep(300);
+await ev(() => document.querySelector('.more-menu [data-act="mcp"]').click());
+const mcpHead = await until(() => document.querySelector(".mcp-sec.theirs h4")?.textContent, 8000, 250);
+check("More → 🔌 MCP tools: Found in your CLIs", /Found in your CLIs/.test(mcpHead ?? ""), mcpHead ?? "");
+await sleep(800);
+await shot("0r5-mcp.png");
+await closeAll();
+await ev(() => window.domain.openHire(window.domain.office().desks.find((d) => !d.worker).id));
+const hireRepo = await until(() => { const s = document.querySelector(".tm-repo-in"); return s && [...s.options].map((o) => o.textContent); }, 6000, 250);
+check("hire card: a 📦 Repo choice, ending with ＋ Add a repo…", Array.isArray(hireRepo) && hireRepo.length === 5 && /Where new hires work/.test(hireRepo[0]) && hireRepo.at(-1) === "＋ Add a repo…", JSON.stringify(hireRepo));
+await shot("0r6-hire-repo.png");
+await closeAll();
+// Back to just the project for the rest of the run.
+await ev(() => window.domain.net.send({ t: "repoClose", path: "side-app" }));
+await ev(() => window.domain.net.send({ t: "repoClose", path: "e2e-fresh" }));
+await sleep(800);
 
 // --- 0a'. Settings → Voice: how the 🎤 hears you, and the voice model ---------------------
 await ev(() => document.querySelector('.dock [data-act="more"]').click());

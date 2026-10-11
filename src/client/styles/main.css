@@ -555,7 +555,7 @@ body.fp:has(.backdrop) .crosshair { display: none; }
   .dock-btn .lbl { display: none; }
   .project-meta { max-width: 120px; }
 }
-.objective { top: 84px; }
+.objective { top: calc(var(--project-bottom, 78px) + 6px); }
 
 /* ---------- Settings ---------- */
 .modal.settings-modal { width: min(640px, 100%); }

@@ -145,3 +145,72 @@ export function parseGithubRemote(url: string): { owner: string; repo: string } 
   const m = /github\.com[/:]([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?$/.exec(url.trim());
   return m ? { owner: m[1], repo: m[2] } : null;
 }
+
+/** A git repo found on this computer (by the office's scan of your usual code folders). */
+export interface FoundRepo {
+  /** The folder's name. */
+  name: string;
+  path: string;
+  /** The branch it's on (null: detached, or unreadable). */
+  branch: string | null;
+  /** owner/repo when its origin is on GitHub. */
+  github: string | null;
+}
+
+/** One entry in a numbered list of repos you could open: a folder on this computer, or one on GitHub (cloned first). */
+export type RepoChoice = { kind: "local"; repo: FoundRepo } | { kind: "github"; repo: GithubRepo };
+
+/** The numbered list `nou repo find` shows: this computer's first, then GitHub's (minus ones already here). */
+export function repoChoices(local: FoundRepo[], github: GithubRepo[] | null): RepoChoice[] {
+  const here = new Set(local.map((r) => r.github?.toLowerCase()).filter(Boolean));
+  return [
+    ...local.map((repo) => ({ kind: "local" as const, repo })),
+    ...(github ?? []).filter((r) => !here.has(r.fullName.toLowerCase())).map((repo) => ({ kind: "github" as const, repo })),
+  ];
+}
+
+/** Whether a repo matches what you typed (its name, folder, or owner/repo; any case). */
+export function repoMatches(c: RepoChoice, text: string): boolean {
+  const q = text.trim().toLowerCase();
+  if (!q) return true;
+  const keys = c.kind === "local" ? [c.repo.name, c.repo.path, c.repo.github ?? ""] : [c.repo.fullName, c.repo.description];
+  return keys.some((k) => k.toLowerCase().includes(q));
+}
+
+export function choiceLabel(c: RepoChoice): string {
+  return c.kind === "local" ? `${c.repo.name} (${c.repo.path})` : `${c.repo.fullName} (GitHub)`;
+}
+
+/**
+ * The repo you mean: its number in the list (1-based), its name, its
+ * owner/repo, or the start of one of those (any case). A string saying why
+ * when it's none of them, or more than one.
+ */
+export function pickRepo(list: RepoChoice[], query: string): RepoChoice | string {
+  const q = query.trim().toLowerCase();
+  if (!q) return "Which repo? Give its name or number (nou repo find).";
+  if (/^\d+$/.test(q)) {
+    const n = Number(q);
+    return list[n - 1] ?? `There's no repo number ${n} — nou repo find lists ${list.length}.`;
+  }
+  const keys = (c: RepoChoice) =>
+    (c.kind === "local" ? [c.repo.name, c.repo.github ?? "", c.repo.github?.split("/")[1] ?? ""] : [c.repo.fullName, c.repo.fullName.split("/")[1] ?? ""])
+      .filter(Boolean)
+      .map((k) => k.toLowerCase());
+  const many = (l: RepoChoice[]) => `“${query}” could be more than one: ${l.map(choiceLabel).join(", ")} — use its number.`;
+  const exact = list.filter((c) => keys(c).includes(q));
+  // The same name here and on GitHub: the one on this computer wins.
+  const here = exact.filter((c) => c.kind === "local");
+  if (exact.length === 1 || here.length === 1) return here[0] ?? exact[0];
+  if (exact.length > 1) return many(exact);
+  const starts = list.filter((c) => keys(c).some((k) => k.startsWith(q)));
+  if (starts.length === 1) return starts[0];
+  if (starts.length > 1) return many(starts);
+  return `No repo called “${query}” on this computer${list.some((c) => c.kind === "github") ? " or on GitHub" : ""} — nou repo find lists them.`;
+}
+
+/** A name for a new repo's folder: letters, digits, dot, dash, underscore (null when nothing's left). */
+export function repoFolderName(s: string): string | null {
+  const n = s.trim().replace(/\s+/g, "-").replace(/[^A-Za-z0-9._-]/g, "").replace(/^[.-]+/, "").slice(0, 60);
+  return n && n !== "." && n !== ".." ? n : null;
+}
