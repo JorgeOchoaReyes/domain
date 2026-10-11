@@ -61,6 +61,8 @@ export interface ServerCtx {
   offerTask?(goalId: string, taskId: string, title: string, skip?: string[], who?: ClientRec): void;
   /** Whether this person may direct the worker at that desk (theirs, or nobody else's here). */
   mayDirectDesk?(client: ClientRec, deskId: string): boolean;
+  /** Why this person may not hire at that desk (it's in someone else's pod, and they're here), or null (set by the pods module). */
+  hireRefusal?(client: ClientRec, deskId: string): string | null;
   /** Extra lines for a task's brief (e.g. the idea it came from); modules add to this. */
   briefNotes: ((goalId: string, taskId: string, deskId: string) => string)[];
 }

@@ -13,6 +13,7 @@ import type { Leash, TaskBrief, TeamPolicy } from "./policy.js";
 import type { GithubAccount, GithubIssue, GithubRepo, OpLog, ProjectInfo, PullRequestInfo, RecentProject, RepoStatus } from "./project.js";
 import type { Character, WorkerIdentity } from "./team.js";
 import type { McpHealth, McpSeen, McpServer } from "./mcp.js";
+import type { BorrowEvent, PodsState } from "./pods.js";
 
 /** What a guest on your local network may do in your office. */
 export type GuestRole = "visitor" | "teammate";
@@ -121,6 +122,8 @@ export interface Worker {
   doing?: string;
   /** What's wrong, in the CLI's own words, when it's stuck (the desk offers the fix). */
   trouble?: Trouble;
+  /** Lent to this person (they asked, its owner said yes): theirs to direct until it's back. */
+  lentTo?: string;
 }
 
 /** Workers the office started itself (not one person's): anyone may direct them. */
@@ -132,8 +135,10 @@ export const SHARED_HIRERS: readonly string[] = ["Office", "Autopilot"];
  * and message it. The host (it runs on their computer) may always; workers
  * the office started are everyone's; and someone who left doesn't hold theirs.
  */
-export function mayDirect(worker: Pick<Worker, "hiredBy"> | null | undefined, who: { name: string; host: boolean }, present: readonly string[]): boolean {
+export function mayDirect(worker: Pick<Worker, "hiredBy" | "lentTo"> | null | undefined, who: { name: string; host: boolean }, present: readonly string[]): boolean {
   if (!worker || who.host) return true;
+  // Lent to someone here: it works for them until it's back.
+  if (worker.lentTo && present.includes(worker.lentTo)) return worker.lentTo === who.name;
   const owner = worker.hiredBy;
   return owner === who.name || SHARED_HIRERS.includes(owner) || !present.includes(owner);
 }
@@ -392,6 +397,11 @@ export type ClientMessage =
   | { t: "lanStop" }
   /** Look for offices broadcasting on the local network. */
   | { t: "lanDiscover" }
+  /** Pods for people (answered with "pods"); ask to borrow someone's agent, answer an ask for yours, give one back (or call yours back). */
+  | { t: "podsGet" }
+  | { t: "borrowAsk"; deskId: string }
+  | { t: "borrowAnswer"; deskId: string; yes: boolean }
+  | { t: "borrowReturn"; deskId: string }
   // --- agent CLIs ------------------------------------------------------------------
   /** Which agent CLIs are installed. */
   | { t: "agentsGet" }
@@ -488,6 +498,10 @@ export type ServerMessage =
   | { t: "lanOffices"; offices: LanOffice[] }
   /** You're a guest here: what you may do. */
   | { t: "guest"; role: GuestRole; host: string }
+  /** Who has which pod on the team floor, and the agents asked for or lent. */
+  | { t: "pods"; state: PodsState }
+  /** A borrow you're in moved on (sent to its owner and borrower). */
+  | { t: "borrow"; event: BorrowEvent; deskId: string; owner: string; borrower: string; worker: string; text: string }
   /** Everything pinned to the idea boards. */
   | { t: "ideas"; ideas: Idea[] }
   /** Which agent CLIs are installed (and whether one is being installed). */

@@ -645,7 +645,14 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
     const target = msg.t === "chatSend" ? str(msg.to, 64) : msg.t === "offerAnswer" ? offeredDesk(msg.taskId) : deskId;
     if (directed && target && target !== "any" && !mayDirectDesk(client, target)) {
       const w = office.workerAt(target);
-      send(ws, { t: "loop", goalId: "", event: "warn", text: `🔒 ${nameAt(target)} is ${w?.hiredBy ?? "someone else"}'s agent — you can message it; ask ${w?.hiredBy ?? "them"} to hand it work` });
+      send(ws, { t: "loop", goalId: "", event: "warn", text: w?.lentTo ? `🔒 ${nameAt(target)} is lent to ${w.lentTo} right now — you can message it` : `🔒 ${nameAt(target)} is ${w?.hiredBy ?? "someone else"}'s agent — you can message it, or ask to borrow it (🤝 on its tile in the monitor, K)` });
+      return;
+    }
+
+    // A desk in someone else's pod (while they're here) is theirs to hire at.
+    const podRefusal = (msg.t === "hire" || msg.t === "rehire") && deskId ? ctx.hireRefusal?.(client, deskId) : null;
+    if (podRefusal) {
+      send(ws, { t: "loop", goalId: "", event: "warn", text: podRefusal });
       return;
     }
 

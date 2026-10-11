@@ -36,6 +36,8 @@
 .mon-ic:hover { background: rgba(255, 255, 255, .8); }
 .mon-now { display: flex; gap: 10px; padding: 4px 10px; background: #2a2b3d; font: 700 12px var(--font); white-space: nowrap; overflow: hidden; }
 .mon-now > span { overflow: hidden; text-overflow: ellipsis; }
+.mon-borrow { display: flex; align-items: center; gap: 6px; padding: 4px 10px; background: #34355a; font: 700 12px var(--font); }
+.mon-lent { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mon-task-t { color: #f9e2af; flex-shrink: 1; }
 .mon-br { color: #a6e3a1; margin-left: auto; flex-shrink: 0; }
 .mon-term { flex: 1; min-height: 120px; width: 100%; display: block; cursor: pointer; }

@@ -634,7 +634,7 @@ export class World {
       const terms = task ? briefLine(task) : "";
       const mentor = w.internOf ? this.desks.find((x) => x.id === w.internOf)?.worker : null;
       view.bot.name = w.identity?.name ?? (w.internOf ? `Intern of ${mentor?.identity?.name ?? w.internOf.replace("desk-", "desk ")}` : null);
-      const activity = this.waitingAt.has(desk.id) ? "🙋 At the stand-up, waiting for a task" : w.activity;
+      const activity = (w.lentTo ? `🤝 Working for ${w.lentTo} (${w.hiredBy}'s) · ` : "") + (this.waitingAt.has(desk.id) ? "🙋 At the stand-up, waiting for a task" : w.activity);
       view.bot.setCard(w.status, w.hiredBy, terms ? `${activity} · ${terms}` : activity, desk.id === this.presenting, w.doing ?? "");
     }
     for (const id of [...this.workers.keys()]) if (!seen.has(id)) this.removeWorker(id);
