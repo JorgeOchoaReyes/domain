@@ -8,6 +8,7 @@ import { DEFAULT_POLICY, type TaskBrief, type TaskRun, type TeamPolicy } from ".
 import type { PullRequestInfo } from "./project.js";
 import type { Character } from "./team.js";
 import type { McpServer } from "./mcp.js";
+import type { Estimate, EstimateSample, Took } from "./estimate.js";
 
 export type TaskStatus = "todo" | "doing" | "review" | "done";
 
@@ -26,6 +27,10 @@ export interface GoalTask {
   for?: string | null;
   /** Offered to this desk's worker ("I'll take it"): nobody else takes it while you decide. */
   offered?: string | null;
+  /** How long it'll likely take and cost, worked out when it was handed out. */
+  estimate?: Estimate | null;
+  /** What it really took, once done (checked against the estimate). */
+  took?: Took | null;
 }
 
 /** What a goal produces: working software, or a research deck. */
@@ -199,6 +204,8 @@ export interface ProgressState {
   mcp: McpServer[];
   /** The last stand-up's plan (for "Resume yesterday"). */
   lastPlan?: LastPlan | null;
+  /** Finished tasks, estimate vs. what they took: what the estimates learn from. */
+  estimates?: EstimateSample[];
 }
 
 export const EMPTY_PROGRESS: ProgressState = { goals: [], session: null, players: [], feed: [], policy: DEFAULT_POLICY, team: [], mcp: [] };

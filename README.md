@@ -119,6 +119,7 @@ nou                           # what every agent is doing, and what's waiting fo
 nou standup "Today I want dark mode shipped and the login bug fixed"
 nou task "Update the README" --file notes.md   # someone offers to take it: Y / s / a
 nou task "Fix the flaky test" --to Pixel
+nou estimate "Add dark mode"  # how long and what it'll cost, cloud vs local; how close the last ones came
 nou ask Bolt "How's it going?"                  # waits for the answer
 nou watch                     # live: who's working, what's ready, what they say
 nou watch Bolt                # one agent's terminal, live
@@ -344,6 +345,25 @@ nothing gets stuck. Each goal's files live in `.domain/goals/<id>/`
   out (*nudge it to wrap up*, or *stop and present*), **plan first** (it presents
   a plan in your office; you approve it, then it builds), and the task's own
   **definition of done**.
+- **⏳ Estimates for every job**: the card opens with how long the task will
+  likely take and what it'll cost on the model you picked
+  (`~25 min (15–40) · ≈ $1.70`), or that it's free on a local one, and
+  it changes as you change the worker, model, plan first, audit, notes or
+  files. If the estimate runs past the time budget, the card says so. The
+  first guess comes from the task's size (its words and notes, read the same
+  way as for the local-model hint, then plan first and an audit). After that
+  it's scaled by how long similar tasks really took this team: tasks with
+  shared words in the title, the same size or the same model count most.
+  Every finished task records the time from handing it out to its last
+  presentation (time waiting for your review isn't counted) next to its
+  estimate. The last 200 are kept with your progress, so the estimates get
+  better. The Goals window, the laptop's **Loop** app and the phone's
+  **Goals** show it as well: before a task goes out (on cloud, or free on a
+  local model), while it's being done, and what it took against the estimate
+  once it's done. Each goal also shows the work left on it and how far off
+  the estimates have been lately. Costs are rough per-hour figures for a
+  coding agent on that model (Opus more than Sonnet, Sonnet more than Haiku),
+  not a bill.
 - **Team policy** (🛠 in the Goals window, the hire menu or the card): the
   defaults everything starts from, shared by everyone in the office and saved
   with your progress.
@@ -967,11 +987,6 @@ docs/screenshots/        the pictures in this README
 
 Next up, after v1.0:
 
-- **Estimates for every job.** Before you hand out a task: how long it'll
-  likely take and what it'll cost — on a cloud model, or free on a local one —
-  from the size of the task and how long similar ones took this team. Shown
-  on the assignment card, the laptop and the phone, and checked against what
-  it really took when the task is done, so the estimates get better.
 - **Smoother still.** The first look at your office, the lobby and floor 2
   still drops a few frames once per session (50–67 ms); the outline pass costs
   as much as the scene itself; and static furniture could be merged into far

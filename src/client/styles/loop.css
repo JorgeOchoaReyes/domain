@@ -90,6 +90,8 @@
 .lp-tasks li { display: flex; gap: 8px; align-items: center; font-size: 13px; font-weight: 800; padding: 6px 9px; border: 2px solid #e6ddd2; border-radius: 10px; background: #fff; }
 .lp-tasks li span { flex: 1; }
 .lp-tasks li small { font-size: 11px; color: var(--muted); }
+.lp-tasks li small.est-line { display: block; font-weight: 700; }
+.lp-est { margin-top: 6px; }
 .lp-tasks li.done span { text-decoration: line-through; color: var(--muted); }
 
 /* Decks */

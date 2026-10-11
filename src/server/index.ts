@@ -1010,7 +1010,7 @@ function assignTask(who: string, goalId: string, taskId: string, deskId: string,
   const waiting = pendingFiles.get(taskId);
   if (waiting) pendingFiles.delete(taskId);
   const brief = coerceBrief(waiting && !raw.files ? { ...raw, files: waiting } : raw, progress.policy);
-  const got = progress.assign(who, goalId, taskId, deskId, brief);
+  const got = progress.assign(who, goalId, taskId, deskId, brief, { agent: desk.worker.agent, model: desk.worker.model });
   if (!got) return false;
   const paired = brief.auditor ? audits.start(deskId, brief.auditor, got.title, brief.rounds ?? DEFAULT_AUDIT_ROUNDS, brief.auditWhen === "along") : false;
   history.add({

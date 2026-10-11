@@ -13,6 +13,7 @@ import { ROLES, roleCharacter } from "../shared/roles.js";
 import { deckOf, parseSlide } from "../shared/slides.js";
 import type { StandupDraft } from "../shared/standupDraft.js";
 import type { RepoStatus } from "../shared/project.js";
+import { ANY_LOCAL, accuracyLabel, basisLabel, estimateAccuracy, estimateLabel, estimateTask, tookLabel } from "../shared/estimate.js";
 
 /**
  * nou — your own command line for the office. It talks to the office running
@@ -28,6 +29,9 @@ const HELP = `nou — your command line for the office
   nou task "…" [--to NAME] [--file notes.md,spec.txt]
                                give a task (to everyone: someone offers to take it),
                                with notes or files from your computer for it to read
+  nou estimate "…" [--to NAME] how long a task will likely take and what it'll cost —
+                               on cloud and on a local model (or on NAME's model) —
+                               and how close the last estimates came
   nou say NAME|all "…"         message an agent (or everyone)
   nou ask NAME "…"             message an agent and wait for its answer
   nou watch [NAME]             live: what happens in the office — or one agent's terminal
@@ -172,8 +176,32 @@ export function connect(name: string, url = officeUrl()): Promise<Conn> {
 // --- the commands ---------------------------------------------------------------------------------
 
 function currentTask(p: ProgressState, deskId: string): string | null {
-  for (const g of p.goals) for (const t of g.tasks) if (t.deskId === deskId && t.status !== "done") return t.title;
+  for (const g of p.goals) for (const t of g.tasks) if (t.deskId === deskId && t.status !== "done") return t.title + (t.estimate ? dim(` (est ~${t.estimate.minutes} min)`) : "");
   return null;
+}
+
+/**
+ * What a task will likely take: on a given agent's model, or on a cloud model
+ * and on a local one; then the last few finished tasks against their estimates.
+ */
+export function estimateText(progress: ProgressState, text: string, d?: Desk | null): string {
+  const samples = progress.estimates ?? [];
+  const out: string[] = [bold(`⏳ ${text}`)];
+  if (d?.worker) {
+    const e = estimateTask({ title: text, agent: d.worker.agent, model: d.worker.model }, samples);
+    out.push(`   ${workerName(d)} (${d.worker.model || AGENT_LABELS[d.worker.agent]}): ${estimateLabel(e)}`, dim(`   ${basisLabel(e)}`));
+  } else {
+    const cloud = estimateTask({ title: text }, samples);
+    const local = estimateTask({ title: text, model: ANY_LOCAL }, samples);
+    out.push(`   ☁️  on a cloud model: ${estimateLabel(cloud)}`, `   💻 on a local model: ${estimateLabel(local)}`, dim(`   ${basisLabel(cloud)}`));
+  }
+  const done = progress.goals.flatMap((g) => g.tasks.filter((t) => t.status === "done" && t.took));
+  if (done.length) {
+    out.push("", bold("📏 Lately"));
+    for (const t of done.sort((a, b) => (b.doneAt ?? 0) - (a.doneAt ?? 0)).slice(0, 5)) out.push(`   ${t.title} — ${dim(tookLabel(t.took!, t.estimate))}`);
+  }
+  out.push("", dim(accuracyLabel(estimateAccuracy(samples))));
+  return out.join("\n");
 }
 
 export function statusText(office: OfficeState, progress: ProgressState, me = ""): string {
@@ -389,6 +417,16 @@ async function run(conn: Conn, cmd: string, words: string[], flags: Record<strin
       );
       const answer = reply?.threads.find((t) => t.id === d.id)?.messages.slice(before).filter((x) => x.from === "agent").at(-1);
       console.log(answer ? `🗨  ${bold(answer.who)}: ${answer.text}` : yellow("No answer yet — it'll be in the chat when it comes."));
+      return 0;
+    }
+
+    case "estimate":
+    case "e": {
+      const text = words.join(" ").trim();
+      if (!text) return usage('nou estimate "what to do" [--to NAME]');
+      const d = typeof flags.to === "string" ? desk(flags.to) : null;
+      if (typeof flags.to === "string" && !d) return 1;
+      console.log(estimateText(conn.progress, text, d));
       return 0;
     }
 

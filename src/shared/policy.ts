@@ -98,6 +98,8 @@ export interface TaskRun {
   timeUp: boolean;
   /** For plan-first tasks: the plan was approved and building has started. */
   planApproved: boolean;
+  /** When it last presented its work (the end of its working time, for estimates). */
+  presentedAt?: number;
 }
 
 export interface TeamPolicy {

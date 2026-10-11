@@ -2,6 +2,7 @@ import { micButton, wireMic } from "../voice.js";
 import type { Desk, Presentation } from "../../shared/protocol.js";
 import { AGENT_LABELS } from "../../shared/protocol.js";
 import { STAGE_ICON, XP, briefLine, goalProgress, goalStage, stageLabel, type Goal, type GoalKind, type ProgressState, type TaskStatus, dueLabel, toLocalInput } from "../../shared/progress.js";
+import { taskEstimateLine } from "../../shared/estimate.js";
 import { AGENT_COLOR } from "../scene/characters.js";
 import { esc, openModal, type Modal } from "./modal.js";
 import { onLoop, renderLoop, type LoopHandlers } from "./loop.js";
@@ -246,7 +247,7 @@ export class GoalsWindow {
                   : `<span class="hint-sm">hire a worker to assign</span>`;
             return `<li class="task ${t.status}">
               <label class="tick"><input type="checkbox" data-task="${t.id}" ${t.status === "done" ? "checked" : ""} /></label>
-              <span class="t-title">${esc(t.title)}</span>
+              <span class="t-title">${esc(t.title)}${taskEstimateLine(t, this.progress!.estimates) ? `<small class="est-line">${esc(taskEstimateLine(t, this.progress!.estimates))}</small>` : ""}</span>
               ${who}
               <span class="pill" style="background:${bg}">${label}</span>
               ${assign}

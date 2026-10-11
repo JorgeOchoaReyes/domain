@@ -838,6 +838,7 @@ function openAssignFor(goalId: string, taskId: string, deskId?: string, backToGo
     policy: progress.policy,
     deskId,
     busy,
+    history: progress.estimates,
     onAssign: (desk, brief) => {
       net.send({ t: "taskAssign", goalId, taskId, deskId: desk, brief });
       sound.click();

@@ -1,6 +1,7 @@
 import type { OfficeState } from "../../shared/protocol.js";
 import { AGENT_LABELS, doingLabel } from "../../shared/protocol.js";
 import { dueLabel, goalProgress, type ProgressState } from "../../shared/progress.js";
+import { remainingLabel, taskEstimateLine } from "../../shared/estimate.js";
 import { PLACES } from "../../shared/layout.js";
 import { TEAM_THREAD } from "../../shared/chat.js";
 import { TRACKS, type TrackId } from "../music.js";
@@ -284,10 +285,15 @@ export class Phone {
                 .map((g) => {
                   const pr = goalProgress(g);
                   const doing = g.tasks.filter((t) => t.status === "doing" || t.status === "review");
+                  // Before it goes out: what the next task will likely take, on cloud or local.
+                  const next = g.tasks.find((t) => t.status === "todo" && !t.deskId);
+                  const left = remainingLabel(g.tasks, progress.estimates);
                   return `<button class="ph-card goal" data-goal="${g.id}"><b>${g.kind === "research" ? "📊" : "🎯"} ${esc(g.title)}</b>
                     <span class="ph-meta">${pr.done}/${pr.total} tasks${g.dueAt ? ` · <em class="${g.dueAt < Date.now() ? "over" : ""}">📅 ${esc(dueLabel(g.dueAt))}</em>` : ""}${g.group?.length ? ` · 👥 ${g.group.length}` : ""}</span>
                     <span class="ph-bar-p"><span style="width:${Math.round(pr.pct * 100)}%"></span></span>
-                    ${doing.map((t) => `<span class="ph-sub">⌨️ ${esc(t.title)}${t.deskId ? ` — ${esc(this.name(t.deskId))}` : ""}</span>`).join("")}</button>`;
+                    ${left ? `<span class="ph-sub">⏳ ${esc(left)}</span>` : ""}
+                    ${doing.map((t) => `<span class="ph-sub">⌨️ ${esc(t.title)}${t.deskId ? ` — ${esc(this.name(t.deskId))}` : ""}${t.estimate ? `<br>${esc(taskEstimateLine(t))}` : ""}</span>`).join("")}
+                    ${next ? `<span class="ph-sub">⬜ Next: ${esc(next.title)}<br>${esc(taskEstimateLine(next, progress.estimates))}</span>` : ""}</button>`;
                 })
                 .join("")
             : `<p class="ph-empty">No goals yet.</p>`) +

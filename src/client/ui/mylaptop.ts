@@ -9,6 +9,7 @@ import "@xterm/xterm/css/xterm.css";
 import type { OfficeState, ServerMessage } from "../../shared/protocol.js";
 import type { RepoStatus } from "../../shared/project.js";
 import { AGENT_LABELS } from "../../shared/protocol.js";
+import { accuracyLabel, estimateAccuracy, remainingLabel, taskEstimateLine } from "../../shared/estimate.js";
 import { EMPTY_PROGRESS, goalProgress, goalStage, stageLabel, STAGE_ICON, type Goal, type ProgressState } from "../../shared/progress.js";
 import { AGENT_COLOR, STATUS_BULB } from "../scene/characters.js";
 import { esc, openModal, type Modal } from "./modal.js";
@@ -687,9 +688,11 @@ export class MyLaptop {
           .map((t) => {
             const d = t.deskId ? this.office.desks.find((x) => x.id === t.deskId) : null;
             const icon = { todo: "⬜", doing: "⌨️", review: "🎤", done: "✅" }[t.status];
-            return `<li class="${t.status}">${icon} <span>${esc(t.title)}</span>${d?.worker ? `<small>${esc(workerName(d.worker))}</small>` : ""}</li>`;
+            const est = taskEstimateLine(t, this.progress.estimates);
+            return `<li class="${t.status}">${icon} <span>${esc(t.title)}${est ? `<small class="est-line">${esc(est)}</small>` : ""}</span>${d?.worker ? `<small>${esc(workerName(d.worker))}</small>` : ""}</li>`;
           })
           .join("")}</ul>
+        <p class="lt-note lp-est">${esc([remainingLabel(goal.tasks, this.progress.estimates), accuracyLabel(estimateAccuracy(this.progress.estimates ?? []))].filter(Boolean).join(" · "))}</p>
       </section>`;
     renderLoop(this.content.querySelector(".lp-loop")!, goal, this.office.desks, goals, this.office.presentations, this.handlers());
     this.content.querySelector(".lp-goals")!.addEventListener("click", (e) => {

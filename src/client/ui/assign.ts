@@ -13,6 +13,7 @@ import {
   type TaskBrief,
   type TeamPolicy,
 } from "../../shared/policy.js";
+import { basisLabel, estimateLabel, estimateTask, type EstimateSample } from "../../shared/estimate.js";
 import { AGENT_COLOR } from "../scene/characters.js";
 import { esc, openModal } from "./modal.js";
 import { workerName } from "./team.js";
@@ -25,7 +26,8 @@ import { loopState } from "./loop.js";
  * on which model, how long it gets and what happens when time's up, whether
  * it shows you a plan before touching anything, and what "done" means for
  * this task. It opens filled in with the team's defaults, so a plain "Assign"
- * is one click.
+ * is one click. Up top, an estimate — how long it'll likely take and what
+ * it'll cost on the model picked — that follows whatever you change.
  */
 
 export interface AssignOptions {
@@ -37,6 +39,8 @@ export interface AssignOptions {
   deskId?: string;
   /** Tasks each desk is already on, to show who's free. */
   busy: Map<string, string>;
+  /** Finished tasks, estimate vs. what they took (the estimate learns from them). */
+  history?: EstimateSample[];
   onAssign(deskId: string, brief: TaskBrief): void;
   onEditPolicy(): void;
 }
@@ -64,6 +68,7 @@ export function openAssignCard(o: AssignOptions): void {
     <div class="as-task">
       <span class="as-kicker">🎯 ${esc(o.goal.title)}</span>
       <h3>${esc(o.task.title)}</h3>
+      <div class="as-estimate"></div>
     </div>
     <section>
       <h4>Who</h4>
@@ -246,9 +251,33 @@ export function openAssignCard(o: AssignOptions): void {
     o.onAssign(deskId, { model, minutes, onTimeUp, planFirst, done: lines.length ? lines : [...o.policy.done], ...(auditor ? { auditor, rounds, auditWhen } : {}), ...(notes ? { notes } : {}), ...(files.length ? { files } : {}) });
   });
 
+  // The estimate follows every choice on the card (worker, model, plan first, audit, notes, files).
+  const renderEstimate = () => {
+    const w = worker();
+    const e = estimateTask(
+      {
+        title: o.task.title,
+        notes: notesEl.value,
+        done: doneEl.value.split("\n").filter((x) => x.trim()).length,
+        files: attached().length,
+        planFirst,
+        audited: !!auditor,
+        agent: w.agent,
+        model: model || w.model,
+      },
+      o.history ?? [],
+    );
+    const over = minutes > 0 && e.minutes > minutes;
+    body.querySelector(".as-estimate")!.innerHTML =
+      `<span class="as-est ${e.local ? "local" : ""}">⏳ ${esc(estimateLabel(e))}</span><span class="as-hint">${esc(basisLabel(e))}</span>` +
+      (over ? `<span class="as-est-warn">⚠ more than its ${minutes} min budget</span>` : "");
+  };
+  for (const ev of ["click", "input", "change"]) body.addEventListener(ev, () => setTimeout(renderEstimate, 0));
+
   renderWorkers();
   renderModels();
   renderTime();
   renderAuditors();
+  renderEstimate();
   footer.querySelector<HTMLButtonElement>(".go")!.focus();
 }
