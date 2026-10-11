@@ -845,6 +845,9 @@ button.link { border: 0; background: none; color: var(--accent); font: inherit; 
 .su-voice-box .btn.mic { font-size: 20px; padding: 8px 12px; }
 .su-voice-acts { display: flex; gap: 10px; align-items: center; margin-top: 8px; }
 .su-voice-status { font-size: 12px; font-weight: 800; color: var(--muted); }
+.su-make.busy { opacity: 0.85; cursor: progress; }
+.su-spin { display: inline-block; width: 11px; height: 11px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; vertical-align: -1px; animation: su-spin 0.8s linear infinite; }
+@keyframes su-spin { to { transform: rotate(360deg); } }
 .su-drafted { margin-top: 10px; padding-top: 10px; border-top: 2px dashed rgba(43, 45, 66, .3); }
 .su-summary { margin: 0 0 8px; font-weight: 800; font-size: 14px; line-height: 1.4; }
 .su-eod-label { display: block; font-weight: 900; font-size: 13px; margin-bottom: 4px; }
