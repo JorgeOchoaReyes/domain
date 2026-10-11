@@ -1,7 +1,8 @@
 // A shared office, end to end: you (the host) and a teammate who joins over the local network with
 // the passcode. Shared: the stand-up and goals, #team and #people, the review line, watching every
 // agent. Yours: the agents you hire — someone else can message them, but only their owner (or the
-// host) gives them work, types into them, reviews them or sends them home. Simulated agents, so it's
+// host) gives them work, types into them, reviews them or sends them home — unless they ask to
+// borrow it and you say yes. Each person gets a pod on the team floor. Simulated agents, so it's
 // quick and free:
 //
 //   npm run e2e:team
@@ -14,6 +15,7 @@ import WebSocket from "ws";
 import { connect, type Conn } from "../../src/cli/nou.ts";
 import { TEAM_THREAD, PEOPLE_THREAD } from "../../src/shared/chat.ts";
 import type { ServerMessage } from "../../src/shared/protocol.ts";
+import { podDesks } from "../../src/shared/pods.ts";
 
 const D = mkdtempSync(join(tmpdir(), "domain-team-"));
 execFileSync("git", ["init", "-q", "-b", "main"], { cwd: D });
@@ -162,10 +164,59 @@ try {
   // (The host is here on nou, which doesn't walk in as a person; Ana does.)
   check("the teammate walks about in the office", h.office.peers.some((p) => p.name === "Ana") && !a.office.peers.some((p) => p.name === "Jorge"), `${h.office.peers.map((p) => p.name).join(", ")}`);
 
+  // Pods for people: each gets a pod on the team floor, and a desk in someone else's is theirs to hire at.
+  a.send({ t: "podsGet" });
+  const podsMsg = await a.next((m): m is Extract<ServerMessage, { t: "pods" }> => m.t === "pods" && ["Jorge", "Ana"].every((n) => m.state.pods.some((p) => p.person === n && p.here)), 5000);
+  const podOf = (n: string) => podsMsg?.state.pods.find((p) => p.person === n)?.pod;
+  check("each person gets their own pod on the team floor", !!podOf("Jorge") && !!podOf("Ana") && podOf("Jorge") !== podOf("Ana"), `Jorge: Pod ${podOf("Jorge")}, Ana: Pod ${podOf("Ana")}`);
+  const podRefused = a.next((m): m is Extract<ServerMessage, { t: "loop" }> => m.t === "loop" && /🪑/.test(m.text ?? ""), 4000);
+  a.send({ t: "hire", deskId: podDesks(podOf("Jorge") ?? "A")[0], agent: "claude" });
+  check("…and can't hire in someone else's pod", !!(await podRefused));
+
+  // Borrowing: Ana asks for Jorge's agent; he says no, then yes.
+  const borrowMsg = (c: Conn, event: string) => c.next((m): m is Extract<ServerMessage, { t: "borrow" }> => m.t === "borrow" && m.event === event && m.deskId === "desk-1", 6000);
+  let asked = borrowMsg(h, "asked");
+  a.send({ t: "borrowAsk", deskId: "desk-1" });
+  const ask1 = await asked;
+  check("a teammate asks to borrow your agent: you're asked", !!ask1 && ask1.borrower === "Ana", ask1?.text);
+  const declined = borrowMsg(a, "declined");
+  h.send({ t: "borrowAnswer", deskId: "desk-1", yes: false });
+  check("…you say no: it stays yours", !!(await declined) && !h.office.desks.find((d) => d.id === "desk-1")?.worker?.lentTo);
+  asked = borrowMsg(h, "asked");
+  a.send({ t: "borrowAsk", deskId: "desk-1" });
+  await asked;
+  const lent = borrowMsg(a, "lent");
+  h.send({ t: "borrowAnswer", deskId: "desk-1", yes: true });
+  const lentMsg = await lent;
+  const lentOffice = a.office.desks.find((d) => d.id === "desk-1")?.worker?.lentTo === "Ana" || await a.next((m): m is Extract<ServerMessage, { t: "office" }> => m.t === "office" && m.office.desks.find((d) => d.id === "desk-1")?.worker?.lentTo === "Ana", 4000);
+  check("…you say yes: it's lent to her (everyone sees it)", !!lentMsg && !!lentOffice, lentMsg?.text);
+  const borrowWarn = a.next((m): m is Extract<ServerMessage, { t: "loop" }> => m.t === "loop" && /🔒/.test(m.text ?? ""), 3000);
+  a.send({ t: "quickTask", deskId: "desk-1", text: "Ana's task for the agent she borrowed" });
+  const borrowedTask = await a.next((m): m is Extract<ServerMessage, { t: "progress" }> => m.t === "progress" && m.progress.goals.some((g) => g.tasks.some((t) => /she borrowed/.test(t.title))), 8000);
+  check("the borrower directs it", !!borrowedTask && !(await borrowWarn));
+  const back = borrowMsg(h, "returned");
+  a.send({ t: "borrowReturn", deskId: "desk-1" });
+  const backMsg = await back;
+  const backOffice = !h.office.desks.find((d) => d.id === "desk-1")?.worker?.lentTo || await h.next((m): m is Extract<ServerMessage, { t: "office" }> => m.t === "office" && !m.office.desks.find((d) => d.id === "desk-1")?.worker?.lentTo, 4000);
+  check("she gives it back", !!backMsg && !!backOffice, backMsg?.text);
+  const lockedAgain = a.next((m): m is Extract<ServerMessage, { t: "loop" }> => m.t === "loop" && /🔒/.test(m.text ?? ""), 4000);
+  a.send({ t: "input", deskId: "desk-1", data: "x" });
+  check("…and it's yours alone again", !!(await lockedAgain));
+  // Lent again, then Ana leaves: it comes back.
+  asked = borrowMsg(h, "asked");
+  a.send({ t: "borrowAsk", deskId: "desk-1" });
+  await asked;
+  const lent2 = borrowMsg(a, "lent");
+  h.send({ t: "borrowAnswer", deskId: "desk-1", yes: true });
+  await lent2;
+  const backOnLeave = borrowMsg(h, "returned");
+
   // When Ana leaves, her agent isn't stuck: the team can direct it.
   a.close();
   ana = null;
+  const leaveMsg = await backOnLeave;
   await sleep(1500);
+  check("a borrower who leaves gives it back", !!leaveMsg && !h.office.desks.find((d) => d.id === "desk-1")?.worker?.lentTo, leaveMsg?.text);
   const bob = await joinOverLan(lan!.urls[0], lan!.code!, "Bob");
   const bobWarned = bob.next((m): m is Extract<ServerMessage, { t: "loop" }> => m.t === "loop" && /🔒/.test(m.text ?? ""), 3000);
   bob.send({ t: "quickTask", deskId: "desk-2", text: "Bob picks up Ana's agent after she left" });

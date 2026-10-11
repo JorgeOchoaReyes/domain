@@ -35,6 +35,7 @@
   },
   "license": "MIT",
   "dependencies": {
+    "@huggingface/transformers": "^4.3.1",
     "@lydell/node-pty": "^1.2.0-beta.15",
     "ws": "^8.18.0"
   },
@@ -67,10 +68,15 @@
     "files": [
       "dist/**/*",
       "!dist/**/*.map",
-      "package.json"
+      "package.json",
+      "!node_modules/onnxruntime-web/**"
     ],
     "asarUnpack": [
-      "node_modules/@lydell/**"
+      "node_modules/@lydell/**",
+      "node_modules/onnxruntime-node/**",
+      "node_modules/onnxruntime-common/**",
+      "node_modules/sharp/**",
+      "node_modules/@img/**"
     ],
     "win": {
       "target": [
@@ -81,7 +87,11 @@
           ]
         }
       ],
-      "icon": "build/icon.png"
+      "icon": "build/icon.png",
+      "files": [
+        "!node_modules/onnxruntime-node/bin/napi-v*/darwin/**",
+        "!node_modules/onnxruntime-node/bin/napi-v*/linux/**"
+      ]
     },
     "nsis": {
       "oneClick": true,
@@ -96,14 +106,25 @@
         "dmg"
       ],
       "category": "public.app-category.developer-tools",
-      "icon": "build/icon.png"
+      "icon": "build/icon.png",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "domain listens when you press 🎤, and turns what you say into text on this computer."
+      },
+      "files": [
+        "!node_modules/onnxruntime-node/bin/napi-v*/win32/**",
+        "!node_modules/onnxruntime-node/bin/napi-v*/linux/**"
+      ]
     },
     "linux": {
       "target": [
         "AppImage"
       ],
       "category": "Development",
-      "icon": "build/icon.png"
+      "icon": "build/icon.png",
+      "files": [
+        "!node_modules/onnxruntime-node/bin/napi-v*/win32/**",
+        "!node_modules/onnxruntime-node/bin/napi-v*/darwin/**"
+      ]
     }
   }
 }

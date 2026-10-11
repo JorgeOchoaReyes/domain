@@ -1,6 +1,6 @@
-import { readFileSync, statSync } from "node:fs";
-import { userInfo } from "node:os";
-import { basename } from "node:path";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir, userInfo } from "node:os";
+import { basename, join, resolve } from "node:path";
 import { MAX_ATTACH_BYTES } from "../shared/policy.js";
 import { createInterface } from "node:readline";
 import WebSocket from "ws";
@@ -13,6 +13,9 @@ import { ROLES, roleCharacter } from "../shared/roles.js";
 import { deckOf, parseSlide } from "../shared/slides.js";
 import type { StandupDraft } from "../shared/standupDraft.js";
 import type { RepoStatus } from "../shared/project.js";
+import { pickRepo, repoChoices, type RepoChoice } from "../shared/project.js";
+import { mcpTarget, SECRET_MASK, type McpSeen, type McpServer } from "../shared/mcp.js";
+import { ANY_LOCAL, accuracyLabel, basisLabel, estimateAccuracy, estimateLabel, estimateTask, tookLabel } from "../shared/estimate.js";
 
 /**
  * nou — your own command line for the office. It talks to the office running
@@ -25,9 +28,13 @@ import type { RepoStatus } from "../shared/project.js";
 const HELP = `nou — your command line for the office
 
   nou                          what everyone's doing, and what's waiting for you
-  nou task "…" [--to NAME] [--file notes.md,spec.txt]
+  nou task "…" [--to NAME] [--file notes.md,spec.txt] [--repo REPO]
                                give a task (to everyone: someone offers to take it),
-                               with notes or files from your computer for it to read
+                               with notes or files from your computer for it to read,
+                               in another open repo than the agent's own
+  nou estimate "…" [--to NAME] how long a task will likely take and what it'll cost —
+                               on cloud and on a local model (or on NAME's model) —
+                               and how close the last estimates came
   nou say NAME|all "…"         message an agent (or everyone)
   nou ask NAME "…"             message an agent and wait for its answer
   nou watch [NAME]             live: what happens in the office — or one agent's terminal
@@ -36,9 +43,21 @@ const HELP = `nou — your command line for the office
   nou approve NAME [note]      approve it (it merges into your branch)
   nou back NAME "…"            send it back with what to change
   nou standup "…"              say what you want today: Claude plans it and picks who does what
-  nou repo                     where the repo stands: your branch, agents' branches, pull requests
+  nou repo                     where each open repo stands: your branch, agents' branches, pull requests
+  nou repo find [TEXT]         repos on this computer (and on GitHub, when signed in) you could open, numbered
+  nou repo add NAME|N|PATH     open another repo alongside the project (no restart): one nou repo find
+                               found (by name or number — a GitHub one is cloned first), or any folder
+  nou repo close REPO          close it (its branches are kept)
+  nou repo hire REPO           new hires work there
+  nou move NAME REPO           move an agent to another open repo
+  nou pr [GOAL] [--per agent|goal] [--agent NAME]
+                               ship a goal to GitHub as a pull request — one for the goal, or one
+                               per agent from its own branch (default: the team policy); --agent: just theirs
+  nou mcp                      the office's MCP tools, and the ones your agent CLIs already load
+  nou mcp add NAME             give every new hire one your CLIs load (copied into the office's list)
   nou roles                    the ready-made agents
-  nou hire ROLE [--desk N]     hire one (e.g. nou hire reviewer)
+  nou hire ROLE [--desk N] [--repo REPO]
+                               hire one (e.g. nou hire reviewer)
 
   Options: --yes (don't ask), --name YOU (who you are in the chat)
   It finds the office running on this machine; set NOU_PORT to point it elsewhere.`;
@@ -172,8 +191,32 @@ export function connect(name: string, url = officeUrl()): Promise<Conn> {
 // --- the commands ---------------------------------------------------------------------------------
 
 function currentTask(p: ProgressState, deskId: string): string | null {
-  for (const g of p.goals) for (const t of g.tasks) if (t.deskId === deskId && t.status !== "done") return t.title;
+  for (const g of p.goals) for (const t of g.tasks) if (t.deskId === deskId && t.status !== "done") return t.title + (t.estimate ? dim(` (est ~${t.estimate.minutes} min)`) : "");
   return null;
+}
+
+/**
+ * What a task will likely take: on a given agent's model, or on a cloud model
+ * and on a local one; then the last few finished tasks against their estimates.
+ */
+export function estimateText(progress: ProgressState, text: string, d?: Desk | null): string {
+  const samples = progress.estimates ?? [];
+  const out: string[] = [bold(`⏳ ${text}`)];
+  if (d?.worker) {
+    const e = estimateTask({ title: text, agent: d.worker.agent, model: d.worker.model }, samples);
+    out.push(`   ${workerName(d)} (${d.worker.model || AGENT_LABELS[d.worker.agent]}): ${estimateLabel(e)}`, dim(`   ${basisLabel(e)}`));
+  } else {
+    const cloud = estimateTask({ title: text }, samples);
+    const local = estimateTask({ title: text, model: ANY_LOCAL }, samples);
+    out.push(`   ☁️  on a cloud model: ${estimateLabel(cloud)}`, `   💻 on a local model: ${estimateLabel(local)}`, dim(`   ${basisLabel(cloud)}`));
+  }
+  const done = progress.goals.flatMap((g) => g.tasks.filter((t) => t.status === "done" && t.took));
+  if (done.length) {
+    out.push("", bold("📏 Lately"));
+    for (const t of done.sort((a, b) => (b.doneAt ?? 0) - (a.doneAt ?? 0)).slice(0, 5)) out.push(`   ${t.title} — ${dim(tookLabel(t.took!, t.estimate))}`);
+  }
+  out.push("", dim(accuracyLabel(estimateAccuracy(samples))));
+  return out.join("\n");
 }
 
 export function statusText(office: OfficeState, progress: ProgressState, me = ""): string {
@@ -197,7 +240,8 @@ export function statusText(office: OfficeState, progress: ProgressState, me = ""
     // Its activity often just repeats the task: say it once.
     const extra = task && doing.includes(task) ? "" : doing;
     const owner = me && w.hiredBy !== me && !SHARED_HIRERS.includes(w.hiredBy) ? dim(` (${w.hiredBy}'s)`) : "";
-    out.push(`   ${pad(bold(workerName(d)) + owner, 14 + (TTY ? 8 : 0) + (owner ? owner.length : 0))}${pad(dim(AGENT_LABELS[w.agent]), 13 + (TTY ? 8 : 0))}${pad(color(st), 11 + (TTY ? 9 : 0))}${task ? `🎯 ${task}${extra ? " — " : ""}` : ""}${dim(extra)}`);
+    const where = w.repo ? dim(` 📂 ${basename(w.repo)}`) : "";
+    out.push(`   ${pad(bold(workerName(d)) + owner, 14 + (TTY ? 8 : 0) + (owner ? owner.length : 0))}${pad(dim(AGENT_LABELS[w.agent]), 13 + (TTY ? 8 : 0))}${pad(color(st), 11 + (TTY ? 9 : 0))}${task ? `🎯 ${task}${extra ? " — " : ""}` : ""}${dim(extra)}${where}`);
   }
   const ready = office.presentations.filter((p) => p.report);
   const waiting = staffed.filter((d) => d.worker!.status === "waiting");
@@ -319,7 +363,7 @@ async function run(conn: Conn, cmd: string, words: string[], flags: Record<strin
           return 1;
         }
       }
-      const withFiles = files.length ? { files } : {};
+      const withFiles = { ...(files.length ? { files } : {}), ...(typeof flags.repo === "string" ? { repo: flags.repo } : {}) };
       if (files.length) console.log(dim(`📎 ${files.map((f) => f.name).join(", ")}`));
       if (typeof flags.to === "string") {
         const d = desk(flags.to);
@@ -392,7 +436,83 @@ async function run(conn: Conn, cmd: string, words: string[], flags: Record<strin
       return 0;
     }
 
+    case "estimate":
+    case "e": {
+      const text = words.join(" ").trim();
+      if (!text) return usage('nou estimate "what to do" [--to NAME]');
+      const d = typeof flags.to === "string" ? desk(flags.to) : null;
+      if (typeof flags.to === "string" && !d) return 1;
+      console.log(estimateText(conn.progress, text, d));
+      return 0;
+    }
+
     case "repo": {
+      const sub = (words[0] ?? "").toLowerCase();
+      if (sub === "find") {
+        const text = words.slice(1).join(" ").trim();
+        // Look again each time you ask (the office remembers the last look for the window).
+        const found = await findChoices(conn, text, true);
+        if (!found) {
+          console.log(red("The office didn't answer."));
+          return 1;
+        }
+        saveFound(found.list);
+        console.log(foundText(found.list, found.msg, text));
+        return 0;
+      }
+      if (sub === "add") {
+        const what = words.slice(1).join(" ").trim();
+        if (!what) return usage("nou repo add NAME|NUMBER|PATH");
+        let path: string | null = null;
+        if (looksLikePath(what)) path = resolve(what);
+        else {
+          // A number is from the last nou repo find; a name, from what's found now.
+          const list = (/^\d+$/.test(what) ? loadFound() : null) ?? (await findChoices(conn, ""))?.list ?? [];
+          const pick = pickRepo(list, what);
+          if (typeof pick === "string") {
+            console.error(red(pick));
+            return 1;
+          }
+          if (pick.kind === "local") path = pick.repo.path;
+          else {
+            console.log(`⬇ Cloning ${bold(pick.repo.fullName)} and opening it alongside…`);
+            conn.send({ t: "projectClone", url: pick.repo.cloneUrl || pick.repo.fullName, add: true });
+            const name = pick.repo.fullName.split("/")[1]?.toLowerCase() ?? "";
+            const got = await conn.next(
+              (m): m is Extract<ServerMessage, { t: "project" }> => m.t === "project" && (m.repos ?? []).some((r) => r.name.toLowerCase().startsWith(name)),
+              300_000,
+            );
+            if (!got) {
+              console.log(yellow("The clone didn't finish yet — see its Logs (Projects → Logs)."));
+              return 1;
+            }
+            console.log(openReposText(got));
+            return 0;
+          }
+        }
+        conn.send({ t: "repoAdd", path });
+        const got = await conn.next((m): m is Extract<ServerMessage, { t: "project" }> => m.t === "project", 15_000);
+        if (!got) {
+          console.log(yellow("The office didn't confirm — see its Logs (Projects → Logs)."));
+          return 1;
+        }
+        console.log(openReposText(got));
+        return 0;
+      }
+      if (["close", "hire"].includes(sub)) {
+        const what = words.slice(1).join(" ").trim();
+        if (!what) return usage(`nou repo ${sub} REPO`);
+        // The office knows open repos by name, folder, or the start of a name.
+        const path = what;
+        conn.send({ t: sub === "close" ? "repoClose" : "repoHire", path });
+        const got = await conn.next((m): m is Extract<ServerMessage, { t: "project" }> => m.t === "project", 15_000);
+        if (!got) {
+          console.log(yellow("The office didn't confirm — see its Logs (Projects → Logs)."));
+          return 1;
+        }
+        console.log(openReposText(got));
+        return 0;
+      }
       conn.send({ t: "repoStatus" });
       const got = await conn.next((m): m is Extract<ServerMessage, { t: "repoStatus" }> => m.t === "repoStatus", 45_000);
       if (!got) {
@@ -400,6 +520,81 @@ async function run(conn: Conn, cmd: string, words: string[], flags: Record<strin
         return 1;
       }
       console.log(repoText(got.status));
+      return 0;
+    }
+
+    case "mcp": {
+      const sub = (words[0] ?? "").toLowerCase();
+      conn.send({ t: "mcpScan" });
+      const seen = await conn.next((m): m is Extract<ServerMessage, { t: "mcpSeen" }> => m.t === "mcpSeen", 15_000);
+      if (sub === "add") {
+        const name = words.slice(1).join(" ").trim();
+        if (!name) return usage("nou mcp add NAME");
+        conn.send({ t: "mcpAdopt", name });
+        const want = name.replace(/^[a-z]+:/, "").toLowerCase();
+        const got = await conn.next(
+          (m): m is Extract<ServerMessage, { t: "progress" }> =>
+            m.t === "progress" && m.progress.mcp.some((s) => s.everyone && s.enabled && s.name.toLowerCase().startsWith(want)),
+          10_000,
+        );
+        const s = got?.progress.mcp.find((x) => x.everyone && x.name.toLowerCase().startsWith(want));
+        if (!s) {
+          console.error(red(`None of your agent CLIs loads an MCP server called “${name}” — nou mcp lists them.`));
+          return 1;
+        }
+        console.log(green(`🔌 ${s.name}: every new hire gets it now.`) + dim(" (checking it — nou mcp shows how it went)"));
+        return 0;
+      }
+      if (sub) return usage("nou mcp [add NAME]");
+      console.log(mcpText(conn.progress.mcp, seen?.seen ?? []));
+      return 0;
+    }
+
+    case "move": {
+      const d = desk(words[0]);
+      const repo = words.slice(1).join(" ").trim();
+      if (!d) return 1;
+      if (!repo) return usage("nou move NAME REPO");
+      conn.send({ t: "workerRepo", deskId: d.id, repo });
+      const got = await conn.next((m): m is Extract<ServerMessage, { t: "project" }> => m.t === "project", 15_000);
+      const now = got?.workers?.find((w) => w.deskId === d.id);
+      console.log(now ? green(`📦 ${workerName(d)} works in ${basename(now.repo)} now.`) : yellow(`“${repo}” isn't an open repo (nou repo), or ${workerName(d)} isn't running.`));
+      return now ? 0 : 1;
+    }
+
+    case "pr": {
+      const goal = pickShipGoal(conn.progress, words.join(" "));
+      if (!goal) return usage("nou pr [GOAL] [--per agent|goal] [--agent NAME]  (no goal to ship — name one)");
+      const per = flags.per === "agent" || flags.per === "goal" ? flags.per : undefined;
+      if (flags.per !== undefined && !per) return usage("nou pr [GOAL] --per agent|goal");
+      let deskId: string | undefined;
+      if (typeof flags.agent === "string") {
+        const d = desk(flags.agent);
+        if (!d) return 1;
+        deskId = d.id;
+      }
+      const prs: Extract<ServerMessage, { t: "pr" }>[] = [];
+      let lastAt = 0;
+      const off = conn.on((m) => {
+        if (m.t === "pr" && m.goalId === goal.id) {
+          prs.push(m);
+          lastAt = Date.now();
+        }
+      });
+      conn.send({ t: "shipPR", goalId: goal.id, ...(per ? { per } : {}), ...(deskId ? { deskId } : {}) });
+      console.log(dim(`Shipping “${goal.title}” to GitHub${deskId ? ` (${flags.agent}'s branch)` : per ? ` (one pull request per ${per})` : ""}…`));
+      // The first one can take a while (pushing); then the rest follow quickly.
+      const end = Date.now() + 90_000;
+      while (Date.now() < end && (!prs.length || Date.now() - lastAt < 5000)) await sleep(250);
+      off();
+      if (!prs.length) {
+        console.log(yellow("No pull request opened — see the Logs in the office (are you signed in to GitHub, and is there anything new to push?)."));
+        return 1;
+      }
+      for (const m of prs) {
+        const who = m.deskId ? conn.office.desks.find((d) => d.id === m.deskId) : null;
+        console.log(`${green("🔀")} #${m.pr.number} ${m.pr.title}${who ? dim(` · ${workerName(who)}`) : ""}  ${m.pr.url}`);
+      }
       return 0;
     }
 
@@ -549,7 +744,7 @@ async function run(conn: Conn, cmd: string, words: string[], flags: Record<strin
       }
       const ch = roleCharacter(role, conn.progress.team.map((x) => x.name));
       conn.send({ t: "characterSave", character: ch });
-      conn.send({ t: "hire", deskId: free.id, agent: ch.agent, characterId: ch.id });
+      conn.send({ t: "hire", deskId: free.id, agent: ch.agent, characterId: ch.id, ...(typeof flags.repo === "string" ? { repo: flags.repo } : {}) });
       const up = await conn.next((m): m is Extract<ServerMessage, { t: "office" }> => m.t === "office" && !!m.office.desks.find((d) => d.id === free.id)?.worker, 10_000);
       console.log(up ? green(`${role.icon} ${ch.name} (${role.title}) is at ${free.label}.`) : yellow("Asked — the office hasn't confirmed yet."));
       return up ? 0 : 1;
@@ -558,6 +753,104 @@ async function run(conn: Conn, cmd: string, words: string[], flags: Record<strin
   console.error(red(`Unknown command: ${cmd}`));
   console.log(HELP);
   return 1;
+}
+
+// --- finding repos and MCP tools ----------------------------------------------------------------
+
+/** Ask the office which repos you could open (matching `text`), as the numbered list nou shows. */
+async function findChoices(conn: Conn, text: string, fresh = false): Promise<{ list: RepoChoice[]; msg: Extract<ServerMessage, { t: "repoFound" }> } | null> {
+  conn.send({ t: "repoFind", text, ...(fresh ? { fresh: true } : {}) });
+  const msg = await conn.next((m): m is Extract<ServerMessage, { t: "repoFound" }> => m.t === "repoFound", 30_000);
+  return msg ? { list: repoChoices(msg.local, msg.github), msg } : null;
+}
+
+/** Where the last nou repo find's numbered list is kept (so nou repo add 2 means what you saw). */
+export function foundFile(): string {
+  return process.env.NOU_FOUND_FILE ?? join(tmpdir(), "nou-repo-find.json");
+}
+
+function saveFound(list: RepoChoice[]): void {
+  try {
+    writeFileSync(foundFile(), JSON.stringify({ at: Date.now(), list }));
+  } catch {
+    /* numbers just won't carry over */
+  }
+}
+
+/** The last list, when it's from the last hour. */
+export function loadFound(): RepoChoice[] | null {
+  try {
+    const raw = JSON.parse(readFileSync(foundFile(), "utf8")) as { at?: number; list?: RepoChoice[] };
+    return Array.isArray(raw.list) && Date.now() - (raw.at ?? 0) < 3_600_000 ? raw.list : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A path rather than a name: has a slash, starts with . or ~ or a drive, or is a folder here. */
+export function looksLikePath(s: string, cwd = process.cwd()): boolean {
+  if (/[\\/]/.test(s) || /^[.~]/.test(s) || /^[A-Za-z]:/.test(s)) return true;
+  try {
+    return existsSync(resolve(cwd, s)) && statSync(resolve(cwd, s)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/** nou repo find: the numbered list. */
+export function foundText(list: RepoChoice[], msg: Extract<ServerMessage, { t: "repoFound" }>, text = ""): string {
+  const out: string[] = [];
+  const local = list.filter((c) => c.kind === "local");
+  const gh = list.filter((c) => c.kind === "github");
+  const num = (c: RepoChoice) => pad(dim(`${list.indexOf(c) + 1}.`), 4 + (TTY ? 8 : 0));
+  out.push(bold(`💻 On this computer${text ? ` matching “${text}”` : ""}`) + dim(msg.truncated ? "  (stopped looking after a moment — there may be more)" : ""));
+  if (!local.length) out.push(dim("   none found (it looks in the project's folder, ~/projects, ~/code, ~/src, ~/dev, ~/Documents/GitHub, ~/source/repos, ~/repos)"));
+  for (const c of local) {
+    const r = (c as Extract<RepoChoice, { kind: "local" }>).repo;
+    out.push(`   ${num(c)}${pad(bold(r.name), 22 + (TTY ? 8 : 0))}${pad(r.branch ? `🌿 ${r.branch}` : "", 18)}${r.github ? cyan(r.github) + " " : ""}${dim(r.path)}`);
+  }
+  out.push("", bold("🐙 On GitHub"));
+  if (msg.github === null) out.push(dim(`   ${msg.githubError ?? "sign in with GitHub to see your repos (Projects → Sign in with GitHub)"}`));
+  else if (!gh.length) out.push(dim("   none (that aren't on this computer already)"));
+  for (const c of gh) {
+    const r = (c as Extract<RepoChoice, { kind: "github" }>).repo;
+    out.push(`   ${num(c)}${pad(bold(r.fullName), 30 + (TTY ? 8 : 0))}${r.private ? yellow("private ") : ""}${dim(r.description.slice(0, 60))}`);
+  }
+  if (list.length) out.push("", dim(`Open one alongside: nou repo add 1  (or its name${gh.length ? " — a GitHub one is cloned first" : ""})`));
+  return out.join("\n");
+}
+
+/** nou mcp: the office's servers, then the ones your CLIs load (secrets never shown). */
+export function mcpText(office: McpServer[], seen: McpSeen[]): string {
+  const out: string[] = [bold("🔌 The office's MCP tools")];
+  if (!office.length) out.push(dim("   none yet"));
+  for (const s of office) {
+    const who = !s.enabled ? dim("off") : s.everyone ? green("everyone") : yellow("picked characters");
+    const env = Object.keys(s.env).map((k) => `${k}=${SECRET_MASK}`).join(" ");
+    out.push(`   ${pad(bold(s.name), 18 + (TTY ? 8 : 0))}${pad(who, 18 + (TTY ? 9 : 0))}${dim(mcpTarget(s))}${env ? dim(`  ${env}`) : ""}${s.auth === "github" ? dim("  (your GitHub sign-in)") : ""}`);
+  }
+  const wide = new Set(office.filter((s) => s.enabled && s.everyone).map((s) => s.name.toLowerCase()));
+  out.push("", bold("🧰 Found in your agent CLIs"));
+  if (!seen.length) out.push(dim("   none in Claude Code, Codex, Gemini CLI or OpenCode settings"));
+  for (const s of seen) {
+    const env = (s.envKeys ?? []).map((k) => `${k}=${SECRET_MASK}`).join(" ");
+    const has = wide.has(s.name.toLowerCase());
+    out.push(`   ${pad(bold(s.name), 18 + (TTY ? 8 : 0))}${pad(AGENT_LABELS[s.agent], 13)}${has ? green("✓ everyone has it ") : dim(`nou mcp add ${s.name} `)}${dim(`${s.target}${env ? `  ${env}` : ""}  (${s.source})`)}`);
+  }
+  return out.join("\n");
+}
+
+/** The open repos, where new hires work, and who works where. */
+export function openReposText(m: Extract<ServerMessage, { t: "project" }>): string {
+  const all = [m.info, ...(m.repos ?? [])];
+  const same = (a: string, b: string) => resolve(a).toLowerCase() === resolve(b).toLowerCase();
+  return all
+    .map((r, i) => {
+      const who = (m.workers ?? []).filter((w) => same(w.repo, r.path)).map((w) => w.name);
+      const hire = same(m.hireRepo ?? m.info.path, r.path) ? green(" ← new hires") : "";
+      return `${bold(`📂 ${r.name}`)}${i === 0 ? dim(" (project)") : ""}${hire}  ${dim(r.path)}\n   ${who.length ? who.join(", ") : dim("nobody works here")}`;
+    })
+    .join("\n");
 }
 
 /** The newest offer you haven't answered (or been asked about) yet. */
@@ -593,7 +886,20 @@ function watchEvents(conn: Conn): void {
   });
 }
 
+/** The goal `nou pr` ships: the one named (by its title), else the session's, else the latest finished one not yet shipped. */
+export function pickShipGoal(progress: ProgressState, query: string): ProgressState["goals"][number] | null {
+  const q = query.trim().toLowerCase();
+  const goals = progress.goals;
+  if (q) return goals.find((g) => g.title.toLowerCase() === q) ?? goals.find((g) => g.title.toLowerCase().includes(q)) ?? null;
+  const session = progress.session?.goalId ? goals.find((g) => g.id === progress.session!.goalId) : null;
+  if (session) return session;
+  const open = goals.filter((g) => !g.shippedAt);
+  return open.filter((g) => g.doneAt).sort((a, b) => (b.doneAt ?? 0) - (a.doneAt ?? 0))[0] ?? open.at(-1) ?? null;
+}
+
 export function repoText(s: RepoStatus): string {
+  // Every open repo the same way: the project, then the others open alongside it.
+  if (s.others?.length) return [s, ...s.others].map((r) => `${bold(cyan(`📂 ${r.name ?? "project"}`))} ${dim(r.path ?? "")}\n${repoText({ ...r, others: undefined })}`).join("\n\n");
   if (!s.isGit) return yellow("This project isn't a git repo.");
   const out: string[] = [];
   const commit = (c: RepoStatus["last"]) => (c ? `${dim(c.sha)} ${c.subject} ${dim(c.when)}` : dim("no commits"));

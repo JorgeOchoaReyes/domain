@@ -12,13 +12,22 @@ import type { Role } from "./ctx.js";
 
 type T = ClientMessage["t"];
 
-const VISITOR: ReadonlySet<T> = new Set<T>(["join", "move", "open", "logs", "projectInfo", "ideasGet", "agentsGet", "chatGet", "historyGet", "skillsGet", "lessonsGet", "alumniGet", "voicesGet", "peopleSend"]);
+/** The host's own terminals (💻 Mine): real shells on this computer. */
+export const MINE_MESSAGES: readonly T[] = ["mineGet", "mineOpen", "mineAttach", "mineInput", "mineResize", "mineClose", "mineReveal"];
+
+const VISITOR: ReadonlySet<T> = new Set<T>(["join", "move", "open", "logs", "projectInfo", "ideasGet", "agentsGet", "chatGet", "historyGet", "skillsGet", "lessonsGet", "alumniGet", "voicesGet", "whisperGet", "peopleSend", "podsGet", "demoGet", "arcadeGet", "arcadeScore"]);
 
 const HOST_ONLY: ReadonlySet<T> = new Set<T>([
   "projectOpen",
   "projectClone",
+  "repoAdd",
+  "repoClose",
+  "repoHire",
   "githubSignIn",
   "githubRepos",
+  "repoFind",
+  "repoCreate",
+  "mcpAdopt",
   "lanStart",
   "lanStop",
   "lanDiscover",
@@ -28,10 +37,18 @@ const HOST_ONLY: ReadonlySet<T> = new Set<T>([
   "mcpScan",
   "probe",
   "agentInstall",
+  "agentUpdate",
+  "agentPin",
+  "agentsCheck",
+  "localCopy",
   "trustWorkers",
   "voicesKey",
   // Presses keys on this computer.
   "dictate",
+  // Downloads the voice model onto this computer (teammates' 🎤 still can, by talking).
+  "whisperPrepare",
+  // 💻 Mine: your own shells on this computer — not even their output is anyone else's.
+  ...MINE_MESSAGES,
 ]);
 
 export function allowed(role: Role, t: string): boolean {

@@ -9,6 +9,7 @@ import "@xterm/xterm/css/xterm.css";
 import type { OfficeState, ServerMessage } from "../../shared/protocol.js";
 import type { RepoStatus } from "../../shared/project.js";
 import { AGENT_LABELS } from "../../shared/protocol.js";
+import { accuracyLabel, estimateAccuracy, remainingLabel, taskEstimateLine } from "../../shared/estimate.js";
 import { EMPTY_PROGRESS, goalProgress, goalStage, stageLabel, STAGE_ICON, type Goal, type ProgressState } from "../../shared/progress.js";
 import { AGENT_COLOR, STATUS_BULB } from "../scene/characters.js";
 import { esc, openModal, type Modal } from "./modal.js";
@@ -16,7 +17,10 @@ import { workerName } from "./team.js";
 import { ingestLoop, loopState, onLoop, renderLoop, type LoopHandlers } from "./loop.js";
 import { openDeck, paintDeckSlide } from "./deck.js";
 import { MonitorView, type MonitorActions } from "./monitor.js";
+import { bindGithub, githubAccountHtml, githubListHtml, onProjectsChange, openRepos, projectState, requestGithubRepos, workerRepoHtml, wireWorkerRepo, type AddTab } from "./projects.js";
 import "../styles/loop.css";
+import { MineApp } from "./mine.js";
+import { guestRole } from "./join.js";
 
 /**
  * Your own laptop, open anywhere (L): a little desktop with a dock of apps.
@@ -30,12 +34,13 @@ import "../styles/loop.css";
  * - 🎯 Loop: where each goal is in the loop, and the next thing to do.
  * - 📊 Decks: research goals' slide decks, to present or download.
  * - 🚀 Deploy: the deploy command's output, live.
+ * - 💻 Mine: your own terminals on this computer (host only; see mine.ts).
  *
  * Feed it every server message with onMessage(); it keeps its own copy of
  * the office and progress.
  */
 
-export type LaptopApp = "team" | "monitor" | "repo" | "browser" | "workers" | "loop" | "decks" | "deploy";
+export type LaptopApp = "team" | "monitor" | "repo" | "browser" | "workers" | "loop" | "decks" | "deploy" | "mine";
 
 const APPS: { id: LaptopApp; icon: string; label: string }[] = [
   { id: "team", icon: "💬", label: "Team" },
@@ -46,7 +51,10 @@ const APPS: { id: LaptopApp; icon: string; label: string }[] = [
   { id: "loop", icon: "🎯", label: "Loop" },
   { id: "decks", icon: "📊", label: "Decks" },
   { id: "deploy", icon: "🚀", label: "Deploy" },
+  { id: "mine", icon: "💻", label: "Mine" },
 ];
+
+const HIRE_BUTTON = `<button class="btn small lt-hire" title="Hire at the next free desk — no need to walk to one">＋ Hire a worker</button>`;
 
 const TERM_THEME = { background: "#1e1f2e", foreground: "#cdd6f4", cursor: "#ff8a5b", selectionBackground: "#585b70" };
 
@@ -90,6 +98,17 @@ export class MyLaptop {
   // The Monitor app: every terminal at once.
   private monitorView: MonitorView | null = null;
 
+  /** 💻 Mine: your own terminals (host only). */
+  private mine = new MineApp((m) => this.actions.send(m), () => this.close());
+
+  /** ＋ Hire a worker: the hire card for the next free desk, without walking to one (set by main). */
+  hireAny: (() => void) | null = null;
+  /** The Projects & GitHub window (on its add-a-repo part), the MCP window, and "＋ Add a repo…" from a dropdown (set by main). */
+  openProjects: ((add?: AddTab) => void) | null = null;
+  openMcp: (() => void) | null = null;
+  addRepoThen: ((then: (path: string) => void) => void) | null = null;
+  private ghFilter = "";
+
   constructor(
     private actions: LaptopActions,
     private monitor: MonitorActions,
@@ -98,6 +117,14 @@ export class MyLaptop {
     this.dHost.className = "lt-term";
     this.resizer.observe(this.termHost);
     this.resizer.observe(this.dHost);
+    // Repos opened or closed, the GitHub sign-in or its repos: the Repo app's top and GitHub parts, and the Workers header.
+    onProjectsChange(() => {
+      if (!this.isOpen) return;
+      if (this.app === "repo") {
+        this.renderRepoTop();
+        this.renderRepoGithub();
+      } else if (this.app === "workers") this.renderWorkerList();
+    });
     onLoop((msg) => {
       if (msg.t === "deployOutput") {
         if (this.dterm && this.dShownGoal === msg.goalId) this.dterm.write(msg.data);
@@ -119,6 +146,7 @@ export class MyLaptop {
   /** Every server message goes through here. */
   onMessage(msg: ServerMessage): void {
     ingestLoop(msg);
+    if (msg.t === "mine" || msg.t === "mineOutput" || msg.t === "mineScrollback") return this.mine.onMessage(msg);
     switch (msg.t) {
       case "welcome":
       case "office":
@@ -162,7 +190,7 @@ export class MyLaptop {
       <div class="lt-screen">
         <div class="lt-bar">
           <span class="lt-logo">🏢 domain OS</span>
-          <nav class="lt-tabs">${APPS.map((a) => `<button data-app="${a.id}"><span>${a.icon}</span> ${a.label}</button>`).join("")}</nav>
+          <nav class="lt-tabs">${APPS.filter((a) => a.id !== "mine" || !guestRole()).map((a) => `<button data-app="${a.id}"><span>${a.icon}</span> ${a.label}</button>`).join("")}</nav>
           <span class="lt-clock"></span>
           <button class="lt-close" title="Close (Esc)" aria-label="Close">✕</button>
         </div>
@@ -203,6 +231,8 @@ export class MyLaptop {
   }
 
   private show(app: LaptopApp): void {
+    // Your own terminals are the host's alone.
+    if (app === "mine" && guestRole()) app = "team";
     this.app = app;
     this.renderKey = "";
     this.root.querySelectorAll<HTMLElement>(".lt-tabs [data-app]").forEach((b) => b.classList.toggle("on", b.dataset.app === app));
@@ -216,6 +246,7 @@ export class MyLaptop {
     else if (app === "browser") this.showBrowser();
     else if (app === "workers") this.showWorkers();
     else if (app === "deploy") this.showDeploy();
+    else if (app === "mine") this.mine.mount(this.content);
     else this.soft();
   }
 
@@ -252,14 +283,13 @@ export class MyLaptop {
   private renderRepo(): void {
     if (this.app !== "repo") return;
     const s = this.repo;
-    if (!s) {
-      this.content.innerHTML = `<p class="lt-note">Looking at the repo…</p>`;
-      return;
-    }
-    if (!s.isGit) {
-      this.content.innerHTML = `<div class="rp"><p class="lt-note">This project isn't a git repo yet — open one (File → Open project folder) or clone one from GitHub in Projects.</p></div>`;
-      return;
-    }
+    const shell = (inner: string) => {
+      this.content.innerHTML = `<div class="rp"><div class="rp-top"></div><section class="rp-card rp-gh"></section>${inner}</div>`;
+      this.renderRepoTop();
+      this.renderRepoGithub();
+    };
+    if (!s) return shell(`<p class="lt-note">Looking at the repo…</p>`);
+    if (!s.isGit && !s.others?.length) return shell(`<p class="lt-note">This project isn't a git repo yet — ＋ Add a repo, or clone one from GitHub below.</p>`);
     const commit = (c: RepoStatus["last"]) => (c ? `<code>${esc(c.sha)}</code> ${esc(c.subject)} <span class="rp-when">${esc(c.when)}</span>` : `<span class="rp-when">no commits</span>`);
     const sync =
       s.ahead === null
@@ -268,7 +298,11 @@ export class MyLaptop {
           ? `<span class="rp-pill ok">✓ up to date with GitHub</span>`
           : `${s.ahead ? `<span class="rp-pill warn">↑ ${s.ahead} to push</span>` : ""}${s.behind ? `<span class="rp-pill warn">↓ ${s.behind} to pull</span>` : ""}`;
     const checks = (c: string) => (c === "success" ? `<span class="rp-pill ok">✓ checks pass</span>` : c === "failure" ? `<span class="rp-pill bad">✗ checks fail</span>` : c === "pending" ? `<span class="rp-pill warn">⏳ checks running</span>` : `<span class="rp-pill">no checks</span>`);
-    this.content.innerHTML = `<div class="rp">
+    // Each open repo the same way: the project first, then the others open alongside it.
+    const cards = (s: RepoStatus) =>
+      !s.isGit
+        ? `<section class="rp-card"><h3>📦 ${esc(s.name ?? "Project")}</h3><p class="lt-note">Not a git repo — its workers share the folder.</p></section>`
+        : `${s.name ? `<h2 class="rp-repo">📂 ${esc(s.name)} <code>${esc(s.path ?? "")}</code></h2>` : ""}
       <section class="rp-card">
         <h3>📦 ${s.github ? `<a href="${esc(s.github.url)}" target="_blank" rel="noreferrer">${esc(s.github.owner)}/${esc(s.github.repo)}</a>` : "Local repo"} <span class="rp-branch">🌿 ${esc(s.branch ?? "?")}</span></h3>
         <div class="rp-row">${sync}${s.dirty.length ? `<span class="rp-pill bad">✎ ${s.dirty.length} uncommitted</span>` : `<span class="rp-pill ok">✓ clean</span>`}</div>
@@ -295,10 +329,72 @@ export class MyLaptop {
               ? `<ul class="rp-prs">${s.pulls.map((p) => `<li><a href="${esc(p.url)}" target="_blank" rel="noreferrer">#${p.number} ${esc(p.title)}</a> <code>${esc(p.head)}</code> ${checks(p.checks)}</li>`).join("")}</ul>`
               : `<p class="lt-note">None open.</p>`
         }
-      </section>
-      <p class="lt-note">Updated ${esc(new Date(s.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" }))} · <button class="btn small rp-refresh">↻ Refresh</button></p>
-    </div>`;
+      </section>`;
+    // Keep the GitHub search box (and its focus) across the status refreshes.
+    const typing = document.activeElement?.classList.contains("rp-gh-q") ?? false;
+    shell(`${[s, ...(s.others ?? [])].map(cards).join("")}
+      <p class="lt-note">Updated ${esc(new Date(s.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" }))} · <button class="btn small rp-refresh">↻ Refresh</button></p>`);
     this.content.querySelector(".rp-refresh")?.addEventListener("click", () => this.actions.send({ t: "repoStatus" }));
+    if (typing) this.content.querySelector<HTMLInputElement>(".rp-gh-q")?.focus();
+  }
+
+  /** The Repo app's top: ＋ Add a repo, MCP tools, and every open repo with who works there (and close). */
+  private renderRepoTop(): void {
+    const el = this.content.querySelector<HTMLElement>(".rp-top");
+    if (!el) return;
+    const all = openRepos();
+    const host = !projectState.guest;
+    const desks = this.office.desks.filter((d) => d.worker);
+    const main = all[0]?.path ?? "";
+    const same = (a: string, b: string) => a.replace(/[\\/]+$/, "").toLowerCase() === b.replace(/[\\/]+$/, "").toLowerCase();
+    el.innerHTML = `<div class="rp-bar">
+        <h3>📦 ${all.length} open repo${all.length === 1 ? "" : "s"}</h3><span class="grow"></span>
+        ${host ? `<button class="btn primary rp-add">＋ Add a repo</button><button class="btn rp-mcp" title="The tools your workers can use — and the ones your agent CLIs already have">🔌 MCP tools</button>` : ""}
+      </div>
+      <ul class="rp-open">${all
+        .map((r, n) => {
+          const who = desks.filter((d) => same(d.worker!.repo ?? main, r.path)).map((d) => workerName(d.worker!));
+          return `<li><span class="rp-o-main"><b>${r.github ? "🐙" : "📂"} ${esc(r.name)}</b>${n === 0 ? ` <span class="rp-pill">project</span>` : ""} <code>${esc(r.path)}</code>
+            <small>${r.branch ? `🌿 ${esc(r.branch)} · ` : ""}${who.length ? `👥 ${esc(who.join(", "))}` : "nobody works here yet"}</small></span>
+            ${n && host ? `<button class="btn small rp-close" data-path="${esc(r.path)}" title="Close it (its worktrees and branches are kept)">Close</button>` : ""}</li>`;
+        })
+        .join("")}</ul>`;
+    el.querySelector(".rp-add")?.addEventListener("click", () => this.openProjects?.("local"));
+    el.querySelector(".rp-mcp")?.addEventListener("click", () => this.openMcp?.());
+    el.querySelectorAll<HTMLButtonElement>(".rp-close").forEach((b) => b.addEventListener("click", () => this.actions.send({ t: "repoClose", path: b.dataset.path! })));
+  }
+
+  /** The Repo app's GitHub part: your sign-in, your repos with search, clone + add in one click. */
+  private renderRepoGithub(): void {
+    const el = this.content.querySelector<HTMLElement>(".rp-gh");
+    if (!el) return;
+    if (projectState.guest) {
+      el.remove();
+      return;
+    }
+    if (projectState.account && !projectState.repos.length && !projectState.reposLoading && !projectState.reposError) requestGithubRepos();
+    const had = el.querySelector<HTMLInputElement>(".rp-gh-q");
+    const focused = had && document.activeElement === had;
+    el.innerHTML = `<h3>🐙 GitHub</h3>${githubAccountHtml()}${
+      projectState.account
+        ? `<input type="text" class="rp-gh-q" placeholder="Search your repositories…" value="${esc(this.ghFilter)}" /><div class="rp-gh-list">${githubListHtml(this.ghFilter)}</div>`
+        : ""
+    }`;
+    const q = el.querySelector<HTMLInputElement>(".rp-gh-q");
+    q?.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape") e.stopPropagation();
+    });
+    q?.addEventListener("input", () => {
+      this.ghFilter = q.value;
+      const list = el.querySelector<HTMLElement>(".rp-gh-list")!;
+      list.innerHTML = githubListHtml(this.ghFilter);
+      bindGithub(list, () => this.renderRepoGithub());
+    });
+    if (focused && q) {
+      q.focus();
+      q.setSelectionRange(q.value.length, q.value.length);
+    }
+    bindGithub(el, () => this.renderRepoGithub());
   }
 
   // --- team: message anyone, hand out work, ask for updates -------------------------
@@ -366,7 +462,9 @@ export class MyLaptop {
           return `<button class="tm-p ${this.teamTo === d.id ? "on" : ""}" data-to="${d.id}"><b><i style="background:${AGENT_COLOR[w.agent]}"></i>${esc(name)}</b><small>${esc(w.status === "waiting" ? "needs you" : w.status)} · ${esc(w.activity.slice(0, 38))}</small></button>`;
         })
         .join("") +
-      (staffed.length ? "" : `<p class="tm-none">Nobody's hired yet — walk up to a desk with a + and press E.</p>`);
+      (staffed.length ? "" : `<p class="tm-none">Nobody's hired yet.</p>`) +
+      HIRE_BUTTON;
+    this.wireHire(el);
     el.querySelectorAll<HTMLButtonElement>(".tm-p").forEach((b) =>
       b.addEventListener("click", () => {
         this.teamTo = b.dataset.to!;
@@ -585,7 +683,7 @@ export class MyLaptop {
     const list = this.content.querySelector<HTMLElement>(".wk-list");
     if (!list) return;
     const staffed = this.office.desks.filter((d) => d.worker);
-    const key = JSON.stringify([this.watching, staffed.map((d) => [d.id, d.worker!.status, d.worker!.activity])]);
+    const key = JSON.stringify([this.watching, openRepos().map((r) => r.path), staffed.map((d) => [d.id, d.worker!.status, d.worker!.activity, d.worker!.repo])]);
     if (key === this.renderKey) return;
     this.renderKey = key;
     list.innerHTML = staffed.length
@@ -598,11 +696,22 @@ export class MyLaptop {
               <i style="background:${STATUS_BULB[w.status]}"></i></button>`;
           })
           .join("")
-      : `<p class="lt-note">No workers yet. Hire one at a desk with a <b>+</b>.</p>`;
+      : `<p class="lt-note">No workers yet.</p>`;
+    list.insertAdjacentHTML("beforeend", HIRE_BUTTON);
+    this.wireHire(list);
     const head = this.content.querySelector<HTMLElement>(".wk-head");
     const d = staffed.find((x) => x.id === this.watching);
-    if (head) head.innerHTML = d ? `<b>${esc(workerName(d.worker!))}</b> · ${esc(d.label)} · hired by ${esc(d.worker!.hiredBy)} <span class="grow"></span><span class="lt-note">Type to talk to it · select to copy · Ctrl+[ sends Esc</span><button class="btn small wk-copy">📋 Copy all</button>` : "";
+    if (head) head.innerHTML = d ? `<b>${esc(workerName(d.worker!))}</b> · ${esc(d.label)} · hired by ${esc(d.worker!.hiredBy)} ${workerRepoHtml(d.id, d.worker!.repo)} <span class="grow"></span><span class="lt-note">Type to talk to it · select to copy · Ctrl+[ sends Esc</span><button class="btn small wk-copy">📋 Copy all</button>` : "";
     head?.querySelector(".wk-copy")?.addEventListener("click", () => this.term && copyAll(this.term));
+    if (head) wireWorkerRepo(head, (m) => this.actions.send(m), (then) => this.addRepoThen?.(then));
+  }
+
+  private wireHire(el: HTMLElement): void {
+    el.querySelector(".lt-hire")?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.close();
+      this.hireAny?.();
+    });
   }
 
   private watch(deskId: string): void {
@@ -648,6 +757,7 @@ export class MyLaptop {
         if (this.watching) this.actions.send({ t: "resize", deskId: this.watching, cols: this.term.cols, rows: this.term.rows });
       }
       if (this.app === "deploy" && this.dfit && this.dHost.isConnected) this.dfit.fit();
+      if (this.app === "mine") this.mine.refit();
     } catch {
       /* no size yet */
     }
@@ -687,9 +797,11 @@ export class MyLaptop {
           .map((t) => {
             const d = t.deskId ? this.office.desks.find((x) => x.id === t.deskId) : null;
             const icon = { todo: "⬜", doing: "⌨️", review: "🎤", done: "✅" }[t.status];
-            return `<li class="${t.status}">${icon} <span>${esc(t.title)}</span>${d?.worker ? `<small>${esc(workerName(d.worker))}</small>` : ""}</li>`;
+            const est = taskEstimateLine(t, this.progress.estimates);
+            return `<li class="${t.status}">${icon} <span>${esc(t.title)}${est ? `<small class="est-line">${esc(est)}</small>` : ""}</span>${d?.worker ? `<small>${esc(workerName(d.worker))}</small>` : ""}</li>`;
           })
           .join("")}</ul>
+        <p class="lt-note lp-est">${esc([remainingLabel(goal.tasks, this.progress.estimates), accuracyLabel(estimateAccuracy(this.progress.estimates ?? []))].filter(Boolean).join(" · "))}</p>
       </section>`;
     renderLoop(this.content.querySelector(".lp-loop")!, goal, this.office.desks, goals, this.office.presentations, this.handlers());
     this.content.querySelector(".lp-goals")!.addEventListener("click", (e) => {

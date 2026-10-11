@@ -42,6 +42,8 @@ export interface Character {
   mcp: string[];
   /** Skills it may not use (all the others its agent has are on). */
   skillsOff?: string[];
+  /** The repo folder it works in when hired (when that repo is open; else where new hires work). */
+  repo?: string;
   createdAt: number;
   /** How many times it's been hired (shown on its card). */
   hires: number;
@@ -98,9 +100,30 @@ export function coerceCharacter(raw: unknown): Character | null {
     look: coerceLook(o.look, agent),
     mcp: Array.isArray(o.mcp) ? o.mcp.filter((x): x is string => typeof x === "string").slice(0, 20) : [],
     skillsOff: Array.isArray(o.skillsOff) ? o.skillsOff.filter((x): x is string => typeof x === "string" && x.length <= 64).slice(0, 100) : [],
+    ...(typeof o.repo === "string" && o.repo.trim() && o.repo.length <= 1000 && !/[\u0000-\u001f]/.test(o.repo) ? { repo: o.repo.trim() } : {}),
     createdAt: typeof o.createdAt === "number" ? o.createdAt : Date.now(),
     hires: typeof o.hires === "number" && o.hires >= 0 ? Math.floor(o.hires) : 0,
   };
+}
+
+/**
+ * The repo a new hire works in: the one you picked on the hire card (when
+ * it's open), else the character's own (when that's open), else where new
+ * hires work — with a note when the character's repo isn't open now.
+ */
+export function hireRepoChoice(
+  asked: unknown,
+  character: Pick<Character, "name" | "repo"> | null | undefined,
+  find: (q: string) => string | null,
+  fallback: string,
+): { repo: string; note?: string } {
+  const picked = typeof asked === "string" && asked ? find(asked) : null;
+  if (picked) return { repo: picked };
+  if (!character?.repo) return { repo: fallback };
+  const own = find(character.repo);
+  if (own) return { repo: own };
+  const name = character.repo.split(/[\\/]/).filter(Boolean).pop() ?? character.repo;
+  return { repo: fallback, note: `📦 ${character.name}'s repo, ${name}, isn't open — working in ${fallback.split(/[\\/]/).filter(Boolean).pop() ?? fallback} instead (＋ Add a repo to open it)` };
 }
 
 /** The line added to every task brief for this character. */

@@ -135,3 +135,27 @@ test("switched on late at night, the sync waits for tomorrow's time", () => {
   s.ap.tick();
   assert.ok(!s.log.includes("eod"));
 });
+
+test("local models first: a small task goes to the worker on a local model; a big one waits for a cloud worker", () => {
+  const { ap, log, state } = setup({
+    desks: [desk("desk-1", worker("idle", { model: "ollama/qwen3:8b" })), desk("desk-2", worker("working"))],
+    goals: [goal("g", [{ id: "big", title: "Migrate auth to the new database" }, { id: "typo", title: "Fix the typo in the README" }])],
+  });
+  ap.tick();
+  // The big one skips the local model (desk-2 is on the cloud and busy); the small one takes it.
+  assert.deepEqual(log, ["assign typo → desk-1 (audit desk-2)"]);
+  // With the cloud worker free, the big one goes there.
+  state.desks[1] = desk("desk-2", worker());
+  state.desks[0] = desk("desk-1", worker("working", { model: "ollama/qwen3:8b" }));
+  ap.tick();
+  assert.match(log.at(-1)!, /^assign big → desk-2/);
+});
+
+test("a team of only local models still gets its big tasks", () => {
+  const { ap, log } = setup({
+    desks: [desk("desk-1", worker("idle", { model: "ollama/qwen3:8b" }))],
+    goals: [goal("g", [{ id: "big", title: "Refactor the whole API" }])],
+  });
+  ap.tick();
+  assert.deepEqual(log, ["assign big → desk-1"]);
+});

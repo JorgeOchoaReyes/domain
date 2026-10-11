@@ -5,7 +5,7 @@ import { homedir, platform } from "node:os";
 import { join, resolve } from "node:path";
 import type { AgentKind } from "../shared/protocol.js";
 import { AGENT_LABELS } from "../shared/protocol.js";
-import { coerceMcpServer, type McpHealth, type McpSeen, type McpServer } from "../shared/mcp.js";
+import { coerceMcpServer, maskArgs, maskUrl, SECRET_MASK, type McpHealth, type McpSeen, type McpServer } from "../shared/mcp.js";
 import type { Routes, ServerCtx } from "./ctx.js";
 
 /**
@@ -233,7 +233,7 @@ export function parseToml(text: string): TomlTable {
 // ---------------------------------------------------------------------------
 
 /** A server as an agent configures it — env included (kept on the server only). */
-interface SeenFull extends McpSeen {
+export interface SeenFull extends McpSeen {
   command: string;
   args: string[];
   url: string;
@@ -264,7 +264,7 @@ const strMap = (v: unknown): Record<string, string> => {
   return out;
 };
 
-function seen(agent: AgentKind, name: string, source: string, spec: { command?: unknown; args?: unknown; url?: unknown; env?: unknown }): SeenFull {
+function seen(agent: AgentKind, name: string, source: string, spec: { command?: unknown; args?: unknown; url?: unknown; env?: unknown; headers?: unknown }): SeenFull {
   const url = typeof spec.url === "string" ? spec.url : "";
   const command = typeof spec.command === "string" ? spec.command : "";
   const args = strs(spec.args);
@@ -277,7 +277,8 @@ function seen(agent: AgentKind, name: string, source: string, spec: { command?: 
     command,
     args,
     url,
-    env: strMap(spec.env),
+    // A remote one's headers (Claude Code, Gemini CLI) go where the office keeps them: in env.
+    env: url && !command ? { ...strMap(spec.env), ...strMap(spec.headers) } : strMap(spec.env),
   };
 }
 
@@ -338,7 +339,59 @@ export function scanAgents(paths: ScanPaths): SeenFull[] {
 }
 
 export function publicSeen(s: SeenFull): McpSeen {
-  return { agent: s.agent, name: s.name, source: s.source, transport: s.transport, target: s.target };
+  const target = s.transport === "http" ? maskUrl(s.url) : [s.command, ...maskArgs(s.args)].join(" ");
+  return { agent: s.agent, name: s.name, source: s.source, transport: s.transport, target, envKeys: Object.keys(s.env) };
+}
+
+/** Whether the office already gives a server by this name to every new hire. */
+function officeWide(office: McpServer[], name: string): boolean {
+  return office.some((o) => o.name.toLowerCase() === name.toLowerCase() && o.enabled && o.everyone);
+}
+
+/**
+ * The servers your agent CLIs load that the office doesn't give everyone yet,
+ * once per name (the first CLI's, in the order they were read).
+ */
+export function adoptable(seen: SeenFull[], office: McpServer[]): SeenFull[] {
+  const names = new Set<string>();
+  return seen.filter((s) => {
+    const k = s.name.toLowerCase();
+    if (names.has(k) || officeWide(office, s.name)) return false;
+    names.add(k);
+    return true;
+  });
+}
+
+/**
+ * The office's copy of a server a CLI loads, for everyone: the same command
+ * (or URL) and its env (or headers) — kept on this computer, never logged or
+ * sent to clients. One the office has already by that name is just turned on
+ * for everyone, as it is.
+ */
+export function adoptServer(s: SeenFull, office: McpServer[]): McpServer | null {
+  const have = office.find((o) => o.name.toLowerCase() === s.name.toLowerCase());
+  if (have) return { ...have, enabled: true, everyone: true };
+  return coerceMcpServer({
+    id: `${s.agent}-${s.name}`.replace(/[^A-Za-z0-9_-]/g, "-").slice(0, 40),
+    name: s.name,
+    transport: s.transport,
+    command: s.command,
+    args: s.args,
+    url: s.url,
+    env: s.env,
+    enabled: true,
+    everyone: true,
+  });
+}
+
+/** The CLI server you mean: by name (any case), or "agent:name"; null when none. */
+export function findSeen(seen: SeenFull[], name: string, agent?: string): SeenFull | null {
+  let q = name.trim().toLowerCase();
+  let a = agent;
+  const m = /^([a-z]+):(.+)$/.exec(q);
+  if (!a && m && seen.some((s) => s.agent === m[1])) [a, q] = [m[1], m[2]];
+  const pool = seen.filter((s) => !a || s.agent === a);
+  return pool.find((s) => s.name.toLowerCase() === q) ?? (pool.filter((s) => s.name.toLowerCase().startsWith(q)).length === 1 ? pool.find((s) => s.name.toLowerCase().startsWith(q))! : null);
 }
 
 // ---------------------------------------------------------------------------
@@ -633,7 +686,7 @@ export function serversFor(all: McpServer[], characterMcp: string[] | null): Mcp
 // ---------------------------------------------------------------------------
 
 function display(spec: { transport: string; command: string; args: string[]; url: string }): string {
-  return spec.transport === "http" ? spec.url : [spec.command, ...spec.args].join(" ");
+  return spec.transport === "http" ? maskUrl(spec.url) : [spec.command, ...maskArgs(spec.args)].join(" ");
 }
 
 export function mcpModule(ctx: ServerCtx, paths: Partial<ScanPaths> = {}): Routes {
@@ -696,6 +749,22 @@ export function mcpModule(ctx: ServerCtx, paths: Partial<ScanPaths> = {}): Route
       h.done(true, `${s.enabled ? "On" : "Off"}${s.everyone ? " · every new hire gets it" : ""}`);
       // Check it straight away so a broken one shows up now, not mid-task.
       if (s.enabled) void check(s.id, s.name, ctx.progress.mcp.find((x) => x.id === s.id) ?? s);
+    },
+    mcpAdopt: (msg, _client, ws) => {
+      if (typeof msg.name !== "string") return;
+      if (!lastSeen.length) scan();
+      const s = findSeen(lastSeen, msg.name, typeof msg.agent === "string" ? msg.agent : undefined);
+      if (!s) return void ctx.log.start("mcp", `Add ${msg.name.slice(0, 40)} for everyone`, { topic: "mcp" }).done(false, "None of your agent CLIs loads a server by that name.");
+      const server = adoptServer(s, ctx.progress.mcp);
+      if (!server) return void ctx.log.start("mcp", `Add ${s.name} for everyone`, { topic: "mcp" }).done(false, "Its settings aren't complete (no command or URL).");
+      ctx.progress.saveMcp(server);
+      // What it runs, with secret-looking parts masked; env values never.
+      const shown = publicSeen(s);
+      ctx.log
+        .start("mcp", `Added ${s.name} for everyone (from ${AGENT_LABELS[s.agent]})`, { command: shown.target, topic: `mcp:${server.id}` })
+        .done(true, `${s.source}${shown.envKeys?.length ? ` · ${shown.envKeys.map((k) => `${k}=${SECRET_MASK}`).join(" ")}` : ""}`);
+      ctx.send(ws, { t: "mcpSeen", seen: lastSeen.map(publicSeen) });
+      void check(server.id, server.name, ctx.progress.mcp.find((x) => x.id === server.id) ?? server);
     },
     mcpDelete: (msg) => {
       if (typeof msg.id !== "string") return;

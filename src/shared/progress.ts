@@ -5,9 +5,11 @@
  */
 
 import { DEFAULT_POLICY, type TaskBrief, type TaskRun, type TeamPolicy } from "./policy.js";
-import type { PullRequestInfo } from "./project.js";
+import type { AgentPullRequest, PullRequestInfo } from "./project.js";
 import type { Character } from "./team.js";
 import type { McpServer } from "./mcp.js";
+import type { Estimate, EstimateSample, Took } from "./estimate.js";
+import { coerceDemo, type GoalDemo, type HuddleState } from "./huddle.js";
 
 export type TaskStatus = "todo" | "doing" | "review" | "done";
 
@@ -18,6 +20,8 @@ export interface GoalTask {
   /** The desk whose worker is on it, while it's being done or reviewed. */
   deskId: string | null;
   doneAt: number | null;
+  /** The desk whose worker finished it (kept after `deskId` is cleared): per-agent pull requests use it. */
+  doneBy?: string | null;
   /** The terms it was handed out on (model, time budget, plan first, definition of done). */
   brief?: TaskBrief | null;
   /** How it's going against them (the clock, whether the plan was approved). */
@@ -26,6 +30,10 @@ export interface GoalTask {
   for?: string | null;
   /** Offered to this desk's worker ("I'll take it"): nobody else takes it while you decide. */
   offered?: string | null;
+  /** How long it'll likely take and cost, worked out when it was handed out. */
+  estimate?: Estimate | null;
+  /** What it really took, once done (checked against the estimate). */
+  took?: Took | null;
 }
 
 /** What a goal produces: working software, or a research deck. */
@@ -97,10 +105,16 @@ export interface Goal {
   deck: Deck | null;
   /** Its pull request on GitHub, once shipped that way. */
   pr?: PullRequestInfo | null;
+  /** Pull requests opened per agent (each from that agent's own branch). */
+  agentPrs?: AgentPullRequest[] | null;
   /** When it's due (epoch ms), or null: reminders come as it nears. */
   dueAt?: number | null;
   /** The desks working it as a group: tasks go out across them as each finishes. */
   group?: string[] | null;
+  /** The team huddle on its draft plan, while it's on. */
+  huddle?: HuddleState | null;
+  /** What was built, captured when every task was approved (build goals). */
+  demo?: GoalDemo | null;
 }
 
 /** A timed focus session the whole office works in. */
@@ -199,6 +213,8 @@ export interface ProgressState {
   mcp: McpServer[];
   /** The last stand-up's plan (for "Resume yesterday"). */
   lastPlan?: LastPlan | null;
+  /** Finished tasks, estimate vs. what they took: what the estimates learn from. */
+  estimates?: EstimateSample[];
 }
 
 export const EMPTY_PROGRESS: ProgressState = { goals: [], session: null, players: [], feed: [], policy: DEFAULT_POLICY, team: [], mcp: [] };
@@ -368,6 +384,8 @@ export function coerceGoal(raw: Goal): Goal {
     deck: raw.deck && Array.isArray(raw.deck.slides) ? raw.deck : null,
     dueAt: typeof raw.dueAt === "number" ? raw.dueAt : null,
     group: Array.isArray(raw.group) ? raw.group.filter((d): d is string => typeof d === "string").slice(0, 12) : null,
+    huddle: null,
+    demo: coerceDemo(raw.demo),
   };
 }
 

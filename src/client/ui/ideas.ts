@@ -127,6 +127,7 @@ export class IdeaBoard {
         (text) => (this.el.notes.value = text),
         () => this.el.mic.classList.remove("live"),
         (err) => this.actions.onVoiceError?.(err),
+        (p) => this.el.mic.classList.toggle("busy", !!p && p.phase !== "listening"),
       );
       this.el.mic.addEventListener("click", () => {
         if (this.dictation!.isActive) return this.dictation!.stop();
@@ -246,7 +247,7 @@ export class IdeaBoard {
   }
 
   private closed(): void {
-    this.dictation?.stop();
+    this.dictation?.cancel();
     this.modal = null;
     this.pad = null;
     this.actions.onSketch?.(null);

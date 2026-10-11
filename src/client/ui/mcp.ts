@@ -2,7 +2,7 @@ import type { ClientMessage, ServerMessage, AgentKind } from "../../shared/proto
 import { AGENT_KINDS, AGENT_LABELS } from "../../shared/protocol.js";
 import type { ProgressState } from "../../shared/progress.js";
 import type { McpHealth, McpSeen, McpServer } from "../../shared/mcp.js";
-import { GITHUB_MCP_URL } from "../../shared/mcp.js";
+import { GITHUB_MCP_URL, mcpTarget, SECRET_MASK } from "../../shared/mcp.js";
 import { AGENT_COLOR } from "../scene/characters.js";
 import { icon } from "./icons.js";
 import { logView } from "./logs.js";
@@ -109,7 +109,7 @@ function badge(key: string): string {
 }
 
 function target(s: { transport: string; command: string; args: string[]; url: string }): string {
-  return s.transport === "http" ? s.url : [s.command, ...s.args].join(" ");
+  return mcpTarget(s);
 }
 
 export function openMcp(ctx: McpWindowCtx): void {
@@ -126,8 +126,8 @@ export function openMcp(ctx: McpWindowCtx): void {
       session only — your agents' own settings aren't changed.</p>
     </div>
     <section class="mcp-sec mine"></section>
-    <section class="mcp-sec add"></section>
     <section class="mcp-sec theirs"></section>
+    <section class="mcp-sec add"></section>
     <section class="mcp-sec runs"><h4>${icon("log", 14)} What the office ran</h4></section>`;
   body.querySelector(".runs")!.appendChild(logView("mcp", 6));
 
@@ -326,7 +326,11 @@ export function openMcp(ctx: McpWindowCtx): void {
   const renderTheirs = () => {
     const byAgent = new Map<AgentKind, McpSeen[]>();
     for (const s of seen) byAgent.set(s.agent, [...(byAgent.get(s.agent) ?? []), s]);
-    theirs.innerHTML = `<h4>${icon("terminal", 14)} Already set up in your agents <span class="opt">(their own settings — read only)</span></h4>` +
+    const office = ctx.progress().mcp;
+    const wide = (name: string) => office.some((o) => o.enabled && o.everyone && o.name.toLowerCase() === name.toLowerCase());
+    const waiting = seen.filter((s) => !wide(s.name)).length;
+    theirs.innerHTML = `<h4>${icon("terminal", 14)} Found in your CLIs <span class="opt">(already set up in Claude Code, Codex, Gemini CLI or OpenCode — their settings aren't changed)</span></h4>
+      ${seen.length ? `<p class="mcp-found-note">${waiting ? `<b>${waiting}</b> not given to every worker yet — <b>Add for everyone</b> copies one into your office's list (its secrets stay on this computer).` : `${icon("check", 12)} Every one of them is in your office's list for everyone.`}</p>` : ""}` +
       (seen.length
         ? AGENT_KINDS.filter((a) => byAgent.has(a))
             .map(
@@ -335,17 +339,26 @@ export function openMcp(ctx: McpWindowCtx): void {
               .get(a)!
               .map((s) => {
                 const key = `${s.agent}:${s.name}`;
-                return `<li class="mcp-item" data-key="${esc(key)}"><span class="mcp-ic">${icon(s.transport === "http" ? "link" : "terminal", 16)}</span>
-                <span class="mcp-main"><b>${esc(s.name)}</b><code>${esc(s.target)}</code><small>${esc(s.source)}</small></span>${badge(key)}
-                ${host ? `<button class="btn small mcp-check" title="Check it">${icon("check", 12)}</button>` : ""}</li>`;
+                const keys = s.envKeys ?? [];
+                const env = keys.slice(0, 3).map((k) => `${k}=${SECRET_MASK}`).join(" ") + (keys.length > 3 ? ` +${keys.length - 3} more` : "");
+                return `<li class="mcp-item" data-key="${esc(key)}" data-name="${esc(s.name)}" data-agent="${esc(s.agent)}"><span class="mcp-ic">${icon(s.transport === "http" ? "link" : "terminal", 16)}</span>
+                <span class="mcp-main"><b>${esc(s.name)}</b><code>${esc(s.target)}</code><small>${esc(s.source)}${env ? ` · ${esc(env)}` : ""}</small></span>${badge(key)}
+                ${host ? `<button class="btn small mcp-check" title="Check it">${icon("check", 12)}</button>` : ""}
+                ${wide(s.name) ? `<span class="mcp-badge ok">${icon("check", 12)} everyone has it</span>` : host ? `<button class="btn small primary mcp-adopt" title="Copy it into your office's list: every new hire gets it, whichever agent it is">＋ Add for everyone</button>` : ""}</li>`;
               })
               .join("")}</ul></div>`,
             )
             .join("")
         : `<p class="mcp-empty">None found in Claude Code, Codex, Gemini CLI or OpenCode settings.</p>`);
-    theirs.querySelectorAll<HTMLElement>(".mcp-item").forEach((li) =>
-      li.querySelector(".mcp-check")?.addEventListener("click", () => ctx.send({ t: "mcpCheck", key: li.dataset.key })),
-    );
+    theirs.querySelectorAll<HTMLElement>(".mcp-item").forEach((li) => {
+      li.querySelector(".mcp-check")?.addEventListener("click", () => ctx.send({ t: "mcpCheck", key: li.dataset.key }));
+      const adopt = li.querySelector<HTMLButtonElement>(".mcp-adopt");
+      adopt?.addEventListener("click", () => {
+        ctx.send({ t: "mcpAdopt", name: li.dataset.name!, agent: li.dataset.agent as AgentKind });
+        adopt.disabled = true;
+        adopt.innerHTML = `${icon("spinner", 12)} Adding…`;
+      });
+    });
   };
 
   rerender = () => {

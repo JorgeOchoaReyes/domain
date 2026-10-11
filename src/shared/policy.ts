@@ -1,4 +1,5 @@
 import type { AgentKind } from "./protocol.js";
+import type { PrPer } from "./project.js";
 
 /**
  * How you run your workers: the team's defaults (which model each agent runs,
@@ -56,6 +57,8 @@ export interface TaskBrief {
   auditWhen?: "end" | "along";
   /** Notes and files you attached (text): copied into its folder, under .domain/notes/. */
   files?: Attachment[];
+  /** The open repo to do it in (its folder), when not the worker's own: it moves there first. */
+  repo?: string;
 }
 
 /** A text file you attached to a task. */
@@ -98,6 +101,8 @@ export interface TaskRun {
   timeUp: boolean;
   /** For plan-first tasks: the plan was approved and building has started. */
   planApproved: boolean;
+  /** When it last presented its work (the end of its working time, for estimates). */
+  presentedAt?: number;
 }
 
 export interface TeamPolicy {
@@ -117,6 +122,8 @@ export interface TeamPolicy {
   autopilot: AutopilotPolicy;
   /** Workers to start (or wake) as soon as the office opens, so they're ready by the end of the stand-up. */
   startTeam: StartTeam;
+  /** Shipping to GitHub: one pull request per goal, or one per agent from its own branch. */
+  prPer: PrPer;
 }
 
 /** The office running itself (see server/autopilot.ts). */
@@ -169,6 +176,7 @@ export const DEFAULT_POLICY: TeamPolicy = {
   gate: "fix",
   autopilot: DEFAULT_AUTOPILOT,
   startTeam: { agent: "claude", count: 0 },
+  prPer: "goal",
 };
 
 /** How many times a failed check sends the same work back before it reaches you anyway. */
@@ -191,7 +199,9 @@ export function isModelName(s: string): boolean {
   return s === "" || /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}$/.test(s);
 }
 
+/** A model as people read it: "CLI default", or "🖥 qwen3:8b" for one on this computer. */
 export function modelLabel(m: string): string {
+  if (/^(?:ollama|lmstudio)\/./.test(m)) return `🖥 ${m.slice(m.indexOf("/") + 1)}`;
   return m || "CLI default";
 }
 
@@ -227,6 +237,7 @@ export function coerceBrief(raw: unknown, policy: TeamPolicy): TaskBrief {
     ...(typeof o.auditor === "string" && o.auditWhen === "along" ? { auditWhen: "along" as const } : {}),
     ...(typeof o.notes === "string" && o.notes.trim() ? { notes: o.notes.trim().replace(/\s+/g, " ").slice(0, 2000) } : {}),
     ...(coerceAttachments(o.files).length ? { files: coerceAttachments(o.files) } : {}),
+    ...(typeof o.repo === "string" && o.repo.trim() && o.repo.length <= 1000 ? { repo: o.repo.trim() } : {}),
   };
 }
 
@@ -260,6 +271,7 @@ export function coercePolicy(raw: unknown, base: TeamPolicy = DEFAULT_POLICY): T
     gate: o.gate === "fix" || o.gate === "show" ? o.gate : base.gate,
     autopilot: coerceAutopilot((o as { autopilot?: unknown }).autopilot, base.autopilot ?? DEFAULT_AUTOPILOT),
     startTeam: coerceStartTeam(o.startTeam, base.startTeam ?? DEFAULT_POLICY.startTeam, kinds),
+    prPer: o.prPer === "goal" || o.prPer === "agent" ? o.prPer : (base.prPer ?? DEFAULT_POLICY.prPer),
   };
 }
 

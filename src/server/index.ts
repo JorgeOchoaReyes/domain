@@ -8,6 +8,8 @@ import type { TeamMember } from "../shared/standupDraft.js";
 import { BAY_DESK_IDS, DESKS } from "../shared/layout.js";
 import { Lessons } from "./lessons.js";
 import { EodSync } from "./sync.js";
+import { Huddles } from "./huddle.js";
+import { captureDemo, demoImage, demoPlan, loadDemoSettings, simDemo } from "./demo.js";
 import { scanSkills } from "./skills.js";
 import { coerceAttachments, isLeash } from "../shared/policy.js";
 import { homedir } from "node:os";
@@ -22,21 +24,25 @@ import { randomUUID } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join, normalize, extname } from "node:path";
+import { basename, dirname, join, normalize, extname } from "node:path";
 import { WebSocketServer, WebSocket } from "ws";
 import { mayDirect, AGENT_KINDS, AGENT_LABELS, coerceLook, parseClientMessage, type CheckResult, type Presentation, type ServerMessage } from "../shared/protocol.js";
-import { GATE_RETRIES, coerceBrief, coercePolicy, isModelName } from "../shared/policy.js";
+import { SIGN_IN } from "../shared/trouble.js";
+import { AGENT_CONTEXT, SLOW_TPS, isLocalModel, speedVerdict, type LocalModelInfo } from "../shared/localModels.js";
+import { COPY_CONTEXTS, ollamaCopy, ollamaShow, speedOf } from "./localModels.js";
+import { GATE_RETRIES, coerceBrief, coercePolicy, isModelName, modelLabel } from "../shared/policy.js";
 import { runCheck, simulateCheck } from "./checks.js";
 import { OpLogger } from "./oplog.js";
 import { allowed } from "./permissions.js";
 import { MODULES } from "./modules.js";
 import { describeLaunch, mcpCleanup, mcpLaunch, scanAgents, serversFor, withGithubAuth } from "./mcp.js";
 import type { ClientRec, Route, ServerCtx } from "./ctx.js";
-import { personaBrief, type WorkerIdentity } from "../shared/team.js";
+import { hireRepoChoice, personaBrief, type WorkerIdentity } from "../shared/team.js";
 import { Office } from "./office.js";
+import { OpenRepos } from "./repos.js";
 import { isTrusted, trustProject } from "./prefs.js";
 import { Progress } from "./progress.js";
-import { isTone } from "../shared/progress.js";
+import { isTone, type Goal } from "../shared/progress.js";
 import {
   Deployer,
   GoalFiles,
@@ -78,6 +84,8 @@ const CWD = process.env.DOMAIN_CWD || process.cwd();
 const SIMULATE = process.env.DOMAIN_SIMULATE === "1";
 // The office remembers who's at which desk between runs (real workers only).
 const office = new Office({ cwd: CWD, simulate: SIMULATE, trusted: () => isTrusted(CWD), memory: SIMULATE ? null : join(CWD, ".domain", "office.json") });
+// The repos open alongside the project (none until you open one): each worker works in one of them.
+const repos = new OpenRepos(CWD, SIMULATE ? null : join(CWD, ".domain", "repos.json"));
 
 // ---------------------------------------------------------------------------
 // Static file server (serves the built client in production).
@@ -234,7 +242,10 @@ progress.onChange = () => {
   progressScheduled = true;
   setImmediate(() => {
     progressScheduled = false;
-    broadcast({ t: "progress", progress: progress.snapshot() });
+    const snap = progress.snapshot();
+    broadcast({ t: "progress", progress: snap });
+    // A goal whose last task was just approved gets its demo.
+    demoDue(snap.goals);
   });
 };
 progress.onAward = (a) => broadcast({ t: "award", ...a });
@@ -266,7 +277,43 @@ setInterval(() => {
 
 /** Models served on this machine (Ollama, LM Studio), refreshed every minute. */
 let localModels: string[] = [];
-const refreshLocalModels = () => void detectLocalModels().then((m) => (localModels = m));
+/** What we know of each: its context window (Ollama) and its speed here (once a worker's hired on it). */
+const localInfo: Record<string, LocalModelInfo> = {};
+const localMsg = (): ServerMessage => ({ t: "localModels", models: localModels, info: Object.fromEntries(localModels.filter((m) => localInfo[m]).map((m) => [m, localInfo[m]])) });
+let localSent = "";
+const refreshLocalModels = (): Promise<void> =>
+  detectLocalModels().then(async (m) => {
+    localModels = m;
+    await Promise.all(
+      m.filter((x) => x.startsWith("ollama/")).map(async (x) => {
+        const show = await ollamaShow(x.slice("ollama/".length));
+        if (show) localInfo[x] = { ...localInfo[x], ...show };
+      }),
+    );
+    const msg = JSON.stringify(localMsg());
+    if (msg !== localSent) {
+      localSent = msg;
+      broadcast(localMsg());
+    }
+  });
+
+/** How fast a local model runs here: measured once a session, when a worker's first hired on it. */
+function checkSpeed(model: string): void {
+  if (!isLocalModel(model) || localInfo[model]?.tps !== undefined || SIMULATE) return;
+  localInfo[model] = { ...(localInfo[model] ?? { ctx: null, max: null }), tps: 0 };
+  const op = log.start("agent", `Speed check: ${model}`, { topic: "local" });
+  void speedOf(model).then((tps) => {
+    if (tps === null) {
+      delete localInfo[model].tps;
+      op.done(false, "Couldn't measure it (is the model server still running?)");
+      return;
+    }
+    localInfo[model].tps = tps;
+    op.done(true, `${tps} tokens a second on this computer`);
+    broadcast({ t: "loop", goalId: "", event: tps < SLOW_TPS ? "warn" : "info", text: `🖥 ${modelLabel(model)} writes ${Math.round(tps)} tokens a second here — ${speedVerdict(tps)}` });
+    broadcast(localMsg());
+  });
+}
 refreshLocalModels();
 setInterval(refreshLocalModels, 60_000).unref();
 
@@ -332,8 +379,9 @@ setInterval(() => lessons.write(), 60_000).unref();
 function toYou(presentation: Presentation): void {
   // Finished work gets a slide of what changed, from git (once).
   const ws = office.workspaceOf(presentation.deskId);
-  if (presentation.report?.status === "ready" && ws && office.workspaces && !presentation.report.slides.some((s) => s.startsWith(CHANGED_HEADING))) {
-    const slide = changedSlide(office.workspaces.diffFiles(office.workdir(presentation.deskId)));
+  const workspaces = office.workspacesOf(presentation.deskId);
+  if (presentation.report?.status === "ready" && ws && workspaces && !presentation.report.slides.some((s) => s.startsWith(CHANGED_HEADING))) {
+    const slide = changedSlide(workspaces.diffFiles(office.workdir(presentation.deskId)));
     if (slide) {
       const add = (r: NonNullable<Presentation["report"]>) => ({ ...r, slides: [...r.slides, slide] });
       office.amendReport(presentation.deskId, add);
@@ -353,7 +401,7 @@ function toYou(presentation: Presentation): void {
 const audits = new Audits({
   office,
   hasOwnTask: (deskId) => !!progress.taskAt(deskId),
-  base: () => office.workspaces?.base() ?? null,
+  base: (deskId) => office.workspacesOf(deskId)?.base() ?? null,
   nameOf: nameAt,
   release: (deskId) => {
     const presentation = office.release(deskId);
@@ -391,11 +439,21 @@ const simAudited = new Map<string, number>();
 setInterval(() => audits.tick(), 10_000).unref();
 setInterval(() => audits.checkVerdicts(), 3_000).unref();
 
+// A question a worker ends on is for you only when it's on a task.
+office.hasTask = (deskId) => progress.snapshot().goals.some((g) => g.tasks.some((t) => t.deskId === deskId && t.status !== "done"));
+// It asked you something, then worked its own way past it: off your list, and #team hears why.
+office.onMovedOn = (deskId, question) => {
+  const text = `✅ ${nameAt(deskId)} got past “${question.slice(0, 140)}” on its own and is back at work — that question's off your list.`;
+  history.add({ kind: "audit", who: "Office", text, worker: workerRef(deskId) });
+  broadcast({ t: "loop", goalId: "", event: "info", text });
+};
+
 office.onReport = (presentation) => {
   const { deskId, report } = presentation;
   // An auditor's verdict on a builder's work isn't for you: it goes back and forth.
   if (report && audits.auditorReport(deskId, report)) return;
-  const check = loadConfig(CWD).check ?? null;
+  // Each repo's own check (domain.config.json in it): the project's for workers in the project.
+  const check = loadConfig(office.repoOf(deskId)).check ?? null;
   // Finished work an auditor reviews first; otherwise it comes to you.
   const pass = (p: Presentation) => {
     if (p.report?.status === "ready" && audits.builderReady(deskId, p.report)) return;
@@ -448,12 +506,10 @@ const goalFiles = new GoalFiles(join(CWD, ".domain", "goals"), (goalId, file, te
   const goal = progress.getGoal(goalId);
   if (!goal) return;
   if (file === "plan") {
-    const added = progress.addPlannedTasks(goalId, parsePlan(text));
-    if (added) {
-      broadcast({ t: "loop", goalId, event: "planned", text: `🧠 The plan for “${goal.title}” is in: ${added} task${added === 1 ? "" : "s"} added` });
-      history.add({ kind: "goal", who: "office", text: `The plan for “${goal.title}” is in: ${added} task${added === 1 ? "" : "s"}`, goalId });
-      if (goal.group?.length) setTimeout(() => groupContinue(goalId, goal.createdBy), 1500).unref();
-    }
+    const tasks = parsePlan(text);
+    // A fresh draft goes to a team huddle first (unless that's turned off); the planner's revision ends it.
+    if (huddles.onPlan(goalId, tasks, loadDemoSettings(CWD).huddle ? huddleTeam(goal) : [])) return;
+    planLanded(goalId, tasks, []);
   } else if (file === "deck") {
     if (progress.setDeck(goalId, parseDeck(text), goalFiles.path(goalId, "deck"))) {
       broadcast({ t: "loop", goalId, event: "deck", text: `📊 The deck for “${goal.title}” was updated — ${progress.getGoal(goalId)?.deck?.slides.length ?? 0} slides` });
@@ -467,6 +523,92 @@ const goalFiles = new GoalFiles(join(CWD, ".domain", "goals"), (goalId, file, te
   }
 });
 goalFiles.start(() => progress.goalIds());
+
+/** A goal's plan is final: its tasks are added, and any a teammate asked for in the huddle are saved for them. */
+function planLanded(goalId: string, tasks: string[], claims: { deskId: string; task: string }[]): void {
+  const goal = progress.getGoal(goalId);
+  if (!goal) return;
+  const added = progress.addPlannedTasks(goalId, tasks);
+  const norm = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
+  for (const c of claims) {
+    const t = progress.getGoal(goalId)?.tasks.find((x) => norm(x.title) === norm(c.task) && x.status === "todo" && !x.deskId);
+    if (t && office.isStaffed(c.deskId)) progress.reserve(goalId, t.id, c.deskId);
+  }
+  if (added) {
+    broadcast({ t: "loop", goalId, event: "planned", text: `🧠 The plan for “${goal.title}” is in: ${added} task${added === 1 ? "" : "s"} added` });
+    history.add({ kind: "goal", who: "office", text: `The plan for “${goal.title}” is in: ${added} task${added === 1 ? "" : "s"}`, goalId });
+    if (goal.group?.length) setTimeout(() => groupContinue(goalId, goal.createdBy), 1500).unref();
+  }
+}
+
+/** Who weighs in on a goal's draft plan: its group, or else everyone free — not the planner, nobody mid-task. */
+function huddleTeam(goal: Goal): string[] {
+  const busy = new Set(progress.snapshot().goals.flatMap((g) => [...g.tasks.filter((t) => t.deskId && t.status !== "done").map((t) => t.deskId!), ...(g.id !== goal.id && g.planningDesk ? [g.planningDesk] : [])]));
+  const pool = goal.group?.length ? goal.group : activeDesks();
+  return pool.filter((d) => d !== goal.planningDesk && office.isStaffed(d) && !busy.has(d) && office.workerAt(d)?.status !== "presenting" && office.workerAt(d)?.status !== "asleep");
+}
+
+const huddles = new Huddles({
+  office: { brief: (d, text, activity, sim) => office.brief(d, text, activity, sim), nameOf: nameAt },
+  goal: (id) => progress.getGoal(id),
+  dir: (id) => goalFiles.ensure(id),
+  planPath: (id) => goalFiles.path(id, "plan"),
+  set: (id, h) => progress.setHuddle(id, h),
+  landed: (id, tasks, claims) => planLanded(id, tasks, claims),
+  note: (id, text) => {
+    broadcast({ t: "loop", goalId: id, event: "huddle", text });
+    history.add({ kind: "goal", who: "office", text: text.replace(/^🤝 /, ""), goalId: id });
+  },
+  said: (d, text) => broadcast({ t: "said", deskId: d, from: "agent", text: `🤝 ${text}` }),
+});
+
+/** The demo of a goal whose tasks are all approved: captured once, as soon as it's done. */
+const SERVER_STARTED = Date.now();
+const demosTried = new Set<string>();
+const demosRunning = new Set<string>();
+function demoDue(goals: Goal[]): void {
+  for (const g of goals) {
+    if (g.kind !== "build" || !g.doneAt || g.doneAt < SERVER_STARTED || g.shippedAt || g.demo || demosTried.has(g.id)) continue;
+    demosTried.add(g.id);
+    void runDemo(g.id);
+  }
+}
+
+/** Capture a goal's demo — a screenshot of the running app, or a command's output — and show it to everyone. */
+async function runDemo(goalId: string): Promise<void> {
+  const goal = progress.getGoal(goalId);
+  if (!goal || demosRunning.has(goalId)) return;
+  if (SIMULATE) {
+    progress.setDemo(goalId, simDemo(goal.title));
+    broadcast({ t: "loop", goalId, event: "demo", text: `🎬 The demo of “${goal.title}” is ready — everyone can watch it` });
+    return;
+  }
+  demosRunning.add(goalId);
+  try {
+    const settings = loadDemoSettings(CWD);
+    const plan = demoPlan(settings, settings.demo || settings.preview ? [] : await probeDevServers([PORT]));
+    if (!plan) {
+      broadcast({ t: "loop", goalId, event: "warn", text: `🎬 Nothing to demo for “${goal.title}” — set "demo" (a URL or a command) in domain.config.json, or start the app` });
+      return;
+    }
+    const source = plan.kind === "screenshot" ? plan.url : plan.command;
+    progress.setDemo(goalId, { kind: plan.kind, status: "running", source, output: "", image: false, exitCode: null, at: Date.now() });
+    const op = log.start(plan.kind === "terminal" ? "check" : "agent", `Demo of “${goal.title}”: ${plan.kind === "screenshot" ? `screenshot of ${source}` : source}`, plan.kind === "terminal" ? { command: source } : {});
+    const png = join(goalFiles.ensure(goalId), "demo.png");
+    const demo = await captureDemo(plan, { cwd: CWD, png });
+    op.done(demo.status === "ready", demo.output || undefined);
+    progress.setDemo(goalId, demo);
+    broadcast({
+      t: "loop",
+      goalId,
+      event: demo.status === "ready" ? "demo" : "warn",
+      text: demo.status === "ready" ? `🎬 The demo of “${goal.title}” is ready — everyone can watch it` : `🎬 The demo of “${goal.title}” didn't work out — see it in the Goals window`,
+    });
+    if (demo.image) broadcast({ t: "demoImage", goalId, at: demo.at, data: demoImage(png) });
+  } finally {
+    demosRunning.delete(goalId);
+  }
+}
 
 const deployer = new Deployer();
 deployer.onOutput = (goalId, data) => broadcast({ t: "deployOutput", goalId, data });
@@ -594,6 +736,8 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
     if (!allowed(client.role, msg.t)) {
       // Speech they can't have: say so now, so their browser's own voice speaks instead of waiting.
       if (msg.t === "tts" && typeof msg.id === "string") send(ws, { t: "ttsAudio", id: msg.id.slice(0, 40), error: "not allowed" });
+      // Nor the voice model: their 🎤 falls back to the browser's own.
+      if (msg.t === "transcribe" && typeof msg.id === "string") send(ws, { t: "transcribed", id: msg.id.slice(0, 40), error: "not allowed", fallback: true });
       return;
     }
 
@@ -606,7 +750,14 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
     const target = msg.t === "chatSend" ? str(msg.to, 64) : msg.t === "offerAnswer" ? offeredDesk(msg.taskId) : deskId;
     if (directed && target && target !== "any" && !mayDirectDesk(client, target)) {
       const w = office.workerAt(target);
-      send(ws, { t: "loop", goalId: "", event: "warn", text: `🔒 ${nameAt(target)} is ${w?.hiredBy ?? "someone else"}'s agent — you can message it; ask ${w?.hiredBy ?? "them"} to hand it work` });
+      send(ws, { t: "loop", goalId: "", event: "warn", text: w?.lentTo ? `🔒 ${nameAt(target)} is lent to ${w.lentTo} right now — you can message it` : `🔒 ${nameAt(target)} is ${w?.hiredBy ?? "someone else"}'s agent — you can message it, or ask to borrow it (🤝 on its tile in the monitor, K)` });
+      return;
+    }
+
+    // A desk in someone else's pod (while they're here) is theirs to hire at.
+    const podRefusal = (msg.t === "hire" || msg.t === "rehire") && deskId ? ctx.hireRefusal?.(client, deskId) : null;
+    if (podRefusal) {
+      send(ws, { t: "loop", goalId: "", event: "warn", text: podRefusal });
       return;
     }
 
@@ -632,6 +783,7 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
           git: office.workspaces ? { base: office.workspaces.base() } : null,
           localModels,
         });
+        send(ws, localMsg());
         if (deployer.goalId) send(ws, { t: "deployLog", goalId: deployer.goalId, data: deployer.log });
         break;
       }
@@ -656,11 +808,15 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
         const identity: WorkerIdentity | null = character
           ? { characterId: character.id, name: character.name, look: character.look, voice: character.voice }
           : null;
-        if (office.hire(msg.deskId, agent, client.name, model, leash, policy.isolate, identity)) {
+        // Its repo: the one picked on the hire card, else the character's own (when open), else where new hires work.
+        const where = hireRepoChoice(msg.repo, character, (q) => repos.find(q), repos.hireRepo);
+        if (office.hire(msg.deskId, agent, client.name, model, leash, policy.isolate, identity, where.repo)) {
+          if (where.note) broadcast({ t: "loop", goalId: "", event: "warn", text: where.note });
           warnIfTooBig(model);
           const autoless = autoModeWarning(agent, model, leash);
           if (autoless) broadcast({ t: "loop", goalId: "", event: "warn", text: autoless });
           watchLocalContext(model);
+          checkSpeed(model);
           history.add({ kind: "hired", who: client.name, text: `${client.name} hired ${nameAt(msg.deskId)} at ${msg.deskId.replace("desk-", "desk ")}`, worker: workerRef(msg.deskId) });
           if (character) progress.characterHired(character.id);
           progress.hired(client.name);
@@ -682,7 +838,7 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
         if (!a || office.workerAt(msg.deskId)) break;
         const character = a.characterId ? progress.character(a.characterId) : null;
         const identity: WorkerIdentity | null = character ? { characterId: character.id, name: character.name, look: character.look, voice: character.voice } : null;
-        if (office.hire(msg.deskId, a.agent, client.name, a.model, a.leash, progress.policy.isolate, identity)) {
+        if (office.hire(msg.deskId, a.agent, client.name, a.model, a.leash, progress.policy.isolate, identity, repos.hireRepo)) {
           alumni.remove(a.id);
           history.add({ kind: "hired", who: client.name, text: `${client.name} brought ${a.name} back, at ${msg.deskId.replace("desk-", "desk ")}`, worker: workerRef(msg.deskId) });
         }
@@ -795,6 +951,7 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
           const taskId = progress.addTask(goal.id, title);
           const files = coerceAttachments(msg.files);
           if (taskId && files.length) pendingFiles.set(taskId, files);
+          if (taskId && typeof msg.repo === "string" && repos.find(msg.repo)) pendingRepos.set(taskId, repos.find(msg.repo)!);
           if (taskId) ctx.offerTask(goal.id, taskId, title, [], client);
           break;
         }
@@ -805,7 +962,7 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
         const max = deskId ? 120 : 300;
         const title = deskId && firstLine.length <= max ? firstLine : said.length <= max ? said : `${(deskId ? firstLine : said).slice(0, max - 3).trimEnd()}…`;
         const files = coerceAttachments(msg.files);
-        const brief = { ...(title === said ? {} : { notes: said }), ...(files.length ? { files } : {}) };
+        const brief = { ...(title === said ? {} : { notes: said }), ...(files.length ? { files } : {}), ...(typeof msg.repo === "string" ? { repo: msg.repo } : {}) };
         const taskId = progress.addTask(goal.id, title);
         if (!taskId) break;
         if (!deskId) {
@@ -969,7 +1126,15 @@ function assignTask(who: string, goalId: string, taskId: string, deskId: string,
   const waiting = pendingFiles.get(taskId);
   if (waiting) pendingFiles.delete(taskId);
   const brief = coerceBrief(waiting && !raw.files ? { ...raw, files: waiting } : raw, progress.policy);
-  const got = progress.assign(who, goalId, taskId, deskId, brief);
+  // The repo it's to be done in, when it names one (or was given to everyone with one): else the worker's own.
+  const wantRepo = brief.repo ?? pendingRepos.get(taskId);
+  pendingRepos.delete(taskId);
+  const repo = wantRepo ? repos.find(wantRepo) : null;
+  // Where it's done is kept with it once other repos are open, so its pull request goes there.
+  const doneIn = repo ?? (repos.others().length ? repos.find(office.repoOf(deskId)) : null);
+  if (doneIn) brief.repo = doneIn;
+  else delete brief.repo;
+  const got = progress.assign(who, goalId, taskId, deskId, brief, { agent: desk.worker.agent, model: desk.worker.model });
   if (!got) return false;
   const paired = brief.auditor ? audits.start(deskId, brief.auditor, got.title, brief.rounds ?? DEFAULT_AUDIT_ROUNDS, brief.auditWhen === "along") : false;
   history.add({
@@ -983,10 +1148,16 @@ function assignTask(who: string, goalId: string, taskId: string, deskId: string,
   if (brief.model) warnIfTooBig(brief.model);
   // Put the worker on the task's model first: Claude Code switches in
   // place; other CLIs restart on it, so give them a moment to boot.
-  const switched = brief.model ? office.switchModel(deskId, brief.model) : "same";
+  // A task in another repo than the worker's: it moves there first (restarting, on the task's model).
+  const moved = repo ? office.moveToRepo(deskId, repo, progress.policy.isolate, brief.model || undefined) : null;
+  if (moved?.moved) {
+    broadcast({ t: "loop", goalId, event: "warn", text: `📦 ${nameAt(deskId)} moved to ${basename(repo!)} for “${got.title}”` });
+    if (moved.kept) broadcast({ t: "loop", goalId: "", event: "mergeFailed", text: `🌿 Kept ${moved.kept} — it has work that isn't on its repo's branch yet` });
+  }
+  const switched = moved?.moved ? "restarted" : brief.model ? office.switchModel(deskId, brief.model) : "same";
   const delay = switched === "restarted" ? 6000 : switched === "switched" && !SIMULATE ? 1500 : 0;
   const ws = office.workspaceOf(deskId);
-  if (ws) office.workspaces?.sync(ws.path);
+  if (ws) office.workspacesOf(deskId)?.sync(ws.path);
   // The team's lessons in its own folder before it starts (the brief says to read them first).
   lessons.write();
   // Files you attached go into its own folder (no asking for access), and the brief points at them.
@@ -1018,6 +1189,7 @@ function assignTask(who: string, goalId: string, taskId: string, deskId: string,
  */
 function fireWorker(who: string, deskId: string, reason?: string): boolean {
   const ws = office.workspaceOf(deskId);
+  const workspaces = office.workspacesOf(deskId);
   const leaving = workerRef(deskId);
   const w = office.workerAt(deskId);
   const tasksDone = history.of({ deskId, characterId: w?.identity?.characterId }).filter((e) => e.kind === "approved").length;
@@ -1034,7 +1206,7 @@ function fireWorker(who: string, deskId: string, reason?: string): boolean {
   // Its MCP configs may hold tokens: they go with it.
   mcpCleanup(CWD, deskId);
   gateTries.delete(deskId);
-  if (ws && office.workspaces?.remove(ws) === "kept") {
+  if (ws && workspaces?.remove(ws) === "kept") {
     broadcast({ t: "loop", goalId: "", event: "mergeFailed", text: `🌿 Kept ${ws.branch} — it has work that isn't on your branch yet` });
   }
   return true;
@@ -1048,14 +1220,16 @@ function fireWorker(who: string, deskId: string, reason?: string): boolean {
 function reviewWork(who: string, deskId: string, approve: boolean, text?: string, sketch?: string): boolean {
   const wasPlan = office.reportStatus(deskId) === "plan";
   const ws = office.workspaceOf(deskId);
-  if (approve && !wasPlan && ws && office.workspaces && progress.policy.merge === "auto") {
+  // Its branch merges into its own repo's branch (the project's, or another open repo's).
+  const workspaces = office.workspacesOf(deskId);
+  if (approve && !wasPlan && ws && workspaces && progress.policy.merge === "auto") {
     const at = progress.taskAt(deskId);
     const title = at?.title ?? "work";
-    office.workspaces.commitAll(office.workdir(deskId), `domain: ${title}`);
-    const m = office.workspaces.merge(ws.branch, title);
+    workspaces.commitAll(office.workdir(deskId), `domain: ${title}`);
+    const m = workspaces.merge(ws.branch, title);
     if (m.outcome === "conflict") {
       // It can't land cleanly: back to the worker to resolve, not onto your branch.
-      const base = office.workspaces.base() ?? "your branch";
+      const base = workspaces.base() ?? "your branch";
       if (office.review(deskId, false, `Approved — but your branch conflicts with ${base}. Merge ${base} into your branch, resolve the conflicts, make sure the checks pass, and present again.`)) {
         progress.reviewed(who, deskId, false);
       }
@@ -1117,7 +1291,19 @@ function personaFor(deskId: string): string {
 
 const ctx: ServerCtx = {
   mayDirectDesk: (client, deskId) => mayDirectDesk(client, deskId),
+  hireFor: (client) => {
+    const policy = progress.policy;
+    const agent = policy.startTeam.agent;
+    const who = client?.name ?? "Office";
+    // Not the intern bay, and not someone else's pod.
+    const desk = office.snapshot().desks.find((d) => !d.worker && !BAY_DESK_IDS.includes(d.id) && !(client && ctx.hireRefusal?.(client, d.id)));
+    if (!desk || !office.hire(desk.id, agent, who, policy.defaultModel[agent], policy.leash, policy.isolate, null, repos.hireRepo)) return null;
+    warnIfTooBig(policy.defaultModel[agent]);
+    history.add({ kind: "hired", who, text: `${who === "Office" ? "The office" : who} hired ${nameAt(desk.id)} at ${desk.id.replace("desk-", "desk ")} for a task nobody was free for`, worker: workerRef(desk.id) });
+    return desk.id;
+  },
   cwd: CWD,
+  repos,
   port: PORT,
   simulate: SIMULATE,
   office,
@@ -1207,7 +1393,7 @@ function watchLocalContext(model: string): void {
         t: "loop",
         goalId: "",
         event: "warn",
-        text: `🧠 ${name} is running with a ${Math.round(ctxLen / 1024)}K context window — an agent needs 32K or more. In Ollama's settings set Context length to 32K (or start Ollama with OLLAMA_CONTEXT_LENGTH=32768), then hire it again. And keep its tasks small.`,
+        text: `🧠 ${name} is running with a ${Math.round(ctxLen / 1024)}K context window — an agent needs ${AGENT_CONTEXT / 1024}K or more. Team defaults → 🖥 makes a ${AGENT_CONTEXT / 1024}K copy of it in one click (or set Context length in Ollama's settings), then hire that. And keep its tasks small.`,
       });
     }
   };
@@ -1237,6 +1423,7 @@ function internRequests(): { deskId: string; pieces: string[] }[] {
 }
 
 const autopilot = new Autopilot({
+  speed: (model) => localInfo[model]?.tps || undefined,
   policy: () => progress.policy,
   goals: () => progress.snapshot().goals,
   desks: () => office.snapshot().desks,
@@ -1247,7 +1434,8 @@ const autopilot = new Autopilot({
   approve: (d) => void reviewWork("Autopilot", d, true),
   addTask: (g, title) => progress.addTask(g, title),
   hire: (deskId, agent, model, leash, mentor) => {
-    if (!office.hire(deskId, agent, "Autopilot", model, leash, progress.policy.isolate, null)) return false;
+    // An intern works in its mentor's repo.
+    if (!office.hire(deskId, agent, "Autopilot", model, leash, progress.policy.isolate, null, office.repoOf(mentor))) return false;
     office.setInternOf(deskId, mentor);
     history.add({ kind: "hired", who: "Autopilot", text: `${nameAt(mentor)} brought in an intern at ${deskId.replace("desk-", "desk ")}`, worker: workerRef(deskId) });
     return true;
@@ -1259,7 +1447,8 @@ const autopilot = new Autopilot({
   sessionGoal: () => progress.snapshot().session?.goalId ?? null,
   diffLines: (deskId) => {
     const ws = office.workspaceOf(deskId);
-    return ws && office.workspaces ? office.workspaces.diffLines(office.workdir(deskId)) : null;
+    const workspaces = office.workspacesOf(deskId);
+    return ws && workspaces ? workspaces.diffLines(office.workdir(deskId)) : null;
   },
   note: (text, deskId) => {
     history.add({ kind: "audit", who: "Autopilot", text, ...(deskId ? { worker: workerRef(deskId) } : {}) });
@@ -1303,6 +1492,8 @@ function autoModeWarning(agent: string, model: string, leash: string): string | 
 
 /** Files attached to a task given to everyone, until someone takes it. */
 const pendingFiles = new Map<string, { name: string; text: string }[]>();
+/** The repo a task given to everyone is to be done in, until someone takes it. */
+const pendingRepos = new Map<string, string>();
 
 /** Write attached files into a worker's .domain/notes/ (kept out of git); returns the names written. */
 function writeAttachments(workdir: string, files: { name: string; text: string }[]): string[] {
@@ -1322,7 +1513,7 @@ function writeAttachments(workdir: string, files: { name: string; text: string }
 }
 
 /** What directs a worker (rather than just watching or talking to it). */
-const DIRECTING = new Set<string>(["input", "fire", "taskAssign", "quickTask", "review", "say", "plan", "ship", "wake", "ideaHandoff", "offerAnswer"]);
+const DIRECTING = new Set<string>(["input", "fire", "taskAssign", "quickTask", "review", "say", "plan", "ship", "wake", "restartWorker", "workerSignIn", "ideaHandoff", "offerAnswer", "workerRepo"]);
 
 /** The people in the office now (by name). */
 function presentNames(): string[] {
@@ -1363,7 +1554,7 @@ function startTeam(): void {
   for (const d of desks()) {
     if (staffed >= count) break;
     if (d.worker || BAY_DESK_IDS.includes(d.id)) continue;
-    if (!office.hire(d.id, agent, "Office", progress.policy.defaultModel[agent], progress.policy.leash, progress.policy.isolate, null)) continue;
+    if (!office.hire(d.id, agent, "Office", progress.policy.defaultModel[agent], progress.policy.leash, progress.policy.isolate, null, repos.hireRepo)) continue;
     history.add({ kind: "hired", who: "Office", text: `The office started ${nameAt(d.id)} at ${d.id.replace("desk-", "desk ")} (your starting team)`, worker: workerRef(d.id) });
     staffed++;
     hired++;
@@ -1391,6 +1582,34 @@ routes.set("wake", (msg, client) => {
   const n = office.wake(deskId);
   if (n) log.start("agent", `${client.name} woke ${n === 1 && deskId ? `the worker at ${deskId}` : `${n} worker${n === 1 ? "" : "s"}`}: each picks up its last conversation`).done(true);
 });
+// A worker stuck (or after an update): its agent starts again, back in its last conversation.
+routes.set("restartWorker", (msg, client) => {
+  if (typeof msg.deskId !== "string") return;
+  if (office.restart(msg.deskId, `${client.name} restarted your session.`)) log.start("agent", `${client.name} restarted ${nameAt(msg.deskId)} at ${msg.deskId.replace("desk-", "desk ")}: back in its last conversation`).done(true);
+});
+// A copy of an Ollama model with a bigger context window (same weights, nothing downloaded).
+routes.set("localCopy", (msg) => {
+  const model = typeof msg.model === "string" ? msg.model : "";
+  const ctx = Number(msg.ctx);
+  if (!model.startsWith("ollama/") || !localModels.includes(model) || !(COPY_CONTEXTS as readonly number[]).includes(ctx)) return;
+  const name = model.slice("ollama/".length);
+  const op = log.start("agent", `Making a ${ctx / 1024}K-context copy of ${name}`, { topic: "local" });
+  void ollamaCopy(name, ctx).then(async (to) => {
+    if (!to) {
+      op.done(false, "Ollama couldn't make it — is it running, and 0.5 or newer?");
+      return;
+    }
+    await refreshLocalModels();
+    op.done(true, `ollama/${to} is ready — hire it, or pick it for a task. It needs more memory than the original.`);
+    broadcast({ t: "loop", goalId: "", event: "info", text: `🖥 ollama/${to} is ready: ${name} with a ${ctx / 1024}K context window` });
+  });
+});
+// Signed out: start the CLI's own sign-in in its terminal (where it has one; else the desk says what to run).
+routes.set("workerSignIn", (msg) => {
+  const w = typeof msg.deskId === "string" ? office.workerAt(msg.deskId) : null;
+  const slash = w ? SIGN_IN[w.agent].slash : undefined;
+  if (w && slash) office.nudge(msg.deskId as string, slash);
+});
 // You said this project's worker folders can be trusted: remember it, and answer any agent asking now.
 routes.set("trustWorkers", () => {
   trustProject(CWD);
@@ -1404,8 +1623,23 @@ routes.set("standupVoice", (msg, _client, ws) => {
   const open = snap.goals.filter((g) => !g.doneAt && !g.shippedAt).map((g) => g.title);
   void draftStandup(text, open, { simulate: SIMULATE, team: teamForPlanning() }).then(({ draft, via }) => send(ws, { t: "standupDraft", draft, via }));
 });
-// The desktop app's 🎤: Windows voice typing, into the box that has focus.
-routes.set("dictate", () => void toggleDictation());
+// The desktop app's 🎤: the computer's dictation (Windows voice typing, macOS dictation), into the box that has focus.
+routes.set("dictate", (_msg, _client, ws) => void toggleDictation().then((r) => send(ws, { t: "dictated", ...r })));
+// The team huddle on a plan, cut short: the plan as it stands goes out.
+routes.set("huddleSkip", (msg) => {
+  const goalId = str(msg.goalId, 64);
+  if (goalId) huddles.skip(goalId);
+});
+// A goal's demo, captured (again) on request; and its screenshot, for whoever asks.
+routes.set("demo", (msg) => {
+  const goalId = str(msg.goalId, 64);
+  if (goalId && progress.getGoal(goalId)) void runDemo(goalId);
+});
+routes.set("demoGet", (msg, _client, ws) => {
+  const goalId = str(msg.goalId, 64);
+  const demo = goalId ? progress.getGoal(goalId)?.demo : null;
+  if (goalId && demo?.image) send(ws, { t: "demoImage", goalId, at: demo.at, data: demoImage(join(goalFiles.dir(goalId), "demo.png")) });
+});
 // Resume yesterday: the team wakes, and the last stand-up's plan starts again with its tasks handed out.
 routes.set("resume", (_msg, client) => {
   const plan = progress.lastPlan;

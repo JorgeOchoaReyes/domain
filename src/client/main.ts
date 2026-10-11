@@ -1,7 +1,8 @@
 import { ingestAlumni, openFire } from "./ui/fire.js";
+import { needsAnswer } from "../shared/asking.js";
 import { ingestLessons, openLessons } from "./ui/lessons.js";
 import { ingestSkills } from "./ui/skills.js";
-import { ingestVoices, osDictationHint, speak, useVoices } from "./voice.js";
+import { duckWhileListening, ingestVoices, osDictationHint, speak, useVoices } from "./voice.js";
 import { openVoices } from "./ui/voices.js";
 import { openGiveTask } from "./ui/waiting.js";
 import type { AgentKind, ClientMessage, Desk, Look, OfficeState, Presentation } from "../shared/protocol.js";
@@ -28,7 +29,7 @@ import {
   JUKEBOXES,
   GONG,
 } from "../shared/layout.js";
-import { ALL_ARCADES, BAY_DESK_IDS, UPSTAIRS, UP_ELEVATOR, WORK_SPOTS, inUpstairs, TEAM_FLOOR, TEAM_ELEVATOR, inTeamFloor, floorOf, type WorkSpot } from "../shared/layout.js";
+import { ALL_ARCADES, BAY_DESK_IDS, UPSTAIRS, UP_ELEVATOR, WORK_SPOTS, inUpstairs, TEAM_FLOOR, inTeamFloor, floorOf, teamElevatorX, type WorkSpot } from "../shared/layout.js";
 import { Activities } from "./ui/activities.js";
 import { myLaptopProp } from "./scene/laptop.js";
 import { Net } from "./net.js";
@@ -37,7 +38,8 @@ import { Player, type ViewMode } from "./scene/player.js";
 import { ShotMeter } from "./scene/minigames.js";
 import { openArcade, arcadeBest } from "./ui/arcade.js";
 import { openStandup, standupDraftArrived, type StandupPlan } from "./ui/standup.js";
-import { openTeleport, placeDestinations, teleportFlash, type Destination } from "./ui/teleport.js";
+import { openTeleport, placeDestinations, setTeamFloorsOpen, teleportFlash, type Destination } from "./ui/teleport.js";
+import { ingestArcade } from "./ui/arcadeScores.js";
 import { Minimap } from "./ui/minimap.js";
 import { ObjectiveTracker, nextObjective, type Objective } from "./ui/objective.js";
 import { MyLaptop } from "./ui/mylaptop.js";
@@ -61,13 +63,21 @@ import { askPasscode, guestBadge, guestRole, needsPasscode, openNearby, showDisc
 import { githubTools, ingestMcp, openMcp } from "./ui/mcp.js";
 import { ingestLogs, openLogs } from "./ui/logs.js";
 import { openOfficeMenu, type OfficeTile } from "./ui/officemenu.js";
-import { ingestProjects, openProjects, projectBadge, projectState } from "./ui/projects.js";
+import { addRepoThen, ingestProjects, openProjects, projectBadge, projectState, setProjectSender } from "./ui/projects.js";
 import { ingestGithub } from "./ui/github.js";
 import { agentsState, ingestAgents, installAgent, isInstalled, setAgentsSender } from "./ui/agents.js";
+import { openAgentClis } from "./ui/agentclis.js";
+import { canUpdate, updateTarget } from "../shared/agents.js";
 import { openHire, openTeam, type TeamContext } from "./ui/team.js";
+import { ingestPods, initPods, podsState } from "./ui/pods.js";
+import { PodSigns } from "./scene/podsigns.js";
 import { openPolicy } from "./ui/policy.js";
-import type { LoopHandlers } from "./ui/loop.js";
+import { loopState, type LoopHandlers } from "./ui/loop.js";
+import { openHuddle } from "./ui/huddle.js";
+import { ingestDemo, openDemo } from "./ui/demo.js";
 import { Hud } from "./ui/hud.js";
+import { InboxPanel } from "./ui/inbox.js";
+import { buildInbox, inboxBadge, pruneNotes, type InboxItem } from "../shared/inbox.js";
 import { TerminalOverlay } from "./ui/terminal.js";
 import { ReviewPanel } from "./ui/review.js";
 import { ProjectorReview } from "./ui/projector.js";
@@ -149,6 +159,12 @@ const music = new Music();
 // Browsers only let sound start after you click or press a key: start it then.
 /** The sound of the place: hum and keyboards indoors, wind and birds out; Settings has its volume. */
 const ambience = new Ambience();
+// The office's sound goes quiet while the 🎤 records you.
+duckWhileListening((on) => {
+  const k = on ? 0.12 : 1;
+  if (music.playing) music.set({ on: true, track: settings.track, volume: settings.musicVolume * k });
+  if (ambience.playing) ambience.set({ on: true, volume: settings.ambienceVolume * k });
+});
 const startMusic = () => {
   music.set({ on: settings.music, track: settings.track, volume: settings.musicVolume });
   ambience.set({ on: settings.ambience, volume: settings.ambienceVolume });
@@ -193,6 +209,7 @@ const hud = new Hud(hudRoot, {
   onOpenWorker: (deskId) => (guestRole() === "visitor" ? openTerminal(deskId) : openChat(deskId)),
   onRoundup: () => openRoundup(),
   onOfficeHours: () => startOfficeHours(),
+  onInbox: () => inbox.toggle(),
   onGoals: () => openGoals(),
   onFocus: () => openFocus(),
   onProfile: () => openProfile(me(), progress),
@@ -266,24 +283,19 @@ function openSettingsNow(): void {
   });
 }
 const shotMeter = new ShotMeter();
-// The Office menu: projects and GitHub, your team, MCP tools, inviting people, logs.
-const officeBtn = document.createElement("button");
-officeBtn.className = "btn dock-btn";
-officeBtn.dataset.act = "office";
-officeBtn.title = "Office: projects & GitHub, your team, MCP tools, invite people, logs";
-officeBtn.innerHTML = `🏢 <span class="lbl">Office</span>`;
-officeBtn.addEventListener("click", () => openOfficeMenuNow());
-hudRoot.querySelector('.dock [data-act="settings"]')?.before(officeBtn);
+// The Office menu (in ☰ More): projects and GitHub, your team, MCP tools, inviting people, logs.
+hud.addMenuItem({ act: "office", icon: "🏢", label: "Office…", title: "Projects & GitHub, your team, voices, lessons, history, MCP tools, invite people, logs", run: () => openOfficeMenuNow() });
 /** The Office menu's tiles (features add theirs here). */
 const officeTiles: OfficeTile[] = [
-  { key: "projects", icon: "github", title: "Projects & GitHub", text: "Which project your workers are on — switch, or clone one from GitHub", run: () => openProjects(projectActions()) },
+  { key: "projects", icon: "github", title: "Projects & GitHub", text: "The repos your workers work in — add one from this computer or GitHub, or switch", run: () => openProjects(projectActions()) },
   { key: "team", icon: "👥", title: "Your team", text: "Characters with names, looks, voices and personas you hire again and again", run: () => openTeam(teamCtx()) },
   { key: "voices", icon: "🗣", title: "Voices", text: "Lifelike ElevenLabs voices for your workers, with your API key", run: () => openVoices((m) => net.send(m), !guestRole()) },
   { key: "lessons", icon: "📚", title: "Lessons", text: "What your team has learned from your feedback and each other — and the end-of-day sync", run: () => openLessons((m) => net.send(m), guestRole() !== "visitor") },
   { key: "history", icon: "📜", title: "History", text: "Everything you and your workers have done — by day, or by worker", run: () => openHistory((m) => net.send(m)) },
   { key: "chat", icon: "💬", title: "Team chat", text: "Message any worker, or everyone — see what each is doing and what it has done", run: () => openChat() },
   { key: "ideas", icon: "💡", title: "Idea board", text: "Sketch an idea and hand it to a worker, or make it a goal — also at the whiteboards", run: () => openIdeas(null) },
-  { key: "mcp", icon: "mcp", title: "MCP tools", text: "Tools your workers can use — add once, give to whoever needs them", hostOnly: true, run: () => openMcp({ progress: () => progress, send: (m) => net.send(m), isHost: () => !guestRole() }) },
+  { key: "clis", icon: "⬆", title: "Agent CLIs", text: "Which version of each coding agent you have — update, or stay on one that works", hostOnly: true, run: () => openAgentClis((m) => net.send(m), () => openLogs()) },
+  { key: "mcp", icon: "mcp", title: "MCP tools", text: "Tools your workers can use — add once, give to whoever needs them", hostOnly: true, run: () => openMcpNow() },
   { key: "invite", icon: "📡", title: "Invite people", text: "Share your office with people on your Wi-Fi, with a passcode", hostOnly: true, run: () => openInviteNow() },
   { key: "nearby", icon: "📶", title: "Join a nearby office", text: "Offices shared on your network", hostOnly: true, run: () => openNearby({ send: (m) => net.send(m) }) },
   { key: "logs", icon: "log", title: "Logs", text: "Every git, GitHub, MCP, check and deploy step, with output", run: () => openLogs() },
@@ -292,6 +304,12 @@ function openOfficeMenuNow(): void {
   if (modalOpen()) return;
   openOfficeMenu(officeTiles, !!guestRole());
 }
+function openMcpNow(): void {
+  openMcp({ progress: () => progress, send: (m) => net.send(m), isHost: () => !guestRole() });
+}
+// Repos and MCP tools straight from More, too (not only inside the Office menu).
+hud.addMenuItem({ act: "repos", icon: "📦", label: "Repos & GitHub", title: "The repos your workers work in — add one from this computer, GitHub, a folder, or a new one", run: () => openProjects(projectActions()) });
+const mcpMenuItem = hud.addMenuItem({ act: "mcp", icon: "🔌", label: "MCP tools", title: "Tools your workers can use — and the ones your agent CLIs already have", run: () => openMcpNow() });
 const lanChipEl = document.createElement("div");
 lanChipEl.className = "lan-chip-slot";
 hudRoot.querySelector(".project")?.appendChild(lanChipEl);
@@ -330,6 +348,8 @@ const loopHandlers: LoopHandlers = {
   openDeck: (goal) => openDeck(goal),
   openLaptop: (app) => laptop.open(app),
   assign: (goalId, taskId, deskId) => openAssignFor(goalId, taskId, deskId),
+  openHuddle: (goal) => openHuddle(goal.id, { goal: goalById, desks: () => office.desks, send: (m) => net.send(m) }),
+  openDemo: (goal) => openDemo(goal.id, { goal: goalById, send: (m) => net.send(m) }),
   hire: () => {
     escapeModal();
     if (here !== "floor") travelTo({ label: "Work floor", icon: "🖥", ...SPAWN });
@@ -359,6 +379,17 @@ function openMonitorNow(focus?: string): void {
   monitorView = openMonitor(monitorActions, () => (monitorView = null), focus).view;
 }
 const laptop = new MyLaptop(loopHandlers, monitorActions);
+// ＋ Hire a worker, from the laptop: the hire card for the next free desk (not the intern bay).
+laptop.hireAny = () => {
+  const d = office.desks.find((x) => !x.worker && !BAY_DESK_IDS.includes(x.id));
+  if (d) hire(d);
+  else hud.toast("🪑 Every desk's taken — let someone go first", "warn");
+};
+// The laptop's Repo app: ＋ Add a repo (the Projects window's chooser), and MCP tools.
+setProjectSender((m) => net.send(m));
+laptop.openProjects = (add) => openProjects(projectActions(), add ? { add } : {});
+laptop.openMcp = () => openMcpNow();
+laptop.addRepoThen = (then) => addRepoThen(projectActions(), then);
 const goals = new GoalsWindow({
   loop: loopHandlers,
   create: (title, why, tasks, kind, dueAt) => net.send({ t: "goalCreate", title, why, tasks, kind, dueAt: dueAt ?? null }),
@@ -405,6 +436,10 @@ let here: RoomId = "standup";
 let hoopStreak = 0;
 let goals_ = { west: 0, east: 0 };
 
+function goalById(id: string): Goal | undefined {
+  return progress.goals.find((g) => g.id === id);
+}
+
 function deskById(id: string | null): Desk | undefined {
   return id ? office.desks.find((d) => d.id === id) : undefined;
 }
@@ -433,8 +468,11 @@ net.onMessage = (msg) => {
   ingestLessons(msg);
   ingestVoices(msg);
   ingestAlumni(msg);
+  ingestDemo(msg);
   ingestGithub(msg);
-  if (msg.t === "project") showProject();
+  ingestPods(msg);
+  ingestArcade(msg, world.gameRoom, (text, quiet) => hud.toast(text, quiet ? "note" : ""), myName);
+  if (msg.t === "project" || msg.t === "githubAccount" || msg.t === "guest") showProject();
   if (msg.t === "guest") showGuestBadge();
   switch (msg.t) {
     case "loop":
@@ -445,9 +483,20 @@ net.onMessage = (msg) => {
         hud.toast(msg.text, "warn");
       } else {
         if (msg.event === "merged") sound.xp();
-        hud.toast(msg.text);
+        // Routine news (a plan landed, a merge, a deck, a huddle's step) goes to Recent; shipping and time-ups pop up.
+        hud.toast(msg.text, msg.event === "shipped" || msg.event === "timeUp" ? "" : "note");
         if (msg.event === "planned" || msg.event === "deck") sound.xp();
         if (msg.event === "deployStarted") sound.bell();
+        // The team huddle and the demo are for everyone: Arnold offers to show them.
+        if ((msg.event === "huddle" || msg.event === "demo") && msg.goalId && !reviewing()) {
+          const goal = goalById(msg.goalId);
+          const watch = msg.event === "demo" ? loopHandlers.openDemo : loopHandlers.openHuddle;
+          // (A huddle is offered as it starts, not at each step.)
+          if (goal && (msg.event === "demo" || msg.text.startsWith("🤝 Huddle on the plan"))) {
+            addNote({ id: `${msg.event}-${msg.goalId}`, kind: msg.event, urgency: 1, icon: msg.event === "demo" ? "🎬" : "🤝", title: msg.text, ref: msg.goalId, at: Date.now(), actions: [{ id: "watch", label: msg.event === "demo" ? "🎬 Watch the demo" : "🤝 Watch the huddle", primary: true }] });
+            assistant.say({ id: `${msg.event}-${msg.goalId}`, urgency: 2, text: msg.text, action: { label: msg.event === "demo" ? "🎬 Watch the demo" : "🤝 Watch the huddle", run: () => watch?.(goalById(msg.goalId) ?? goal) } });
+          }
+        }
       }
       break;
     case "welcome":
@@ -460,6 +509,8 @@ net.onMessage = (msg) => {
       net.send({ t: "chatGet" });
       useVoices((m) => net.send(m));
       net.send({ t: "historyGet" });
+      net.send({ t: "podsGet" });
+      net.send({ t: "arcadeGet" });
       break;
     case "office":
       office = msg.office;
@@ -502,7 +553,9 @@ net.onMessage = (msg) => {
         sound.chime();
         phone.notify(`${name} ${what}${r.status === "ready" ? " — ready to review" : ""}`, "reviews");
       }
-      hud.toast(`📋 ${name} ${what} — lining up outside your office${away() ? " · T to head over" : ""}`);
+      // It's in Needs you (and on the phone, and Arnold offers it): no toast as well.
+      hud.note(`📋 ${name} ${what} — lining up outside your office`);
+      refreshInbox();
       if (r && !reviewing()) {
         assistant.say(
           { id: `ready-${p.deskId}-${r.at}`, urgency: 3, text: `${name} ${what}. It's lined up outside your office.`, action: { label: "🎤 Review now", run: () => openMonitorNow(p.deskId) } },
@@ -514,6 +567,7 @@ net.onMessage = (msg) => {
     case "progress": {
       const startedNow = !progress.session && msg.progress.session;
       progress = msg.progress;
+      refreshInbox();
       world.setProgress(progress);
       monitorView?.refresh();
       goals.update(progress, office.desks, office.presentations);
@@ -656,20 +710,28 @@ function away(): boolean {
 
 function applyOffice(): void {
   world.sync(office.desks, office.presentations, office.peers, selfId);
+  if (setTeamFloorsOpen(world.teamFloorsOpen)) hud.toast(`🛗 Floor ${world.teamFloorsOpen + 2} is open — the team outgrew the floor below. Take the elevator up (or T)`);
   // A worker that just started needing you gets a shout, wherever you are.
   for (const desk of office.desks) {
     const st = desk.worker?.status;
     const before = lastStatus.get(desk.id);
+    // A question in words counts too ("asking" is its own state here, so it shouts once).
+    const asks = desk.worker?.asking ? "asking" : st;
+    if (asks === "asking" && before && before !== "asking") {
+      sound.click();
+      hud.toast(`❓ ${desk.worker!.identity?.name ?? AGENT_LABELS[desk.worker!.agent]} asks: ${desk.worker!.asking!.slice(0, 90)} · I to answer${away() ? " · T to jump there" : ""}`, "warn");
+    }
     if (st === "waiting" && before && before !== "waiting") {
       sound.click();
-      hud.toast(`🔴 ${AGENT_LABELS[desk.worker!.agent]} at ${desk.label} needs you${away() ? " · press T to jump there" : ""}`, "warn");
+      hud.toast(`🔴 ${desk.worker!.identity?.name ?? AGENT_LABELS[desk.worker!.agent]} at ${desk.label} needs you · I to answer${away() ? " · T to jump there" : ""}`, "warn");
     }
-    if (st) lastStatus.set(desk.id, st);
+    if (st) lastStatus.set(desk.id, asks!);
     else lastStatus.delete(desk.id);
   }
   goals.update(progress, office.desks, office.presentations);
   monitorView?.refresh();
   hud.update(office.desks, office.presentations, office.peers, selfId);
+  refreshInbox();
   objective.update(nextObjective(progress, office.desks, office.presentations));
 
   // Each laptop shows its worker's terminal: fetch the scrollback once per worker.
@@ -687,7 +749,7 @@ function applyOffice(): void {
   if (terminal.isOpen && terminal.deskId) {
     const desk = deskById(terminal.deskId);
     if (!desk?.worker) terminal.close();
-    else terminal.setStatus(desk.worker.status);
+    else terminal.setWorker(desk.worker);
   }
 
   // Office hours you asked for while the work was still being checked: now someone's ready.
@@ -738,7 +800,22 @@ function openTerminal(deskId: string): void {
     onClose: () => {
       terminalPending = null;
     },
+    send: (m) => net.send(m),
+    addRepoThen: (then) => addRepoThen(projectActions(), then),
+    onFix: (fix) => {
+      const w = deskById(deskId)?.worker;
+      if (!w) return;
+      const name = w.identity?.name ?? AGENT_LABELS[w.agent];
+      if (fix === "restart") {
+        net.send({ t: "restartWorker", deskId });
+        hud.toast(`🔄 Restarting ${name} — back in its last conversation`);
+      } else if (fix === "update") {
+        net.send({ t: "agentUpdate", agent: w.agent });
+        hud.toast(`⬆ Updating ${AGENT_LABELS[w.agent]} once its workers are free — the output's in Office → Logs`);
+      } else net.send({ t: "workerSignIn", deskId });
+    },
   });
+  terminal.setWorker(desk.worker);
   net.send({ t: "open", deskId });
 }
 
@@ -752,12 +829,13 @@ function hire(desk: Desk): void {
         pendingOpen = desk.id;
       },
       getAlumni: () => net.send({ t: "alumniGet" }),
-      onHire: (choice) => {
-        net.send(
-          typeof choice === "string"
-            ? { t: "hire", deskId: desk.id, agent: "claude", characterId: choice }
-            : { t: "hire", deskId: desk.id, agent: choice.agent as AgentKind, model: choice.model, leash: choice.leash },
-        );
+      onHire: (choice, repo) => {
+        net.send({
+          ...(typeof choice === "string"
+            ? { t: "hire" as const, deskId: desk.id, agent: "claude" as AgentKind, characterId: choice }
+            : { t: "hire" as const, deskId: desk.id, agent: choice.agent as AgentKind, model: choice.model, leash: choice.leash }),
+          ...(repo ? { repo } : {}),
+        });
         pendingOpen = desk.id;
       },
     },
@@ -774,6 +852,7 @@ function teamCtx(): TeamContext {
     onEditPolicy: () => openPolicyNow(),
     scanMcp: () => net.send({ t: "mcpScan" }),
     getSkills: () => net.send({ t: "skillsGet" }),
+    addRepoThen: (then) => addRepoThen(projectActions(), then),
   };
 }
 
@@ -798,10 +877,18 @@ function showProject(): void {
   if (!badge) {
     badge = document.createElement("div");
     badge.className = "project-badge-slot";
-    hudRoot.querySelector(".project")?.appendChild(badge);
-    badge.addEventListener("click", () => openProjects(projectActions()));
+    const panel = hudRoot.querySelector<HTMLElement>(".project");
+    panel?.appendChild(badge);
+    // The goal card sits just under the project card, however tall that gets.
+    if (panel) new ResizeObserver(() => document.documentElement.style.setProperty("--project-bottom", `${Math.round(panel.getBoundingClientRect().bottom)}px`)).observe(panel);
+    // The project, its repos, GitHub, ＋ Add repo: each opens the Projects & GitHub window (on its part).
+    badge.addEventListener("click", (e) => {
+      const what = (e.target as HTMLElement).closest<HTMLElement>("[data-pj]")?.dataset.pj ?? "open";
+      openProjects(projectActions(), what === "add" ? { add: "local" } : what === "github" ? { add: "github" } : {});
+    });
   }
   badge.innerHTML = projectBadge();
+  mcpMenuItem.hidden = !!guestRole();
 }
 
 /**
@@ -822,6 +909,8 @@ function openAssignFor(goalId: string, taskId: string, deskId?: string, backToGo
     policy: progress.policy,
     deskId,
     busy,
+    history: progress.estimates,
+    addRepoThen: (then) => addRepoThen(projectActions(), then),
     onAssign: (desk, brief) => {
       net.send({ t: "taskAssign", goalId, taskId, deskId: desk, brief });
       sound.click();
@@ -842,7 +931,7 @@ function openPolicyNow(): void {
   openPolicy(progress.policy, (p) => {
     net.send({ t: "policySet", policy: p });
     hud.toast("🛠 Team policy saved — new hires and assignments start from it");
-  });
+  }, guestRole() ? undefined : (m) => net.send(m));
 }
 
 function openRoundup(): void {
@@ -943,7 +1032,9 @@ function warnVoice(err: string): void {
   hud.toast(
     err === "not-allowed"
       ? "🎤 Microphone blocked — allow it to talk to workers"
-      : /Electron/.test(navigator.userAgent)
+      : err !== "network" && err !== "unsupported" && err !== "service-not-allowed"
+        ? `🎤 ${err}`
+        : /Electron/.test(navigator.userAgent)
         ? `🎤 To talk, click in a text box and ${osDictationHint()} — your computer types what you say`
         : `🎤 Voice input isn't available in this window — open ${location.origin} in Chrome to talk, or type`,
     "warn",
@@ -975,9 +1066,9 @@ function onIdeas(next: Idea[]): void {
   for (const i of next) {
     const before = ideas.find((x) => x.id === i.id);
     if (before && before.status === i.status) continue;
-    if (i.status === "handed") hud.toast(`🤝 “${i.title}” handed to ${i.handedTo?.name ?? "a worker"} — it's on the goal as a task`);
-    else if (i.status === "goal") hud.toast(`🎯 “${i.title}” is a goal now — plan it or hand out its tasks (G)`);
-    else if (!before) hud.toast(`📌 Pinned to the idea board: “${i.title}”`);
+    if (i.status === "handed") hud.note(`🤝 “${i.title}” handed to ${i.handedTo?.name ?? "a worker"} — it's on the goal as a task`);
+    else if (i.status === "goal") hud.note(`🎯 “${i.title}” is a goal now — plan it or hand out its tasks (G)`);
+    else if (!before) hud.note(`📌 Pinned to the idea board: “${i.title}”`);
   }
   ideas = next;
   world.setIdeas(ideas);
@@ -994,16 +1085,8 @@ const teamChat = new TeamChat({
   me: () => myName,
   onPeople: (who, text) => hud.toast(`💬 ${who}: ${text.length > 80 ? text.slice(0, 78) + "…" : text}`),
 });
-const chatBtn = document.createElement("button");
-chatBtn.className = "btn dock-btn";
-chatBtn.dataset.act = "chat";
-chatBtn.title = "Team chat (C): message your workers, see what they're doing";
-chatBtn.innerHTML = `💬 <span class="lbl">Chat</span>`;
-chatBtn.addEventListener("click", () => openChat());
-hudRoot.querySelector('.dock [data-act="settings"]')?.before(chatBtn);
-teamChat.onUnread = (n) => {
-  chatBtn.innerHTML = `💬 <span class="lbl">Chat</span>${n ? `<span class="unread">${n}</span>` : ""}`;
-};
+hud.addMenuItem({ act: "chat", icon: "💬", label: "Team chat", key: "C", title: "Message your workers, see what they're doing (also the laptop's Team app)", run: () => openChat() });
+teamChat.onUnread = (n) => hud.setMenuCount("chat", n, true);
 
 function openChat(threadId?: string): void {
   if (modalOpen() || guestRole() === "visitor") return;
@@ -1021,12 +1104,16 @@ function onChat(threads: ChatThread[]): void {
       const answers = t.messages.filter((m) => m.from === "agent");
       if (answers.length > before) {
         const m = answers.at(-1)!;
-        hud.toast(`💬 ${m.who}: ${m.text.slice(0, 120)}${m.text.length > 120 ? "…" : ""} — C to reply`);
+        const text = `${m.text.slice(0, 120)}${m.text.length > 120 ? "…" : ""}`;
+        hud.toast(`💬 ${m.who}: ${text}`);
+        addNote({ id: `answer-${t.id}`, kind: "answer", urgency: 1, icon: "💬", title: `${m.who} answered`, detail: text, ref: t.id, at: m.at, actions: [{ id: "reply", label: "💬 Reply", primary: true }] });
       }
     }
   }
   lastAnswers = fresh;
+  chatThreads = threads;
   teamChat.update(threads);
+  refreshInbox();
   // "I'll take it": Arnold asks you, wherever you are (the phone, walking about), with the answers on buttons.
   const offer = threads.find((t) => t.id === TEAM_THREAD)?.messages.filter((m) => m.offer?.state === "open").at(-1);
   if (offer?.offer && !askedOffers.has(offer.offer.taskId + offer.offer.deskId)) {
@@ -1042,6 +1129,24 @@ function onChat(threads: ChatThread[]): void {
 }
 /** Offers Arnold has already asked you about. */
 const askedOffers = new Set<string>();
+
+// Pods for people: whose pod is whose on the team floor, and borrowing agents (Arnold asks when someone wants one of yours).
+const podSigns = new PodSigns();
+world.teamFloor.group.add(podSigns.group);
+initPods({
+  send: (m) => net.send(m),
+  me: () => myName,
+  toast: (text, kind) => hud.toast(text, kind),
+  ask: (id, text, yes, no) => {
+    sound.click();
+    assistant.say({ id, urgency: 3, text, action: yes }, no);
+  },
+  changed: (s) => {
+    podSigns.set(s.pods, myName);
+    monitorView?.refresh();
+    refreshInbox();
+  },
+});
 
 // --- VR ----------------------------------------------------------------------------------------
 
@@ -1073,16 +1178,16 @@ async function offerVr(): Promise<void> {
     (window as unknown as { __xrDevice: unknown }).__xrDevice = device;
   }
   if (!(await VR.supported())) return;
-  const btn = document.createElement("button");
-  btn.className = "btn dock-btn";
-  btn.dataset.act = "vr";
-  btn.title = "Step into the office in your VR headset";
-  btn.innerHTML = `🥽 <span class="lbl">VR</span>`;
-  btn.addEventListener("click", () => {
-    escapeModal();
-    vr.enter().catch((e: Error) => hud.toast(`🥽 Couldn't start VR: ${e.message}`, "error"));
+  hud.addMenuItem({
+    act: "vr",
+    icon: "🥽",
+    label: "VR",
+    title: "Step into the office in your VR headset",
+    run: () => {
+      escapeModal();
+      vr.enter().catch((e: Error) => hud.toast(`🥽 Couldn't start VR: ${e.message}`, "error"));
+    },
   });
-  hudRoot.querySelector('.dock [data-act="settings"]')?.before(btn);
 }
 void offerVr();
 
@@ -1106,18 +1211,23 @@ const reminders = new Reminders({
   notify: (r, chime) => {
     if (!joined) return;
     if (chime) sound.chime();
-    hud.toast(`${r.icon} ${r.text}`, r.urgency === 3 ? "warn" : "");
+    // Urgent ones pop up; the rest wait in Needs you.
+    hud.toast(`${r.icon} ${r.text}`, r.urgency === 3 ? "warn" : "note");
   },
 });
 setInterval(() => {
-  if (joined) reminders.update();
+  if (!joined) return;
+  reminders.update();
+  refreshInbox();
 }, 3000);
 
 /** Your phone (P): everything the laptop has, in your pocket, while you walk. */
 const phone = new Phone({
   office: () => office,
   progress: () => progress,
-  reminders: () => reminders.list(),
+  inbox: () => inboxItems(),
+  act: (item, action) => inboxAct(item, action),
+  dismiss: (id) => dismissInbox(id),
   music: () => ({ on: settings.music, track: settings.track, volume: settings.musicVolume }),
   setMusic: (m) => {
     const next = { ...settings, music: m.on, track: m.track, musicVolume: m.volume };
@@ -1157,7 +1267,120 @@ const phone = new Phone({
     if (open && player.mouseCaptured) player.unlock();
   },
 });
-hudRoot.querySelector('.dock [data-act="laptop"]')?.before(phone.dockButton);
+hud.placeInDock(phone.dockButton, "laptop");
+// 1, 2, 3…: the dock's buttons, left to right (Needs you, Goals, Monitor, Laptop, Phone, More) — each shows its number.
+const dockButtons = () => [...document.querySelectorAll<HTMLButtonElement>(".dock > .btn, .dock-more-wrap > .btn")];
+dockButtons().forEach((b, i) => {
+  b.insertAdjacentHTML("beforeend", `<kbd class="dock-num">${i + 1}</kbd>`);
+  b.title = `${b.title} · ${i + 1}`;
+});
+
+// --- 🔔 Needs you: one place for everything waiting on you -------------------------------------
+
+/** The team's chat threads, as last heard (for "I'll take it" offers). */
+let chatThreads: ChatThread[] = [];
+/** Things that happened and are worth a look (a huddle or demo to watch, an answer). */
+let inboxNotes: InboxItem[] = [];
+/** Notes and reminders you dismissed. */
+const inboxDismissed = new Set<string>();
+
+function addNote(n: InboxItem): void {
+  inboxDismissed.delete(n.id);
+  inboxNotes = pruneNotes([n, ...inboxNotes.filter((x) => x.id !== n.id)], Date.now());
+  refreshInbox();
+}
+
+function dismissInbox(id: string): void {
+  inboxDismissed.add(id);
+  inboxNotes = inboxNotes.filter((x) => x.id !== id);
+  refreshInbox();
+}
+
+/** Everything that needs you right now, most urgent first (the inbox and the phone's Alerts). */
+function inboxItems(): InboxItem[] {
+  return buildInbox({
+    desks: office.desks,
+    presentations: office.presentations,
+    threads: chatThreads,
+    loans: podsState().loans,
+    me: myName,
+    host: !guestRole(),
+    mayDirect: (deskId) => guestRole() !== "visitor" && monitorActions.mayDirect(deskId),
+    reminders: reminders.list().map((r) => ({ id: r.id, urgency: r.urgency, icon: r.icon, text: r.text, action: r.action?.label })),
+    notes: (inboxNotes = pruneNotes(inboxNotes, Date.now())),
+    dismissed: inboxDismissed,
+    now: Date.now(),
+  });
+}
+
+/** Do what an inbox item's button says. */
+function inboxAct(item: InboxItem, action: string): void {
+  const deskId = item.deskId ?? "";
+  switch (action) {
+    case "answer":
+    case "review":
+      escapeModal();
+      openMonitorNow(deskId);
+      break;
+    case "go":
+      escapeModal();
+      goToDesk(deskId);
+      break;
+    case "fix":
+      escapeModal();
+      openTerminal(deskId);
+      break;
+    case "hours":
+      escapeModal();
+      startOfficeHours();
+      break;
+    case "trust":
+      net.send({ t: "trustWorkers" });
+      break;
+    case "take":
+    case "next":
+      if (item.ref) net.send({ t: "offerAnswer", taskId: item.ref, answer: action });
+      break;
+    case "lend":
+    case "refuse":
+      net.send({ t: "borrowAnswer", deskId, yes: action === "lend" });
+      break;
+    case "watch": {
+      const goal = item.ref ? goalById(item.ref) : undefined;
+      if (goal) (item.kind === "demo" ? loopHandlers.openDemo : loopHandlers.openHuddle)?.(goal);
+      dismissInbox(item.id);
+      break;
+    }
+    case "reply":
+      dismissInbox(item.id);
+      openChat(item.ref);
+      break;
+    case "do":
+      reminders
+        .list()
+        .find((r) => `rem-${r.id}` === item.id)
+        ?.action?.run();
+      break;
+  }
+}
+
+const inbox = new InboxPanel(hudRoot, hud.inboxButton, {
+  items: () => inboxItems(),
+  recent: () => hud.recent,
+  act: (item, action) => inboxAct(item, action),
+  dismiss: (id) => dismissInbox(id),
+  opened: () => hud.closeMore(),
+});
+hud.onRecent = () => inbox.refresh();
+hud.onMoreOpen = () => inbox.close();
+
+/** The dock's count, the open inbox and the phone, after anything that could change what needs you. */
+function refreshInbox(): void {
+  const items = inboxItems();
+  const b = inboxBadge(items);
+  hud.setInboxBadge(b.count, b.urgent);
+  inbox.refresh();
+}
 
 function pipTips(): Tip[] {
   const tips: Tip[] = [];
@@ -1179,6 +1402,19 @@ function pipTips(): Tip[] {
           }
         : { id: "no-node", urgency: 2, text: "To hire coding agents, this computer needs Node.js (nodejs.org) — install it, then restart domain and I'll set up the agents." },
     );
+  }
+  // A new version of an agent CLI you use (an old one can stop working): offer it.
+  if (agents && !guestRole()) {
+    for (const [k, v] of Object.entries(agents.versions) as [AgentKind, NonNullable<(typeof agents.versions)[AgentKind]>][]) {
+      const to = updateTarget(v);
+      if (!to || v.pinned || !canUpdate(k, v) || agents.queued.includes(k) || agents.updating === k) continue;
+      tips.push({
+        id: `update-${k}-${to}`,
+        urgency: 1,
+        text: `${AGENT_LABELS[k]} ${to} is out (you have ${v.current}). I'll update it once its workers are free and start them again where they were.`,
+        action: { label: `⬆ Update ${AGENT_LABELS[k]}`, run: () => net.send({ t: "agentUpdate", agent: k }) },
+      });
+    }
   }
   // Last time's team, asleep at their desks: the gong gets them going.
   const asleep = sleepers().length;
@@ -1270,7 +1506,7 @@ function pipGuides(): Guide[] {
     text: "Everything starts with a goal: what you want done today. The stand-up sets one (and the tone, and how long you'll focus).",
     done: goalReady,
     action: { label: "☀️ Hold the stand-up", run: () => openStandupNow() },
-    spot: '[data-act="standup"]',
+    spot: '[data-act="more"]',
   };
   const task: Guide = {
     id: "task",
@@ -1425,9 +1661,9 @@ function pipTour(): TourStep[] {
     },
     {
       title: "Every session starts with a stand-up",
-      text: "Here you pick today's goal, set the tone and how long you'll focus. The big screen keeps the plan up all session. Press U any time.",
+      text: "Here you pick today's goal, set the tone and how long you'll focus. The big screen keeps the plan up all session. Press U any time (it's in ☰ More too).",
       go: go("Stand-up room"),
-      spot: '[data-act="standup"]',
+      spot: '[data-act="more"]',
     },
     {
       title: "Hire your workers",
@@ -1446,9 +1682,9 @@ function pipTour(): TourStep[] {
     },
     {
       title: "Review in your office",
-      text: "Round them up (R): each checks its work against your tests and lines up outside. Hold office hours (O): approve to merge it into your branch, or send it back with notes.",
+      text: "Round them up (R): each checks its work against your tests and lines up outside. Hold office hours (O): approve to merge it into your branch, or send it back with notes. Finished work also lands in 🔔 Needs you (I), to review on the spot.",
       go: go("Your office"),
-      spot: '[data-act="hours"]',
+      spot: '[data-act="inbox"]',
     },
     {
       title: "Your laptop",
@@ -1462,8 +1698,8 @@ function pipTour(): TourStep[] {
     },
     {
       title: "Run the office",
-      text: "🏢 Office: switch projects or clone one from GitHub, build your team of characters with names, looks and personas, give workers MCP tools, invite people on your Wi-Fi, and see the logs of everything that ran.",
-      spot: '[data-act="office"]',
+      text: "☰ More → 🏢 Office: switch projects or clone one from GitHub, build your team of characters with names, looks and personas, give workers MCP tools, invite people on your Wi-Fi, and see the logs of everything that ran.",
+      spot: '[data-act="more"]',
     },
     {
       title: "Take a break",
@@ -1553,7 +1789,7 @@ function cctvKey(e: KeyboardEvent): boolean {
 
 /** N: the next thing that needs you — an agent's question, then work ready to review — in the Agent monitor. */
 function nextNeedsYou(): void {
-  const waiting = office.desks.find((d) => d.worker?.status === "waiting");
+  const waiting = office.desks.find((d) => needsAnswer(d.worker));
   // Work in your line (not still with its auditor).
   const ready = office.presentations.find((p) => p.report);
   const id = waiting?.id ?? ready?.deskId;
@@ -1703,7 +1939,7 @@ function atElevator(): boolean {
 /** The elevator doors upstairs (floor 2 or 3): back down, or anywhere. */
 function atUpElevator(): boolean {
   const { x, z } = player.position;
-  return (inUpstairs(x) && Math.abs(x - UP_ELEVATOR.x) < 1.7 && z < UPSTAIRS.minZ + 3) || (inTeamFloor(x) && Math.abs(x - TEAM_ELEVATOR.x) < 1.7 && z < TEAM_FLOOR.minZ + 3);
+  return (inUpstairs(x) && Math.abs(x - UP_ELEVATOR.x) < 1.7 && z < UPSTAIRS.minZ + 3) || (inTeamFloor(x) && Math.abs(x - teamElevatorX(x)) < 1.7 && z < TEAM_FLOOR.minZ + 3);
 }
 
 // --- things to do: darts, piano, treadmill, fishing, laps, the garden… ------------------------
@@ -1804,7 +2040,7 @@ function interactFun(): boolean {
       const before = arcadeBest(arcade.id);
       world.gameRoom.setBest(arcade.id, best);
       if (best > 0 && best >= before) hud.toast(`🕹 ${arcade.name} best: ${best}`);
-    });
+    }, (score) => net.send({ t: "arcadeScore", game: arcade.id, score }));
     return true;
   }
   if (atHoopSpot()) {
@@ -1865,7 +2101,7 @@ function promptTarget(): { x: number; y: number; z: number } | null {
   if (act) return act.key;
   const prop = world.props.near(x, z);
   if (prop) return prop.key;
-  if (atUpElevator()) return inTeamFloor(x) ? { x: TEAM_ELEVATOR.x, y: 3.0, z: TEAM_FLOOR.minZ + 0.4 } : { x: UP_ELEVATOR.x, y: 3.0, z: UPSTAIRS.minZ + 0.4 };
+  if (atUpElevator()) return inTeamFloor(x) ? { x: teamElevatorX(x), y: 3.0, z: TEAM_FLOOR.minZ + 0.4 } : { x: UP_ELEVATOR.x, y: 3.0, z: UPSTAIRS.minZ + 0.4 };
   const arcade = nearArcade();
   if (arcade) return { x: arcade.x, y: 2.35, z: arcade.z };
   if (atHoopSpot()) return { x: HOOP.rim.x, y: HOOP.rim.y + 0.7, z: HOOP.rim.z };
@@ -1975,10 +2211,12 @@ function interact(): void {
   if (world.inMyOffice(x, z) && world.nearReviewDesk(x, z)) {
     // Someone ready: office hours. Nobody yet: just sit down at your desk.
     if (office.presentations.some((p) => p.report)) startOfficeHours();
+    // Already sat at your desk: your computer, on your own terminals (💻 Mine).
+    else if (player.sitting && !guestRole()) laptop.open("mine");
     else {
       player.sit(REVIEW_SPOT.x, REVIEW_SPOT.z, 0);
       world.setSeated(true);
-      hud.toast("🪑 At your desk · R rounds everyone up · W to get up");
+      hud.toast(guestRole() ? "🪑 At your desk · R rounds everyone up · W to get up" : "🪑 At your desk · E your computer (💻 Mine) · R rounds everyone up · W to get up");
     }
     return;
   }
@@ -2045,7 +2283,9 @@ function hintWork(): string | null {
     if (world.nearReviewDesk(x, z)) {
       return ready
         ? `<span class="title">⭐ Your desk</span> <span class="key">E</span> Start office hours · ${ready} ready`
-        : `<span class="title">⭐ Your desk</span> <span class="key">E</span> Sit down · nobody ready yet · <span class="key">R</span> round up workers`;
+        : player.sitting && !guestRole()
+          ? `<span class="title">⭐ Your desk</span> <span class="key">E</span> Your computer (💻 Mine) · <span class="key">R</span> round up workers · <span class="key">W</span> get up`
+          : `<span class="title">⭐ Your desk</span> <span class="key">E</span> Sit down · nobody ready yet · <span class="key">R</span> round up workers`;
     }
     if (world.cctv.seated) return `<span class="title">📺 CCTV</span> <span class="key">←</span><span class="key">→</span> switch · <span class="key">↑</span><span class="key">↓</span> all / one · <span class="key">C</span> cycle · <span class="key">E</span> full monitor · <span class="key">W</span> get up`;
     if (world.nearMonitorWall(x, z)) return `<span class="title">📺 Monitor wall</span> <span class="key">E</span> Sit and watch every agent, CCTV-style`;
@@ -2072,6 +2312,8 @@ window.addEventListener("keydown", (e) => {
     phone.close();
     return;
   }
+  // Esc puts the inbox or the More menu away first.
+  if (e.key === "Escape" && !modalOpen() && (inbox.close() || hud.closeMore())) return;
   if (e.key === "Escape") {
     // Nothing open to close: Esc pauses into the settings.
     const justUnlocked = performance.now() - unlockedAt < 250;
@@ -2102,6 +2344,11 @@ window.addEventListener("keydown", (e) => {
     return;
   }
   const key = e.key.toLowerCase();
+  const n = /^(?:Digit|Numpad)([1-9])$/.exec(e.code);
+  if (n && !e.ctrlKey && !e.altKey && !e.metaKey) {
+    dockButtons()[Number(n[1]) - 1]?.click();
+    return;
+  }
   if (key === "e") interact();
   else if (key === "o") startOfficeHours();
   else if (key === "r") openRoundup();
@@ -2123,6 +2370,7 @@ window.addEventListener("keydown", (e) => {
   else if (key === "l") openLaptop();
   else if (key === "k") openMonitorNow();
   else if (key === "n") nextNeedsYou();
+  else if (key === "i") inbox.toggle();
   else if (key === "p") phone.toggle();
   else if (e.key === "Tab") {
     e.preventDefault();
@@ -2163,6 +2411,11 @@ function frame(now: number): void {
   }
   vr.update();
   player.enabled = !modalOpen();
+  // A window opening puts the dock's popovers away.
+  if (!player.enabled) {
+    inbox.close();
+    hud.closeMore();
+  }
   // A window opening hands the mouse back — and closing it takes it again,
   // if it was captured when the window opened (freed with Tab, it stays free).
   if (!player.enabled && player.mouseCaptured) {
@@ -2244,14 +2497,14 @@ void pickCharacter(myName, myLook).then(({ name, look }) => {
   welcomeDue = !assistant.toured;
   // Once, after an update: where the new things are.
   try {
-    if (assistant.toured && localStorage.getItem("domain.seenNews") !== "phone-1") {
-      localStorage.setItem("domain.seenNews", "phone-1");
+    if (assistant.toured && localStorage.getItem("domain.seenNews") !== "dock-1") {
+      localStorage.setItem("domain.seenNews", "dock-1");
       setTimeout(
         () =>
           hud.toastHtml(
-            `🤖 <b>Arnold here — what's new:</b> <b>📱 Phone</b> (top bar or <span class="key">P</span>) has stand-up, round up, reviews and alerts now · <b>💬 Chat</b> (<span class="key">C</span>) or the laptop's <b>Team</b> app: message anyone, give a task, or ask for an update · <b>🛗 Floor 2</b> is up the elevator`,
+            `🤖 <b>Arnold here — what's new:</b> <b>🔔 Needs you</b> (<span class="key">I</span>) is one list of every question, review, offer and request, each with its button · the rest of the dock is under <b>☰ More</b> (every key still works) · routine news waits in Needs you → Recent instead of popping up`,
             "",
-            16000,
+            12000,
           ),
         4000,
       );
@@ -2264,7 +2517,7 @@ void pickCharacter(myName, myLook).then(({ name, look }) => {
 
 // A handle for poking at the office from the console (and screenshot scripts) in dev builds.
 if (import.meta.env.DEV) {
-  (window as unknown as { domain: unknown }).domain = { world, player, vr, music, startOfficeHours, openLaptop, openTravel, openGoals, openHistory: () => openHistory((m) => net.send(m)), openTerminal, phone, escapeModal, net, laptop, progress: () => progress, office: () => office, openHire: (deskId: string) => { const d = deskById(deskId); if (d) hire(d); } };
+  (window as unknown as { domain: unknown }).domain = { world, player, vr, music, hud, inbox, inboxItems, startOfficeHours, openLaptop, openTravel, openGoals, openHistory: () => openHistory((m) => net.send(m)), openTerminal, phone, escapeModal, net, laptop, progress: () => progress, office: () => office, agents: agentsState, localModels: () => loopState.config?.localModels ?? [], openHire: (deskId: string) => { const d = deskById(deskId); if (d) hire(d); } };
   (window as unknown as { __roomAt: unknown }).__roomAt = (x: number, z: number) => roomAt(x, z).id;
 }
 

@@ -14,7 +14,12 @@ VITE_SERVER_PORT=8799 npx vite --port 5199 --strictPort &
   the profiler (it adds its own hitches). Writes a `.cpuprofile`.
 - `first-visits.mjs` — the worst frame on the first look at each area vs the
   second: a gap means something is still compiled or uploaded on first sight.
-  `SPOT="lobby" OUT=lobby.cpuprofile` profiles that one visit.
+  `SPOT="lobby" OUT=lobby.cpuprofile` profiles that one visit. It waits for
+  the warm-up behind the loading screen and turns off the automatic graphics
+  drop (slow headless frames would otherwise switch to Fast mid-run, which
+  recompiles every material and swamps the numbers).
+  `window.domain.world.merged` says how the furniture merge went: meshes
+  merged, pieces, and any that came apart because something in them moved.
 - `attribute.mjs <file.cpuprofile>` — time per function of our own code.
 - `longest-stretch.mjs <file.cpuprofile>` — what the longest busy stretch was.
 

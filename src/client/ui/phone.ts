@@ -1,12 +1,15 @@
+import { needsAnswer } from "../../shared/asking.js";
 import type { OfficeState } from "../../shared/protocol.js";
 import { AGENT_LABELS, doingLabel } from "../../shared/protocol.js";
 import { dueLabel, goalProgress, type ProgressState } from "../../shared/progress.js";
+import { remainingLabel, taskEstimateLine } from "../../shared/estimate.js";
 import { PLACES } from "../../shared/layout.js";
 import { TEAM_THREAD } from "../../shared/chat.js";
 import { TRACKS, type TrackId } from "../music.js";
 import { AGENT_COLOR } from "../scene/characters.js";
 import { historyEvents, onHistory, timelineHtml } from "./history.js";
-import type { Reminder } from "./reminders.js";
+import type { InboxItem } from "../../shared/inbox.js";
+import { inboxItemHtml, wireInboxList } from "./inbox.js";
 import { esc } from "./modal.js";
 import { micButton, wireMic } from "../voice.js";
 import "../styles/phone.css";
@@ -24,7 +27,11 @@ export type PhoneApp = "home" | "alerts" | "chat" | "monitor" | "tasks" | "revie
 export interface PhoneActions {
   office(): OfficeState;
   progress(): ProgressState;
-  reminders(): Reminder[];
+  /** What needs you: the same list as 🔔 Needs you in the dock. */
+  inbox(): InboxItem[];
+  /** Do what one of its buttons says, or dismiss it. */
+  act(item: InboxItem, action: string): void;
+  dismiss(id: string): void;
   music(): { on: boolean; track: TrackId; volume: number };
   setMusic(m: { on: boolean; track: TrackId; volume: number }): void;
   sendTeam(text: string): void;
@@ -87,8 +94,8 @@ export class Phone {
     this.button = document.createElement("button");
     this.button.className = "btn dock-btn phone-btn";
     this.button.dataset.act = "phone";
-    this.button.title = "Your phone (P): alerts, chat, goals, reviews, workers, history, music, travel";
-    this.button.innerHTML = `📱 <span class="lbl">Phone</span><span class="ph-badge"></span>`;
+    this.button.title = "Your phone (P): what needs you, chat, goals, reviews, workers, history, music, travel — keep walking with it out";
+    this.button.innerHTML = `📱 <span class="lbl">Phone</span>`;
     this.button.addEventListener("click", () => this.toggle());
     this.el = document.createElement("div");
     this.el.className = "phone hidden";
@@ -135,8 +142,8 @@ export class Phone {
       document.body.append(stack);
     }
     stack.prepend(b);
-    while (stack.children.length > 3) stack.lastElementChild!.remove();
-    setTimeout(() => b.remove(), 9000);
+    while (stack.children.length > 2) stack.lastElementChild!.remove();
+    setTimeout(() => b.remove(), 6000);
     this.refresh();
   }
 
@@ -182,24 +189,24 @@ export class Phone {
     this.refresh(true);
   }
 
-  /** How many things need you: urgent reminders, workers waiting, and the line. */
+  /** How many things need you: the inbox, workers waiting, the line, overdue goals. */
   private badges(): Partial<Record<PhoneApp, number>> {
     const office = this.a.office();
-    const urgent = this.a.reminders().filter((r) => r.urgency >= 2).length;
-    const waiting = office.desks.filter((d) => d.worker?.status === "waiting").length;
+    const waiting = office.desks.filter((d) => needsAnswer(d.worker)).length;
     const line = office.presentations.filter((p) => p.report).length;
     const overdue = this.a.progress().goals.filter((g) => g.dueAt && !g.shippedAt && g.dueAt < Date.now()).length;
-    return { alerts: urgent + waiting, monitor: waiting, workers: waiting, reviews: line, tasks: overdue };
+    return { alerts: this.items.length, monitor: waiting, workers: waiting, reviews: line, tasks: overdue };
   }
+
+  /** The inbox as of this redraw (its buttons are wired by index). */
+  private items: InboxItem[] = [];
 
   /** Redraw (only when something changed, unless forced: inputs keep their text). */
   refresh(force = false): void {
-    const b = this.badges();
-    const total = (b.alerts ?? 0) + (b.reviews ?? 0);
-    const badge = this.button.querySelector<HTMLElement>(".ph-badge")!;
-    badge.textContent = total ? String(total) : "";
-    this.button.classList.toggle("ping", total > 0);
+    // What needs you is counted once, on 🔔 Needs you in the dock: the phone's button only buzzes when it's notified.
     if (!this.open_) return;
+    this.items = this.a.inbox();
+    const b = this.badges();
     this.el.querySelector(".ph-clock")!.textContent = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
     const html = this.render(b);
     const key = this.app + html;
@@ -228,7 +235,7 @@ export class Phone {
       case "home": {
         const session = progress.session;
         const left = session ? Math.max(0, session.endsAt - Date.now()) : 0;
-        const next = this.a.reminders()[0];
+        const next = this.items[0];
         return `
           <div class="ph-hero">
             <div class="ph-time">${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</div>
@@ -243,21 +250,20 @@ export class Phone {
             <button data-do="lessons"><span>🌙</span>Lessons</button>
           </div>
           <button class="ph-wide ph-auto ${this.a.autopilot() ? "primary" : ""}" data-do="autopilot">🤖 Autopilot ${this.a.autopilot() ? "on — the office runs itself" : "off — tap to let the office run itself"}</button>
-          ${next ? `<button class="ph-next u${next.urgency}" data-app="alerts">${next.icon} ${esc(next.text)}</button>` : `<div class="ph-next calm">✨ Nothing needs you right now</div>`}
+          ${next ? `<button class="ph-next u${next.urgency}" data-app="alerts">${next.icon} ${esc(next.title)}${this.items.length > 1 ? ` <i>+${this.items.length - 1}</i>` : ""}</button>` : `<div class="ph-next calm">✨ Nothing needs you right now</div>`}
           <div class="ph-grid">
             ${APPS.map((x) => `<button class="ph-app" data-app="${x.id}"><span class="ph-icon" style="background:${x.color}">${x.icon}${b[x.id] ? `<i>${b[x.id]}</i>` : ""}</span>${x.label}</button>`).join("")}
             <button class="ph-app" data-do="laptop"><span class="ph-icon" style="background:#3a3d5c">💻</span>Laptop</button>
           </div>`;
       }
-      case "alerts": {
-        const list = this.a.reminders();
-        const waiting = office.desks.filter((d) => d.worker?.status === "waiting" && !list.some((r) => r.id === `waiting-${d.id}`));
-        const rows = [
-          ...waiting.map((d) => `<div class="ph-card u3"><b>🙋 ${esc(this.name(d.id))} needs you</b><span>${esc(d.worker!.activity)}</span><div class="ph-acts"><button data-term="${d.id}">🖥 Answer</button><button data-goto="${d.id}">🚶 Go there</button></div></div>`),
-          ...list.map((r, i) => `<div class="ph-card u${r.urgency}"><b>${r.icon} ${esc(r.text)}</b>${r.action ? `<div class="ph-acts"><button data-rem="${i}">${esc(r.action.label)}</button></div>` : ""}</div>`),
-        ];
-        return this.head("🔔 Alerts") + (rows.length ? rows.join("") : `<p class="ph-empty">All clear. I'll buzz you when a worker needs you, work is waiting, or a deadline gets close.</p>`);
-      }
+      case "alerts":
+        // The same list as 🔔 Needs you in the dock.
+        return (
+          this.head("🔔 Needs you", this.items.length ? `<span class="ph-count">${this.items.length}</span>` : "") +
+          (this.items.length
+            ? `<ul class="ib-list ph-inbox">${this.items.map(inboxItemHtml).join("")}</ul>`
+            : `<p class="ph-empty">All clear. I'll buzz you when a worker needs you, work is waiting, someone offers or asks, or a deadline gets close.</p>`)
+        );
       case "monitor":
         // Never shown here (go() opens the big monitor instead).
         return "";
@@ -284,10 +290,15 @@ export class Phone {
                 .map((g) => {
                   const pr = goalProgress(g);
                   const doing = g.tasks.filter((t) => t.status === "doing" || t.status === "review");
+                  // Before it goes out: what the next task will likely take, on cloud or local.
+                  const next = g.tasks.find((t) => t.status === "todo" && !t.deskId);
+                  const left = remainingLabel(g.tasks, progress.estimates);
                   return `<button class="ph-card goal" data-goal="${g.id}"><b>${g.kind === "research" ? "📊" : "🎯"} ${esc(g.title)}</b>
                     <span class="ph-meta">${pr.done}/${pr.total} tasks${g.dueAt ? ` · <em class="${g.dueAt < Date.now() ? "over" : ""}">📅 ${esc(dueLabel(g.dueAt))}</em>` : ""}${g.group?.length ? ` · 👥 ${g.group.length}` : ""}</span>
                     <span class="ph-bar-p"><span style="width:${Math.round(pr.pct * 100)}%"></span></span>
-                    ${doing.map((t) => `<span class="ph-sub">⌨️ ${esc(t.title)}${t.deskId ? ` — ${esc(this.name(t.deskId))}` : ""}</span>`).join("")}</button>`;
+                    ${left ? `<span class="ph-sub">⏳ ${esc(left)}</span>` : ""}
+                    ${doing.map((t) => `<span class="ph-sub">⌨️ ${esc(t.title)}${t.deskId ? ` — ${esc(this.name(t.deskId))}` : ""}${t.estimate ? `<br>${esc(taskEstimateLine(t))}` : ""}</span>`).join("")}
+                    ${next ? `<span class="ph-sub">⬜ Next: ${esc(next.title)}<br>${esc(taskEstimateLine(next, progress.estimates))}</span>` : ""}</button>`;
                 })
                 .join("")
             : `<p class="ph-empty">No goals yet.</p>`) +
@@ -356,6 +367,8 @@ export class Phone {
       fn();
     };
     on("[data-do]", (el) => {
+      // Needs you's buttons are its own (wired below).
+      if (el.closest(".ph-inbox")) return;
       const d = el.dataset.do;
       if (d === "standup") away(() => this.a.standup());
       else if (d === "focus") away(() => this.a.focus());
@@ -390,10 +403,14 @@ export class Phone {
     });
     on("[data-goto]", (el) => this.a.goToDesk(el.dataset.goto!));
     on("[data-goal]", (el) => away(() => this.a.openGoals(el.dataset.goal || undefined)));
-    on("[data-rem]", (el) => {
-      const r = this.a.reminders()[Number(el.dataset.rem)];
-      if (r?.action) away(() => r.action!.run());
-    });
+    const list = s.querySelector<HTMLElement>(".ph-inbox");
+    if (list) {
+      wireInboxList(list, () => this.items, { act: (item, action) => {
+        // Answers in place (offers, loans, trust) keep the phone out; the rest open a window.
+        if (["take", "next", "lend", "refuse", "trust"].includes(action)) this.a.act(item, action);
+        else away(() => this.a.act(item, action));
+      }, dismiss: (id) => this.a.dismiss(id) }, () => this.refresh(true));
+    }
     on("[data-place]", (el) => this.a.travel(PLACES[Number(el.dataset.place)]));
     on("[data-music]", () => {
       const m = this.a.music();

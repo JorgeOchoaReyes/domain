@@ -1,0 +1,27 @@
+/* The team huddle on a plan, and the demo at the end of a goal. */
+
+.modal.huddle-modal, .modal.demo-modal { width: min(920px, calc(100vw - 24px)); }
+.hd-foot { display: flex; align-items: center; gap: 10px; width: 100%; font-size: 12px; font-weight: 700; color: var(--muted); }
+.hd-foot .grow { flex: 1; }
+
+/* ---------- Huddle ---------- */
+.hd-status, .dm-status { margin: 0 0 10px; font-size: 14px; font-weight: 800; }
+.dm-status code { font-family: var(--font-mono); font-size: 12px; background: #f3ece3; border: 1px solid #e0d4c4; border-radius: 6px; padding: 0 5px; }
+.hd-grid { display: grid; grid-template-columns: 1fr 1.2fr; gap: 12px; }
+.hd-grid h4 { margin: 0 0 8px; font-size: 13px; font-weight: 900; }
+.hd-draft, .hd-team { padding: 10px 12px; border: 3px solid var(--ink); border-radius: 14px; background: #fff; box-shadow: 0 3px 0 var(--ink); }
+.hd-draft ol { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 700; }
+.hd-claim { display: inline-block; margin-left: 6px; font-style: normal; font-size: 11px; font-weight: 900; color: #1b7f5f; background: #dff8ef; border-radius: 8px; padding: 0 6px; }
+.hd-team { display: flex; flex-direction: column; gap: 8px; }
+.hd-card { padding: 8px 10px; border: 2px dashed #d8cbbb; border-radius: 12px; background: var(--paper); }
+.hd-card.in { border-style: solid; border-color: var(--good); background: #f2fdf8; }
+.hd-card b { font-size: 13px; }
+.hd-card ul { margin: 4px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; font-size: 12px; font-weight: 700; }
+.hd-card li.waiting { color: var(--muted); animation: hd-think 1.6s ease-in-out infinite; }
+@keyframes hd-think { 50% { opacity: 0.45; } }
+@media (prefers-reduced-motion: reduce) { .hd-card li.waiting { animation: none; } }
+@media (max-width: 720px) { .hd-grid { grid-template-columns: 1fr; } }
+
+/* ---------- Demo ---------- */
+.dm-shot { display: block; width: 100%; max-height: 62vh; object-fit: contain; border: 3px solid var(--ink); border-radius: 12px; background: #fff; box-shadow: 0 3px 0 var(--ink); }
+.dm-term { margin: 0; max-height: 58vh; overflow: auto; padding: 12px 14px; border-radius: 12px; background: var(--night-ink); color: #e8e8f0; font: 12px/1.45 var(--font-mono); white-space: pre-wrap; word-break: break-word; }

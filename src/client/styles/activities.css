@@ -11,7 +11,7 @@
 .pk { border: 2px solid var(--ink); cursor: pointer; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 8px; font: 900 11px var(--font); }
 .pk.w { width: 54px; height: 100%; background: #fff; border-radius: 0 0 10px 10px; color: var(--muted); }
 .pk.b { position: absolute; top: 0; width: 34px; height: 60%; background: #1b1b26; border-radius: 0 0 8px 8px; color: #aaa; z-index: 1; }
-.pk.down.w, .pk.w:active { background: #ffd166; }
+.pk.down.w, .pk.w:active { background: var(--warn); }
 .pk.down.b, .pk.b:active { background: #8338ec; }
 .pk-bar { display: flex; gap: 12px; align-items: center; margin-top: 10px; }
 

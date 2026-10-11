@@ -1,6 +1,7 @@
 import type { ArcadeId } from "../../shared/layout.js";
 import { ARCADES } from "../../shared/layout.js";
-import { openModal } from "./modal.js";
+import { esc, openModal } from "./modal.js";
+import { officeBoard } from "./arcadeScores.js";
 import { confetti, sound } from "./fx.js";
 import "../styles/arcade.css";
 
@@ -8,7 +9,9 @@ import "../styles/arcade.css";
  * The arcade cabinets: Snake, Bug Smash and Brick Breaker in the game room;
  * Merge (2048) and Deploy Dash (fly through the CI gates) upstairs. Each a
  * small canvas game in a window. Scores are just for fun — they never turn
- * into XP — and the best one per cabinet is kept in this browser.
+ * into XP — and the best one per cabinet is kept in this browser. Each
+ * finished game's score also goes to the office's high-score board, shared
+ * with everyone here (see arcadeScores.ts).
  */
 
 const KEY = "domain.arcade.best";
@@ -63,7 +66,11 @@ const MAKERS: Record<ArcadeId, () => Game> = {
   dash: () => new Dash(),
 };
 
-export function openArcade(id: ArcadeId, onDone: (score: number, best: number) => void): void {
+/**
+ * Play a cabinet. `onDone` gets the sitting's best and your best when you
+ * leave; `onScore` each finished game's score (for the office's high scores).
+ */
+export function openArcade(id: ArcadeId, onDone: (score: number, best: number) => void, onScore?: (score: number) => void): void {
   const def = ARCADES.find((a) => a.id === id)!;
   const color = def.color;
   let best = arcadeBest(id);
@@ -78,7 +85,15 @@ export function openArcade(id: ArcadeId, onDone: (score: number, best: number) =
   body.innerHTML = `
     <div class="arc-bar"><span class="arc-score">SCORE <b>0</b></span><span class="arc-best">BEST <b>${best}</b></span></div>
     <div class="arc-screen"><canvas></canvas></div>
+    <div class="arc-board"></div>
     <div class="arc-help"></div>`;
+  // The office's high scores (everyone who's played here), under the screen.
+  const boardEl = body.querySelector<HTMLElement>(".arc-board")!;
+  const showBoard = () => {
+    const board = officeBoard(id);
+    boardEl.innerHTML = board.length ? `🏆 Office high scores: ${board.map((e, i) => `${i + 1}. ${esc(e.name)} <b>${e.score}</b>`).join(" · ")}` : "🏆 No office high score yet — set one";
+  };
+  showBoard();
   const canvas = body.querySelector("canvas")!;
   const scoreEl = body.querySelector(".arc-score b")!;
   const bestEl = body.querySelector(".arc-best b")!;
@@ -105,6 +120,9 @@ export function openArcade(id: ArcadeId, onDone: (score: number, best: number) =
     state = "over";
     const s = game.score;
     sittingBest = Math.max(sittingBest, s);
+    if (s > 0) onScore?.(s);
+    // The office's board comes back from the host in a moment.
+    setTimeout(showBoard, 600);
     if (s > best) {
       best = s;
       newBest = true;
@@ -191,7 +209,11 @@ export function openArcade(id: ArcadeId, onDone: (score: number, best: number) =
       window.removeEventListener("keyup", onKey, true);
       canvas.removeEventListener("pointerdown", onDown);
       canvas.removeEventListener("pointermove", onMove);
-      if (state === "play" && game) sittingBest = Math.max(sittingBest, game.score);
+      if (state === "play" && game) {
+        sittingBest = Math.max(sittingBest, game.score);
+        // Left mid-game: what you had counts.
+        if (game.score > 0) onScore?.(game.score);
+      }
       if (sittingBest > best) {
         best = sittingBest;
         saveBest(id, best);

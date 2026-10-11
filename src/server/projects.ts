@@ -1,21 +1,28 @@
 import { AGENT_LABELS } from "../shared/protocol.js";
-import type { RepoStatus } from "../shared/project.js";
+import type { AgentPullRequest, PrPer, RepoStatus } from "../shared/project.js";
 import { execFile, spawn } from "node:child_process";
-import { existsSync, mkdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import type { WebSocket } from "ws";
-import type { GithubIssue, ProjectInfo } from "../shared/project.js";
+import type { Goal } from "../shared/progress.js";
+import type { GithubIssue, ProjectInfo, RepoWorker } from "../shared/project.js";
 import { parseGithubRemote } from "../shared/project.js";
 import type { ClientRec, Routes, ServerCtx } from "./ctx.js";
 import { GitHub, SignInNeeded } from "./github.js";
-import { loadPrefs, prefsPath, rememberProject, savePrefs } from "./prefs.js";
+import { loadPrefs, prefsPath, rememberProject, samePath, savePrefs } from "./prefs.js";
+import { findRepos as scanForRepos, isOfficeWorktree, notOpen, readRepo, scanRoots } from "./repoScan.js";
+import { repoFolderName, repoMatches, type GithubRepo } from "../shared/project.js";
 
 /**
  * Projects and GitHub: which folder the office works in, the ones you've
  * opened before, cloning a repo to start fresh, your GitHub sign-in, turning
  * issues into tasks, and shipping a goal as a pull request (then following
  * its checks). Every git command and GitHub call lands in the Logs.
+ *
+ * Other repos can be open alongside the project (no restart): each worker
+ * works in one, and the Repo view, a goal's pull request and its checks
+ * follow the repo the work was done in.
  */
 
 export interface ProjectDeps {
@@ -28,11 +35,16 @@ export interface ProjectDeps {
   pickFolder?: () => Promise<string | null>;
   /** Poll open pull requests this often (ms); 0 = never. */
   pollMs?: number;
+  /** Where to look for repos on this computer (default: the usual code folders, see repoScan). */
+  scanRoots?: string[];
+  /** Where a new, empty repo goes (default: next to the project). */
+  newReposDir?: string;
 }
 
 export interface ProjectsApi {
   routes: Routes;
-  info(): Promise<ProjectInfo>;
+  /** A repo's info: the project's, or another open repo's (by folder). */
+  info(path?: string): Promise<ProjectInfo>;
   /** Check open pull requests now (it also runs every minute). */
   poll(): Promise<void>;
   /** Stop polling. */
@@ -128,8 +140,11 @@ export function createProjects(ctx: ServerCtx, deps: ProjectDeps = {}): Projects
   let lastIssues: GithubIssue[] = [];
   let busy = false;
 
-  async function info(): Promise<ProjectInfo> {
-    const path = resolve(ctx.cwd);
+  /** Whether a folder is the project itself (not another open repo). */
+  const isMain = (path: string) => samePath(path, ctx.cwd);
+
+  async function info(at: string = ctx.cwd): Promise<ProjectInfo> {
+    const path = resolve(at);
     const top = await git(path, ["rev-parse", "--show-toplevel"]);
     if (top === null) return { path, name: basename(path), isGit: false, branch: null, github: null, dirty: false };
     const [branch, remote, status] = await Promise.all([
@@ -138,7 +153,7 @@ export function createProjects(ctx: ServerCtx, deps: ProjectDeps = {}): Projects
       git(path, ["status", "--porcelain", "--untracked-files=no"]),
     ]);
     const gh = remote ? parseGithubRemote(remote) : null;
-    owner = gh?.owner ?? null;
+    if (isMain(path)) owner = gh?.owner ?? null;
     return {
       path,
       name: basename(path),
@@ -150,7 +165,8 @@ export function createProjects(ctx: ServerCtx, deps: ProjectDeps = {}): Projects
   }
 
   // --- where the repo stands ----------------------------------------------------------------
-  let fetchedAt: number | null = null;
+  /** When each repo was last fetched from GitHub. */
+  const fetched = new Map<string, number>();
   /** A commit, briefly (null when there isn't one). */
   const commit = async (cwd: string, ref = "HEAD") => {
     const l = await git(cwd, ["log", "-1", "--format=%h%x09%s%x09%cr", ref]);
@@ -158,17 +174,22 @@ export function createProjects(ctx: ServerCtx, deps: ProjectDeps = {}): Projects
     const [sha, subject, when] = l.split("\t");
     return { sha, subject: subject ?? "", when: when ?? "" };
   };
-  async function repoStatus(): Promise<RepoStatus> {
-    const i = await info();
-    const empty: RepoStatus = { at: Date.now(), isGit: false, branch: null, github: null, ahead: null, behind: null, fetchedAt, last: null, dirty: [], agents: [], pulls: null };
+  async function repoStatus(at: string = ctx.cwd): Promise<RepoStatus> {
+    const cwd = resolve(at);
+    // With other repos open: each one's own status too, all named.
+    const others = isMain(cwd) ? (ctx.repos?.others() ?? []) : [];
+    const named = others.length || !isMain(cwd) ? { path: cwd, name: basename(cwd) } : {};
+    const more = others.length ? { others: await Promise.all(others.map((p) => repoStatus(p))) } : {};
+    const i = await info(cwd);
+    let fetchedAt = fetched.get(cwd) ?? null;
+    const empty: RepoStatus = { at: Date.now(), isGit: false, branch: null, github: null, ahead: null, behind: null, fetchedAt, last: null, dirty: [], agents: [], pulls: null, ...named, ...more };
     if (!i.isGit) return empty;
-    const cwd = resolve(ctx.cwd);
     // What GitHub has, every couple of minutes at most (never asking you to sign in from here).
     if (i.github && (!fetchedAt || Date.now() - fetchedAt > 120_000)) {
       const ok = await new Promise<boolean>((done) =>
         execFile("git", ["fetch", "--quiet", "origin"], { cwd, windowsHide: true, timeout: 30_000, env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never" } }, (err) => done(!err)),
       );
-      if (ok) fetchedAt = Date.now();
+      if (ok) fetched.set(cwd, (fetchedAt = Date.now()));
     }
     // Against its upstream — or, without one set, the same branch on origin.
     const counts =
@@ -182,9 +203,10 @@ export function createProjects(ctx: ServerCtx, deps: ProjectDeps = {}): Projects
       .slice(0, 20);
     const base = i.branch;
     const agents: RepoStatus["agents"] = [];
-    for (const d of ctx.office.snapshot().desks) {
+    for (const d of ctx.office?.snapshot().desks ?? []) {
       const w = d.worker;
-      if (!w?.branch || !base) continue;
+      // Only the agents working in this repo.
+      if (!w?.branch || !base || !samePath(ctx.office.repoOf(d.id), cwd)) continue;
       const n = await git(cwd, ["rev-list", "--count", `${base}..${w.branch}`]);
       const st = await git(ctx.office.workdir(d.id), ["status", "--porcelain"]);
       agents.push({
@@ -205,12 +227,73 @@ export function createProjects(ctx: ServerCtx, deps: ProjectDeps = {}): Projects
         pullsError = e instanceof Error ? e.message : String(e);
       }
     }
-    return { at: Date.now(), isGit: true, branch: i.branch, github: i.github, ahead, behind, fetchedAt, last: await commit(cwd), dirty, agents, pulls, ...(pullsError ? { pullsError } : {}) };
+    return { at: Date.now(), isGit: true, branch: i.branch, github: i.github, ahead, behind, fetchedAt, last: await commit(cwd), dirty, agents, pulls, ...(pullsError ? { pullsError } : {}), ...named, ...more };
+  }
+
+  /** Who works in which repo. */
+  function workers(): RepoWorker[] {
+    if (!ctx.office) return [];
+    return ctx.office
+      .snapshot()
+      .desks.filter((d) => d.worker)
+      .map((d) => ({ deskId: d.id, name: d.worker!.identity?.name ?? `${AGENT_LABELS[d.worker!.agent]} · ${d.label}`, repo: ctx.office.repoOf(d.id) }));
+  }
+
+  async function projectMessage() {
+    const i = await info();
+    const repos = ctx.repos;
+    return {
+      t: "project" as const,
+      info: i,
+      recent: loadPrefs(prefsFile).recent,
+      account: github.account,
+      ...(repos ? { repos: await Promise.all(repos.others().map((p) => info(p))), hireRepo: repos.hireRepo, workers: workers() } : {}),
+    };
   }
 
   async function sendProject(ws: WebSocket): Promise<void> {
-    const i = await info();
-    ctx.send(ws, { t: "project", info: i, recent: loadPrefs(prefsFile).recent, account: github.account });
+    ctx.send(ws, await projectMessage());
+  }
+
+  /** The open repos changed (or who works where): everyone sees it. */
+  async function broadcastProject(): Promise<void> {
+    ctx.broadcast(await projectMessage());
+  }
+
+  const fail = (title: string, why: string) => ctx.log.start("git", title, { topic: "project" }).done(false, why);
+
+  /** Open another repo alongside the project: no restart, and it's in Recent. */
+  async function addRepo(path: string): Promise<void> {
+    if (!ctx.repos) return void fail("Open a repo alongside", "This office works on one project at a time.");
+    const target = ctx.repos.add(path);
+    if (!target) return void fail(`Can't open ${resolve(path)}`, "That folder doesn't exist (or a dozen repos are open already).");
+    const remote = await git(target, ["remote", "get-url", "origin"]);
+    const gh = remote ? parseGithubRemote(remote) : null;
+    rememberProject(target, gh ? `${gh.owner}/${gh.repo}` : null, { file: prefsFile });
+    ctx.log.start("git", `Opened ${basename(target)} alongside ${basename(resolve(ctx.cwd))}`, { topic: "project" }).done(true, target);
+    await broadcastProject();
+  }
+
+  function closeRepo(path: string): void {
+    const target = ctx.repos?.find(path);
+    if (!ctx.repos || !target || isMain(target)) return;
+    const busy = workers().filter((w) => samePath(w.repo, target));
+    if (busy.length) return void fail(`Close ${basename(target)}`, `${busy.map((w) => w.name).join(", ")} still work${busy.length === 1 ? "s" : ""} there — move them to another repo (or let them go) first.`);
+    ctx.repos.remove(target);
+    ctx.log.start("git", `Closed ${basename(target)}`, { topic: "project" }).done(true, "Its worktrees and branches are kept; open it again any time.");
+    void broadcastProject();
+  }
+
+  /** Move a worker to another open repo: it restarts there, on a branch of its own. */
+  function moveWorker(deskId: string, repo: string): void {
+    const target = ctx.repos?.find(repo);
+    if (!target) return void fail("Move a worker", `“${repo}” isn't an open repo.`);
+    const r = ctx.office.moveToRepo(deskId, target, ctx.progress.policy.isolate);
+    if (!r?.moved) return;
+    const name = workers().find((w) => w.deskId === deskId)?.name ?? deskId;
+    ctx.broadcast({ t: "loop", goalId: "", event: "warn", text: `📦 ${name} now works in ${basename(target)}` });
+    if (r.kept) ctx.broadcast({ t: "loop", goalId: "", event: "mergeFailed", text: `🌿 Kept ${r.kept} — it has work that isn't on its repo's branch yet` });
+    void broadcastProject();
   }
 
   /** Record where we are now, so it's in Recent. */
@@ -238,7 +321,7 @@ export function createProjects(ctx: ServerCtx, deps: ProjectDeps = {}): Projects
     }
   }
 
-  async function clone(input: string, ws: WebSocket): Promise<void> {
+  async function clone(input: string, ws: WebSocket, add = false): Promise<void> {
     const url = normalizeCloneUrl(input);
     if (!url) {
       ctx.log.start("git", "Clone", { topic: "clone" }).done(false, `“${input}” isn't a repository URL. Try owner/repo or https://github.com/owner/repo.`);
@@ -250,10 +333,76 @@ export function createProjects(ctx: ServerCtx, deps: ProjectDeps = {}): Projects
       mkdirSync(projectsDir, { recursive: true });
       const target = cloneTarget(projectsDir, url);
       const r = await gitLogged(ctx, projectsDir, ["clone", "--progress", url, target], `Cloning ${url.replace(/^https:\/\/github\.com\//, "").replace(/\.git$/, "")}`, "clone");
-      if (r.ok) await open(target, ws);
+      if (r.ok) await (add && ctx.repos ? addRepo(target) : open(target, ws));
     } finally {
       busy = false;
     }
+  }
+
+  // --- finding repos to open, and starting new ones -------------------------------------------
+  /** Your GitHub repos, briefly remembered (each look is a GitHub call). */
+  let ghRepos: { at: number; repos: GithubRepo[] } | null = null;
+
+  /** Repos you could open: on this computer (not open yet), and on GitHub when you're signed in. */
+  async function findRepos(text: string, fresh: boolean, ws: WebSocket): Promise<void> {
+    const open = ctx.repos?.all() ?? [ctx.cwd];
+    const scan = scanForRepos({ roots: deps.scanRoots ?? scanRoots(ctx.repos?.main ?? ctx.cwd), fresh });
+    const local = notOpen(scan.repos, open).filter((repo) => repoMatches({ kind: "local", repo }, text));
+    let gh: GithubRepo[] | null = null;
+    let githubError: string | undefined;
+    try {
+      // Only a sign-in git already holds: nothing pops up from here.
+      if (!github.account) await github.signIn(false);
+      if (github.account) {
+        if (fresh || !ghRepos || Date.now() - ghRepos.at > 60_000) ghRepos = { at: Date.now(), repos: await github.repos() };
+        const here = new Set(open.map((p) => readRepo(p)?.github?.toLowerCase()).filter(Boolean));
+        gh = ghRepos.repos.filter((repo) => !here.has(repo.fullName.toLowerCase()) && repoMatches({ kind: "github", repo }, text));
+      }
+    } catch (e) {
+      githubError = e instanceof Error ? e.message : String(e);
+    }
+    ctx.send(ws, { t: "repoFound", local, github: gh, ...(githubError ? { githubError } : {}), ...(scan.truncated ? { truncated: true } : {}) });
+  }
+
+  /** Where a new repo goes: next to the project (not among the office's worktrees). */
+  function newReposDir(): string {
+    if (deps.newReposDir) return deps.newReposDir;
+    const main = resolve(ctx.repos?.main ?? ctx.cwd);
+    const home = isOfficeWorktree(main) ? main.replace(/[\\/]\.(domain|claude)[\\/]worktrees([\\/].*)?$/i, "") : main;
+    return dirname(home);
+  }
+
+  /** A new, empty repo next to the project: git init, a first commit, opened alongside; on GitHub too only when asked. */
+  async function createRepo(name: string, onGithub: boolean, priv: boolean): Promise<void> {
+    const n = repoFolderName(name);
+    if (!n) return void fail("New repo", "Give it a name (letters, digits, dashes).");
+    if (!ctx.repos) return void fail("New repo", "This office works on one project at a time.");
+    const dir = join(newReposDir(), n);
+    if (existsSync(dir)) return void fail(`New repo ${n}`, `${dir} already exists — add it instead (＋ Add a repo → A folder).`);
+    try {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "README.md"), `# ${n}\n`);
+    } catch (e) {
+      return void fail(`New repo ${n}`, (e as Error).message);
+    }
+    const init = await gitLogged(ctx, dir, ["init", "-q"], `New repo ${n}`, "clone");
+    if (!init.ok) return;
+    await git(dir, ["symbolic-ref", "HEAD", "refs/heads/main"]);
+    await git(dir, ["add", "README.md"]);
+    // A first commit, so workers can branch from it (it needs your git name and email).
+    const first = await gitLogged(ctx, dir, ["commit", "-q", "-m", `Start ${n}`], `First commit in ${n}`, "clone");
+    if (onGithub) {
+      try {
+        const r = await github.createRepo(n, priv, "clone");
+        if (r.cloneUrl) {
+          await git(dir, ["remote", "add", "origin", r.cloneUrl]);
+          if (first.ok) await gitLogged(ctx, dir, ["push", "-u", "origin", "main"], `Pushing ${n} to GitHub`, "clone");
+        }
+      } catch (e) {
+        fail(`Create ${n} on GitHub`, e instanceof SignInNeeded ? "Sign in to GitHub first." : e instanceof Error ? e.message : String(e));
+      }
+    }
+    await addRepo(dir);
   }
 
   async function signedInAccount(ws: WebSocket, interactive: boolean): Promise<boolean> {
@@ -272,30 +421,134 @@ export function createProjects(ctx: ServerCtx, deps: ProjectDeps = {}): Projects
     }
   }
 
-  async function shipPR(goalId: string, client: ClientRec, ws: WebSocket): Promise<void> {
+  /**
+   * The repo a goal ships from: the one asked for, else the one its tasks were
+   * done in (when they agree), else the project.
+   */
+  function shipRepo(goal: Goal, asked?: unknown): string {
+    const repos = ctx.repos;
+    if (!repos) return ctx.cwd;
+    const want = typeof asked === "string" ? repos.find(asked) : null;
+    if (want) return want;
+    const used: string[] = [];
+    for (const t of goal.tasks) {
+      const r = t.brief?.repo ? repos.find(t.brief.repo) : null;
+      if (r && !used.some((u) => samePath(u, r))) used.push(r);
+    }
+    return used.length === 1 ? used[0] : ctx.cwd;
+  }
+
+  /** Push `ref` to origin as `head` (or, when GitHub already has a different `head`, as head-xxxx); the branch it landed on, or null. */
+  async function pushAs(at: string, ref: string, head: string, what: string, where: string, topic: string): Promise<string | null> {
+    let pushed = await gitLogged(ctx, at, ["push", "origin", `${ref}:refs/heads/${head}`], `Pushing ${what} to ${where} as ${head}`, topic);
+    if (!pushed.ok && /rejected|non-fast-forward|fetch first/i.test(pushed.output)) {
+      head = `${head}-${Date.now().toString(36).slice(-4)}`;
+      pushed = await gitLogged(ctx, at, ["push", "origin", `${ref}:refs/heads/${head}`], `Pushing as ${head} instead`, topic);
+    }
+    return pushed.ok ? head : null;
+  }
+
+  /** The agents to open pull requests for: the desks that did the goal's tasks, each with its own branch (in the repo it works in). */
+  function agentsFor(goalId: string, only?: string): { deskId: string; name: string; branch: string; repo: string }[] {
+    const goal = ctx.progress.getGoal(goalId);
+    const desks = ctx.office?.snapshot().desks ?? [];
+    const worked = new Set((goal?.tasks ?? []).map((t) => t.doneBy ?? t.deskId).filter((d): d is string => !!d));
+    return desks
+      .filter((d) => d.worker?.branch && (only ? d.id === only : worked.has(d.id)))
+      .map((d) => ({ deskId: d.id, name: d.worker!.identity?.name ?? `${AGENT_LABELS[d.worker!.agent]} · ${d.label}`, branch: d.worker!.branch!, repo: ctx.office?.repoOf(d.id) ?? ctx.cwd }));
+  }
+
+  /**
+   * One pull request per agent: each agent's own branch pushed as it is and opened
+   * against the default branch, listing the tasks it did. `only` limits it to one desk.
+   * Agents with nothing GitHub doesn't already have are skipped; so are ones with a PR still open.
+   */
+  async function shipAgentPRs(goalId: string, client: ClientRec, only?: string): Promise<void> {
+    const goal = ctx.progress.getGoal(goalId);
+    const topic = `ship:${goalId}`;
+    const fail = (why: string) => ctx.log.start("github", `Pull requests per agent for “${goal?.title ?? "goal"}”`, { topic }).done(false, why);
+    if (!goal || (goal.shippedAt && !only)) return;
+    const agents = agentsFor(goalId, only);
+    if (!agents.length) return void fail(only ? "That desk has no agent on its own branch." : "No agent on its own branch worked on this goal. Turn on “Own branch per worker”, or open one pull request for the goal.");
+    if (!github.account && !(await github.signIn(false))) throw new SignInNeeded();
+    const opened: AgentPullRequest[] = [];
+    for (const a of agents) {
+      // Each agent's pull request goes to the GitHub repo of the repo it works in.
+      const i = await info(a.repo);
+      if (!i.github) {
+        fail(`${a.name} works in ${i.name}, which has no GitHub remote (origin).`);
+        continue;
+      }
+      const { owner, repo } = i.github;
+      const base = await github.defaultBranch(owner, repo, topic);
+      const open = goal.agentPrs?.find((p) => p.deskId === a.deskId && p.state === "open");
+      if (open) {
+        ctx.log.start("github", `${a.name} already has pull request #${open.number}`, { topic }).done(true, open.url, open.url);
+        continue;
+      }
+      // Nothing to open a PR for when GitHub's base already has all of it (only known once origin/<base> was fetched).
+      const ahead = await git(a.repo, ["rev-list", "--count", `refs/remotes/origin/${base}..refs/heads/${a.branch}`]);
+      if (ahead === "0") {
+        ctx.log.start("github", `${a.name}: nothing new on ${a.branch}`, { topic }).done(true, `${a.branch} has no commits that ${owner}/${repo}'s ${base} doesn't — no pull request.`);
+        continue;
+      }
+      const head = await pushAs(a.repo, `refs/heads/${a.branch}`, a.branch, `${a.name}'s ${a.branch}`, `${owner}/${repo}`, topic);
+      if (!head) continue;
+      const mine = goal.tasks.filter((t) => (t.doneBy ?? t.deskId) === a.deskId);
+      const tasks = mine.map((t) => `- [${t.status === "done" ? "x" : " "}] ${t.title}`).join("\n");
+      const body = `${goal.why ? `${goal.why}\n\n` : ""}**${a.name}'s part of “${goal.title}”**\n${tasks || "_(its own branch)_"}\n\n_Opened from the office in domain by ${client.name}, one pull request per agent._`;
+      try {
+        const pr = await github.createPull(owner, repo, { title: `${goal.title} — ${a.name}`, head, base, body }, topic);
+        const apr: AgentPullRequest = { ...pr, ...(isMain(a.repo) ? {} : { repo: `${owner}/${repo}` }), deskId: a.deskId, name: a.name, head };
+        ctx.log.start("github", `Opened pull request #${pr.number} for ${a.name}`, { topic }).done(true, pr.url, pr.url);
+        ctx.progress.setAgentPr(goal.id, apr);
+        ctx.broadcast({ t: "pr", goalId: goal.id, pr: apr, deskId: a.deskId });
+        opened.push(apr);
+      } catch (e) {
+        if (e instanceof SignInNeeded) throw e;
+        // Logged; carry on with the next agent.
+      }
+    }
+    if (!opened.length || only) return;
+    const list = opened.map((p) => `#${p.number} (${p.name})`).join(", ");
+    ctx.progress.shipped(client.name, goal.id, { mode: "manual", url: opened[0].url, note: `Pull requests ${list} on GitHub, one per agent` });
+    ctx.broadcast({ t: "loop", goalId: goal.id, event: "shipped", text: `🚢 Opened ${opened.length === 1 ? "a pull request" : `${opened.length} pull requests`} for “${goal.title}”, one per agent: ${list}` });
+  }
+
+  async function shipPR(goalId: string, client: ClientRec, ws: WebSocket, opts: { per?: PrPer; deskId?: string; repo?: unknown } = {}): Promise<void> {
     const goal = ctx.progress.getGoal(goalId);
     const topic = `ship:${goalId}`;
     const fail = (why: string) => ctx.log.start("github", `Pull request for “${goal?.title ?? "goal"}”`, { topic }).done(false, why);
+    if ((opts.deskId ? "agent" : (opts.per ?? ctx.progress.policy.prPer)) === "agent") {
+      try {
+        await shipAgentPRs(goalId, client, opts.deskId);
+      } catch (e) {
+        if (e instanceof SignInNeeded) {
+          fail("Sign in to GitHub first (Projects → Sign in with GitHub).");
+          ctx.send(ws, { t: "githubAccount", account: null, error: e.message });
+        }
+        // Other errors are already in the log.
+      }
+      return;
+    }
     if (!goal || goal.shippedAt) return;
-    const i = await info();
+    const at = shipRepo(goal, opts.repo);
+    const i = await info(at);
     if (!i.github) return void fail("This project has no GitHub remote (origin). Add one, or ship another way.");
     if (!i.branch) return void fail("Your checkout isn't on a branch.");
     try {
       if (!github.account && !(await github.signIn(false))) throw new SignInNeeded();
       const { owner, repo } = i.github;
       const base = await github.defaultBranch(owner, repo, topic);
-      let head = `domain/${slugify(goal.title)}`;
-      let pushed = await gitLogged(ctx, ctx.cwd, ["push", "origin", `HEAD:refs/heads/${head}`], `Pushing ${i.branch} to ${owner}/${repo} as ${head}`, topic);
-      if (!pushed.ok && /rejected|non-fast-forward|fetch first/i.test(pushed.output)) {
-        head = `${head}-${Date.now().toString(36).slice(-4)}`;
-        pushed = await gitLogged(ctx, ctx.cwd, ["push", "origin", `HEAD:refs/heads/${head}`], `Pushing as ${head} instead`, topic);
-      }
-      if (!pushed.ok) return;
+      const head = await pushAs(at, "HEAD", `domain/${slugify(goal.title)}`, i.branch, `${owner}/${repo}`, topic);
+      if (!head) return;
       const session = ctx.progress.snapshot().session;
       const intention = session?.goalId === goal.id && session.intention ? `\n\n> ${session.intention}` : "";
       const tasks = goal.tasks.map((t) => `- [${t.status === "done" ? "x" : " "}] ${t.title}`).join("\n");
       const body = `${goal.why ? `${goal.why}\n\n` : ""}**Tasks**\n${tasks}${intention}\n\n_Opened from the office in domain by ${client.name}._`;
-      const pr = await github.createPull(owner, repo, { title: goal.title, head, base, body }, topic);
+      const opened = await github.createPull(owner, repo, { title: goal.title, head, base, body }, topic);
+      // On another open repo: the PR says which, so its checks are followed there.
+      const pr = isMain(at) ? opened : { ...opened, repo: `${owner}/${repo}` };
       ctx.log.start("github", `Opened pull request #${pr.number}`, { topic }).done(true, pr.url, pr.url);
       ctx.progress.setPr(goal.id, pr);
       ctx.broadcast({ t: "pr", goalId: goal.id, pr });
@@ -312,12 +565,32 @@ export function createProjects(ctx: ServerCtx, deps: ProjectDeps = {}): Projects
 
   /** Follow open pull requests: state and checks. */
   const poll = async () => {
+    if (!github.account) return;
     const i = await info().catch(() => null);
-    if (!i?.github || !github.account) return;
     for (const g of ctx.progress.snapshot().goals) {
+      for (const a of g.agentPrs ?? []) {
+        if (a.state !== "open") continue;
+        // Its own repo's (another open repo's), or the project's.
+        const [owner, repo] = a.repo ? a.repo.split("/") : [i?.github?.owner, i?.github?.repo];
+        if (!owner || !repo) continue;
+        try {
+          const status = await github.pullStatus(owner, repo, a.number, `ship:${g.id}`);
+          const now = a.repo ? { ...status, repo: a.repo } : status;
+          if (now.state !== a.state || now.checks !== a.checks) {
+            ctx.progress.setAgentPr(g.id, { ...a, ...now });
+            ctx.broadcast({ t: "pr", goalId: g.id, pr: now, deskId: a.deskId });
+          }
+        } catch {
+          /* logged */
+        }
+      }
       if (!g.pr || g.pr.state !== "open") continue;
+      // Its own repo's (another open repo's), or the project's.
+      const [owner, repo] = g.pr.repo ? g.pr.repo.split("/") : [i?.github?.owner, i?.github?.repo];
+      if (!owner || !repo) continue;
       try {
-        const now = await github.pullStatus(i.github.owner, i.github.repo, g.pr.number, `ship:${g.id}`);
+        const status = await github.pullStatus(owner, repo, g.pr.number, `ship:${g.id}`);
+        const now = g.pr.repo ? { ...status, repo: g.pr.repo } : status;
         if (now.state !== g.pr.state || now.checks !== g.pr.checks) {
           ctx.progress.setPr(g.id, now);
           ctx.broadcast({ t: "pr", goalId: g.id, pr: now });
@@ -351,7 +624,28 @@ export function createProjects(ctx: ServerCtx, deps: ProjectDeps = {}): Projects
       });
     },
     projectClone: (m, _c, ws) => {
-      if (typeof m.url === "string") void clone(m.url, ws);
+      if (typeof m.url === "string") void clone(m.url, ws, m.add === true);
+    },
+    repoAdd: (m) => {
+      const path = typeof m.path === "string" ? m.path.trim() : "";
+      if (path) return void addRepo(path);
+      if (!pickFolder) return void fail("Open a repo alongside", "Type the folder's path — the folder picker is in the desktop app.");
+      void pickFolder().then((p) => {
+        if (p) void addRepo(p);
+      });
+    },
+    repoFind: (m, _c, ws) => void findRepos(typeof m.text === "string" ? m.text.slice(0, 200) : "", m.fresh === true, ws),
+    repoCreate: (m) => {
+      if (typeof m.name === "string") void createRepo(m.name, m.github === true, m.private === true);
+    },
+    repoClose: (m) => {
+      if (typeof m.path === "string") closeRepo(m.path);
+    },
+    repoHire: (m) => {
+      if (typeof m.path === "string" && ctx.repos?.setHireRepo(m.path)) void broadcastProject();
+    },
+    workerRepo: (m) => {
+      if (typeof m.deskId === "string" && typeof m.repo === "string") moveWorker(m.deskId, m.repo);
     },
     githubSignIn: (_m, _c, ws) => void signedInAccount(ws, true),
     githubRepos: (_m, _c, ws) =>
@@ -380,7 +674,10 @@ export function createProjects(ctx: ServerCtx, deps: ProjectDeps = {}): Projects
       ctx.log.start("github", `Imported ${titles.length} issue${titles.length === 1 ? "" : "s"} as tasks`, { topic: "issues" }).done(true, titles.join("\n"));
     },
     shipPR: (m, client, ws) => {
-      if (typeof m.goalId === "string") void shipPR(m.goalId, client, ws);
+      if (typeof m.goalId !== "string") return;
+      const per = m.per === "agent" || m.per === "goal" ? m.per : undefined;
+      const deskId = typeof m.deskId === "string" && /^desk-\d{1,3}$/.test(m.deskId) ? m.deskId : undefined;
+      void shipPR(m.goalId, client, ws, { per, deskId, repo: m.repo });
     },
   };
 

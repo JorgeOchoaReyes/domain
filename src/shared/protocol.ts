@@ -1,16 +1,22 @@
 import type { StandupDraft } from "./standupDraft.js";
+import type { WhisperState } from "./voice.js";
 import type { Alumnus } from "./alumni.js";
+import type { Trouble } from "./trouble.js";
+import type { LocalModelInfo } from "./localModels.js";
 import type { LessonsState } from "./lessons.js";
 import type { SkillSeen } from "./skills.js";
 import type { Idea } from "./ideas.js";
+import type { ArcadeBoards, ArcadeNews } from "./arcade.js";
 import type { AgentsState } from "./agents.js";
 import type { ChatPeek, ChatThread, ChatWork } from "./chat.js";
 import type { HistoryEvent } from "./history.js";
 import type { GoalKind, ProgressState, SessionSummary, ToneId } from "./progress.js";
 import type { Leash, TaskBrief, TeamPolicy } from "./policy.js";
-import type { GithubAccount, GithubIssue, GithubRepo, OpLog, ProjectInfo, PullRequestInfo, RecentProject, RepoStatus } from "./project.js";
+import type { FoundRepo, GithubAccount, GithubIssue, GithubRepo, OpLog, PrPer, ProjectInfo, PullRequestInfo, RecentProject, RepoStatus, RepoWorker } from "./project.js";
 import type { Character, WorkerIdentity } from "./team.js";
 import type { McpHealth, McpSeen, McpServer } from "./mcp.js";
+import type { BorrowEvent, PodsState } from "./pods.js";
+import type { MineState } from "./mine.js";
 
 /** What a guest on your local network may do in your office. */
 export type GuestRole = "visitor" | "teammate";
@@ -117,6 +123,14 @@ export interface Worker {
   internOf?: string;
   /** What it's doing right now, in a word or three ("Editing math.js", "Running tests"). */
   doing?: string;
+  /** What's wrong, in the CLI's own words, when it's stuck (the desk offers the fix). */
+  trouble?: Trouble;
+  /** Lent to this person (they asked, its owner said yes): theirs to direct until it's back. */
+  /** It asked you something in plain words at its prompt and stopped (see shared/asking.ts): the question. */
+  asking?: string;
+  lentTo?: string;
+  /** The repo folder it works in, when that's another open repo than the office's own project. */
+  repo?: string;
 }
 
 /** Workers the office started itself (not one person's): anyone may direct them. */
@@ -128,8 +142,10 @@ export const SHARED_HIRERS: readonly string[] = ["Office", "Autopilot"];
  * and message it. The host (it runs on their computer) may always; workers
  * the office started are everyone's; and someone who left doesn't hold theirs.
  */
-export function mayDirect(worker: Pick<Worker, "hiredBy"> | null | undefined, who: { name: string; host: boolean }, present: readonly string[]): boolean {
+export function mayDirect(worker: Pick<Worker, "hiredBy" | "lentTo"> | null | undefined, who: { name: string; host: boolean }, present: readonly string[]): boolean {
   if (!worker || who.host) return true;
+  // Lent to someone here: it works for them until it's back.
+  if (worker.lentTo && present.includes(worker.lentTo)) return worker.lentTo === who.name;
   const owner = worker.hiredBy;
   return owner === who.name || SHARED_HIRERS.includes(owner) || !present.includes(owner);
 }
@@ -245,7 +261,7 @@ export type ClientMessage =
   /** Presence update as you walk around. */
   | { t: "move"; x: number; z: number; facing: number }
   /** Staff an empty desk with an agent. */
-  | { t: "hire"; deskId: string; agent: AgentKind; model?: string; leash?: Leash; characterId?: string }
+  | { t: "hire"; deskId: string; agent: AgentKind; model?: string; leash?: Leash; characterId?: string; repo?: string }
   /** Open a worker's terminal; the server replies with its scrollback. */
   | { t: "open"; deskId: string }
   /** Send a worker home and free its desk. */
@@ -303,7 +319,7 @@ export type ClientMessage =
   /** Put the worker at a desk on a task (it's briefed in its terminal). */
   | { t: "taskAssign"; goalId: string; taskId: string; deskId: string; brief?: TaskBrief }
   /** Hand a worker something to do, straight from the chat: tracked as a task (on the session's goal, or "Quick tasks"). deskId "any": whoever's free. */
-  | { t: "quickTask"; deskId: string; text: string; goalId?: string; files?: { name: string; text: string }[] }
+  | { t: "quickTask"; deskId: string; text: string; goalId?: string; files?: { name: string; text: string }[]; repo?: string }
   /** Change the team's defaults for hiring and handing out tasks. */
   | { t: "policySet"; policy: TeamPolicy }
   /** Tick a task off (or back on) by hand. */
@@ -334,8 +350,16 @@ export type ClientMessage =
   | { t: "standupVoice"; text: string }
   /** Pick up where the last stand-up left off: wake the team, same goal, tone and length, tasks handed out. */
   | { t: "resume" }
-  /** The desktop app's 🎤: start (or stop) Windows voice typing in the box that has focus. */
+  /** The desktop app's 🎤: start (or stop) the computer's dictation in the box that has focus (answered with "dictated"). */
   | { t: "dictate" }
+  /**
+   * The 🎤 on this computer (Whisper): what you said, as 16 kHz mono 16-bit PCM in base64
+   * (at most a minute) — answered with "transcribed" and the same id. Not for visitors.
+   */
+  | { t: "transcribe"; id: string; pcm: string }
+  /** How the voice model is (answered with "whisper"); and download it now (Settings → Voice). */
+  | { t: "whisperGet" }
+  | { t: "whisperPrepare" }
   /** Where the repo stands: your branch, agents' branches, open pull requests (answered with "repoStatus"). */
   | { t: "repoStatus" }
   /** Answer a worker's "I'll take it": let them, ask someone else, or leave it for whoever's free. */
@@ -355,21 +379,52 @@ export type ClientMessage =
   | { t: "shipCancel"; goalId: string }
   /** Look for dev servers running on this machine (for the laptop's browser). */
   | { t: "probe" }
+  /** 💻 Mine (host only): your own terminals — list them, open one (a shell or your own agent CLI, in the project or an open repo), watch, type, resize, close. */
+  | { t: "mineGet" }
+  | { t: "mineOpen"; shell?: string; agent?: AgentKind; folder?: string; cols?: number; rows?: number }
+  | { t: "mineAttach"; tabId: string }
+  | { t: "mineInput"; tabId: string; data: string }
+  | { t: "mineResize"; tabId: string; cols: number; rows: number }
+  | { t: "mineClose"; tabId: string }
+  /** Open a folder (the project or an open repo) in VS Code, or in your file manager. */
+  | { t: "mineReveal"; folder: string; how: "code" | "files" }
+  /** End a goal's team huddle now: the plan as it stands goes out. */
+  | { t: "huddleSkip"; goalId: string }
+  /** Capture a goal's demo (again): a screenshot of the running app, or a command's output. */
+  | { t: "demo"; goalId: string }
+  /** Ask for a goal's demo screenshot (answered with "demoImage"). */
+  | { t: "demoGet"; goalId: string }
   // --- projects and GitHub -------------------------------------------------
   /** Ask for the current project, recent ones and the GitHub account. */
   | { t: "projectInfo" }
   /** Switch the office to another folder (the app restarts on it). */
   | { t: "projectOpen"; path: string }
   /** Clone a repo (URL or owner/repo) into the projects folder, then open it. */
-  | { t: "projectClone"; url: string }
+  | { t: "projectClone"; url: string; add?: boolean }
+  /** Open another repo alongside the project (no restart): a folder, or the picker when empty. Answered with "project". */
+  | { t: "repoAdd"; path: string }
+  /** Close an open repo (not the office's own project). */
+  | { t: "repoClose"; path: string }
+  /** Where new hires work (a path or name of an open repo). */
+  | { t: "repoHire"; path: string }
+  /** Move a worker to another open repo: it restarts there, on its own branch. */
+  | { t: "workerRepo"; deskId: string; repo: string }
   /** Sign in to GitHub through git's own credential manager (opens the browser once). */
   | { t: "githubSignIn" }
   | { t: "githubRepos" }
+  /** Repos found on this computer (and on GitHub when signed in) that aren't open yet, matching `text`. Answered with "repoFound". */
+  | { t: "repoFind"; text?: string; fresh?: boolean }
+  /** A new, empty repo: `git init` in a folder next to the project, opened alongside it; on GitHub too only when `github` is set. */
+  | { t: "repoCreate"; name: string; github?: boolean; private?: boolean }
   | { t: "githubIssues" }
   /** Turn GitHub issues into tasks (on a goal, or a new goal when null). */
   | { t: "issuesImport"; goalId: string | null; numbers: number[] }
-  /** Ship a goal as a GitHub pull request: push, open it, follow its checks. */
-  | { t: "shipPR"; goalId: string }
+  /**
+   * Ship a goal as a GitHub pull request: push, open it, follow its checks.
+   * `per: "agent"` opens one per agent instead, each from its own branch (default: the team policy);
+   * `deskId` opens just that agent's; `repo` ships the goal from that open repo (default: where its tasks were done).
+   */
+  | { t: "shipPR"; goalId: string; per?: PrPer; deskId?: string; repo?: string }
   /** The full operations log (git, GitHub, MCP, checks, deploys). */
   | { t: "logs" }
   // --- your team ---------------------------------------------------------------
@@ -382,17 +437,36 @@ export type ClientMessage =
   | { t: "mcpScan" }
   /** Health-check one server (by key) or all of them. */
   | { t: "mcpCheck"; key?: string }
+  /** Copy a server an agent CLI already loads (by name, or one agent's) into the office's list, for everyone. */
+  | { t: "mcpAdopt"; name: string; agent?: AgentKind }
   // --- local multiplayer -----------------------------------------------------------
   /** Open the office to your local network with a passcode. */
   | { t: "lanStart"; role: GuestRole }
   | { t: "lanStop" }
   /** Look for offices broadcasting on the local network. */
   | { t: "lanDiscover" }
+  /** Pods for people (answered with "pods"); ask to borrow someone's agent, answer an ask for yours, give one back (or call yours back). */
+  | { t: "podsGet" }
+  | { t: "borrowAsk"; deskId: string }
+  | { t: "borrowAnswer"; deskId: string; yes: boolean }
+  | { t: "borrowReturn"; deskId: string }
   // --- agent CLIs ------------------------------------------------------------------
   /** Which agent CLIs are installed. */
   | { t: "agentsGet" }
   /** Install a missing agent CLI with npm (shown in the logs as it goes). */
   | { t: "agentInstall"; agent: AgentKind }
+  /** Update an agent CLI (to its pinned version, or the newest) once none of its workers is busy. */
+  | { t: "agentUpdate"; agent: AgentKind }
+  /** Stay on a version of an agent CLI (null: follow the newest again). */
+  | { t: "agentPin"; agent: AgentKind; version: string | null }
+  /** Look up the agent CLIs' versions again now. */
+  | { t: "agentsCheck" }
+  /** Start a desk's agent again, back in its last conversation (stuck, or after an update). */
+  | { t: "restartWorker"; deskId: string }
+  /** A worker that needs signing in: start its CLI's sign-in (Claude Code's /login, Gemini's /auth). */
+  | { t: "workerSignIn"; deskId: string }
+  /** Make a copy of an Ollama model that runs with a bigger context window. */
+  | { t: "localCopy"; model: string; ctx: number }
   /** Let agents trust this project's worker folders (answers their trust prompts, now and later). */
   | { t: "trustWorkers" }
   /** Wake the workers remembered from last time (one desk, or everyone): each resumes where it left off. */
@@ -423,7 +497,11 @@ export type ClientMessage =
   /** Hand an idea to the worker at a desk: it becomes a task and the worker is briefed. */
   | { t: "ideaHandoff"; id: string; deskId: string; brief?: TaskBrief }
   /** Turn an idea into a goal (its bullet lines become tasks). */
-  | { t: "ideaToGoal"; id: string };
+  | { t: "ideaToGoal"; id: string }
+  // --- the arcade's high scores ---------------------------------------------------
+  | { t: "arcadeGet" }
+  /** A finished game's score at a cabinet (it goes on the office's board if it's good enough). */
+  | { t: "arcadeScore"; game: string; score: number };
 
 // ---------------------------------------------------------------------------
 // Server -> Client
@@ -452,14 +530,25 @@ export type ServerMessage =
   /** A spoken stand-up turned into a plan ("claude": by a model; "simple": from your sentences). */
   | { t: "standupDraft"; draft: StandupDraft; via: "claude" | "simple" }
   // --- projects and GitHub -------------------------------------------------
-  | { t: "project"; info: ProjectInfo; recent: RecentProject[]; account: GithubAccount | null }
+  | {
+      t: "project";
+      info: ProjectInfo;
+      recent: RecentProject[];
+      account: GithubAccount | null;
+      /** The other repos open alongside it, where new hires work, and who works where. */
+      repos?: ProjectInfo[];
+      hireRepo?: string;
+      workers?: RepoWorker[];
+    }
   /** The office is switching to another project: the app restarts on it. */
   | { t: "projectSwitching"; path: string; name: string }
   | { t: "githubAccount"; account: GithubAccount | null; error?: string }
   | { t: "githubRepos"; repos: GithubRepo[]; error?: string }
+  /** Repos you could open: on this computer (not open yet), and on GitHub (null when not signed in). */
+  | { t: "repoFound"; local: FoundRepo[]; github: GithubRepo[] | null; githubError?: string; truncated?: boolean }
   | { t: "githubIssues"; issues: GithubIssue[]; error?: string }
   /** A goal's pull request was opened or its state changed. */
-  | { t: "pr"; goalId: string; pr: PullRequestInfo }
+  | { t: "pr"; goalId: string; pr: PullRequestInfo; deskId?: string }
   /** One operation started, grew or finished. */
   | { t: "oplog"; entry: OpLog }
   | { t: "oplogAll"; entries: OpLog[] }
@@ -472,8 +561,14 @@ export type ServerMessage =
   | { t: "lanOffices"; offices: LanOffice[] }
   /** You're a guest here: what you may do. */
   | { t: "guest"; role: GuestRole; host: string }
+  /** Who has which pod on the team floor, and the agents asked for or lent. */
+  | { t: "pods"; state: PodsState }
+  /** A borrow you're in moved on (sent to its owner and borrower). */
+  | { t: "borrow"; event: BorrowEvent; deskId: string; owner: string; borrower: string; worker: string; text: string }
   /** Everything pinned to the idea boards. */
   | { t: "ideas"; ideas: Idea[] }
+  /** The office's arcade high scores, and (when it's why they were sent) who just made a board. */
+  | { t: "arcadeScores"; boards: ArcadeBoards; news?: ArcadeNews }
   /** Which agent CLIs are installed (and whether one is being installed). */
   | { t: "agents"; state: AgentsState }
   /** The office's history, newest first; and each new event as it happens. */
@@ -483,6 +578,12 @@ export type ServerMessage =
   | { t: "voices"; state: VoicesState }
   /** Speech for a "tts" request: MP3 as base64, or why not. */
   | { t: "ttsAudio"; id: string; audio?: string; error?: string }
+  /** Whether the 🎤 started the computer's dictation, and if not, how to start it by hand. */
+  | { t: "dictated"; ok: boolean; error?: string }
+  /** Words for a "transcribe", or why not (`fallback`: the voice model can't run here — use another way). */
+  | { t: "transcribed"; id: string; text?: string; error?: string; fallback?: boolean }
+  /** The voice model: not here yet, downloading (how far), ready, or failed. */
+  | { t: "whisper"; state: WhisperState }
   | { t: "alumni"; list: Alumnus[] }
   | { t: "historyEvent"; event: HistoryEvent }
   /** Every chat thread, with its history. */
@@ -496,21 +597,30 @@ export type ServerMessage =
    * if none is configured — then a worker is asked to ship instead).
    */
   | { t: "config"; project: string; preview: string | null; deploy: string | null; simulate: boolean; check: string | null; git: { base: string | null } | null; localModels: string[] }
+  /** Models served on this computer, and what's known of each (context window, speed here). */
+  | { t: "localModels"; models: string[]; info: Record<string, LocalModelInfo> }
   /** Dev servers found running on this machine, in reply to a probe. */
   | { t: "devServers"; urls: string[] }
+  /** 💻 Mine (only ever sent to the host): your terminals, and which one just opened. */
+  | { t: "mine"; state: MineState; opened?: string }
+  | { t: "mineOutput"; tabId: string; data: string }
+  | { t: "mineScrollback"; tabId: string; data: string }
   /** Output from a running deploy, as it happens. */
   | { t: "deployOutput"; goalId: string; data: string }
   /** The whole log of the current (or last) deploy, sent on join. */
   | { t: "deployLog"; goalId: string; data: string }
   /** Something happened in the loop worth a toast. */
-  | { t: "loop"; goalId: string; event: LoopEvent; text: string };
+  | { t: "loop"; goalId: string; event: LoopEvent; text: string }
+  /** A goal's demo screenshot, as a data URL (null: there's none). */
+  | { t: "demoImage"; goalId: string; at: number; data: string | null };
 
 /**
  * planned: a worker's plan landed and its tasks were added; deck: a research
  * deck was updated; deployStarted / deployFailed: the deploy command started
- * or exited non-zero; shipped: a goal shipped or was delivered.
+ * or exited non-zero; shipped: a goal shipped or was delivered; huddle: the
+ * team huddle on a plan moved on; demo: a goal's demo was captured.
  */
-export type LoopEvent = "planned" | "deck" | "deployStarted" | "deployFailed" | "shipped" | "timeUp" | "checkFailed" | "merged" | "mergeFailed" | "warn";
+export type LoopEvent = "planned" | "deck" | "deployStarted" | "deployFailed" | "shipped" | "timeUp" | "checkFailed" | "merged" | "mergeFailed" | "warn" | "info" | "huddle" | "demo";
 
 /** An ElevenLabs voice, for the voice pickers. */
 export interface VoiceInfo {

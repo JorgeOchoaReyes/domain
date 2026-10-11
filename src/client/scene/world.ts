@@ -1,10 +1,14 @@
 import { buildUpstairs, type Upstairs } from "./upstairs.js";
 import { buildParkland, type Parkland } from "./parkland.js";
 import { UPSTAIRS, UP_HEIGHT, BREAK_SPOTS, waitSpot, TEAM_FLOOR, TEAM_DESK_IDS, floorOf, type WalkPt } from "../../shared/layout.js";
+import { huddleSpot } from "../../shared/huddle.js";
+import { MORE_TEAM_DESK_IDS, POOL, TEAM_FLOORS, openTeamFloors, teamFloorIndex, teamFloorRect } from "../../shared/layout.js";
+import { addPool, type PoolScene } from "./pool.js";
 import { buildTeamFloor, type TeamFloor } from "./teamfloor.js";
 import * as THREE from "three";
 // Only what moved gets its matrices recomputed (see there).
 import "./fastMatrices.js";
+import { drawnBy, isMergedPart, mergeStatic, mergeStats, pinsOf } from "./mergeStatic.js";
 import { OutlineEffect } from "three/examples/jsm/effects/OutlineEffect.js";
 import type { Desk, Look, Peer, Presentation } from "../../shared/protocol.js";
 import type { Idea } from "../../shared/ideas.js";
@@ -64,6 +68,8 @@ import { disposeSprite, fitLabels, label, textSprite } from "./toon.js";
  */
 
 const PLAYER_RADIUS = 0.35;
+/** How often a board out of sight is repainted (one at a time; see paintABoard). */
+const AWAY_PAINT_MS = 4000;
 const WORKER_SPEED = 3.6;
 
 type Pt = { x: number; z: number };
@@ -133,8 +139,18 @@ export class World {
   }
   private boundsAt(x: number): { minX: number; maxX: number; minZ: number; maxZ: number } {
     const f = floorOf(x);
+    if (f > 3) {
+      const r = teamFloorRect(f - 3);
+      return { minX: r.minX + 0.4, maxX: r.maxX - 0.4, minZ: r.minZ + 0.4, maxZ: r.maxZ - 0.4 };
+    }
     return f === 3 ? this.teamBounds : f === 2 ? this.upBounds : this.groundBounds;
   }
+  /** Floors 4 and up (the same team floor again, further east), for a growing team. */
+  readonly moreTeamFloors: TeamFloor[] = [];
+  /** How many team floors are open (1: just floor 3): one more each time the last fills up. */
+  teamFloorsOpen = 1;
+  /** The pool table in the game room. */
+  readonly pool: PoolScene;
   /** Floor 3, the team floor (its desks are the office's, moved up there). */
   readonly teamFloor: TeamFloor;
   /** Floor 2, up the elevator. */
@@ -219,6 +235,18 @@ export class World {
       const view = this.office.desks.get(id);
       if (view) this.teamFloor.group.add(view.group);
     }
+    // And the floors above it, with theirs.
+    for (let k = 1; k < TEAM_FLOORS; k++) {
+      const f = buildTeamFloor(k);
+      f.group.visible = false;
+      this.scene.add(f.group);
+      this.moreTeamFloors.push(f);
+    }
+    for (const id of MORE_TEAM_DESK_IDS) {
+      const view = this.office.desks.get(id);
+      const def = DESK_BY_ID.get(id);
+      if (view && def) this.moreTeamFloors[teamFloorIndex(def.x) - 1]?.group.add(view.group);
+    }
     this.scene.add(this.upstairs.group);
     this.upstairs.group.visible = false;
     this.park = buildParkland();
@@ -226,13 +254,14 @@ export class World {
     this.props = buildProps();
     this.scene.add(this.props.group);
     this.extras = addExtras(this.props);
+    this.pool = addPool(this.props);
     this.scene.add(this.extras.grounds, this.extras.upstairs);
     this.extras.upstairs.visible = false;
     const street = buildCars();
     this.cars = street.cars;
     // The cars' footprints move with them (they're kept up to date in place).
-    this.colliders = [...this.office.colliders, ...this.rooms.colliders, ...this.gameRoom.colliders, ...this.upstairs.colliders, ...this.teamFloor.colliders, ...this.park.colliders, ...this.props.colliders, ...street.colliders];
-    this.collectOccludable([this.office.group, this.rooms.group, this.gameRoom.group, this.teamFloor.group]);
+    this.colliders = [...this.office.colliders, ...this.rooms.colliders, ...this.gameRoom.colliders, ...this.upstairs.colliders, ...this.teamFloor.colliders, ...this.moreTeamFloors.flatMap((f) => f.colliders), ...this.park.colliders, ...this.props.colliders, ...street.colliders];
+    this.collectOccludable([this.office.group, this.rooms.group, this.gameRoom.group, this.teamFloor.group, ...this.moreTeamFloors.map((f) => f.group)]);
     // Lights in rooms that get hidden (the game room's neon, the pinball's flash) live in the
     // scene itself and are only dimmed while their room is hidden: three.js builds its shaders
     // for an exact number of lights, so a light coming and going recompiled every material on
@@ -248,6 +277,11 @@ export class World {
         this.areaLights.push({ light, home });
       }
     }
+    // Static furniture is drawn merged, one mesh per material and patch of floor (see
+    // mergeStatic): far fewer draw calls in the scene, the outlines and the shadows. What
+    // the builders handed back for us to drive (anchors, boards, the gong…) stays as it is.
+    const mergeRoots = [this.office.group, this.rooms.group, ...Object.values(this.rooms.areas), this.gameRoom.group, this.upstairs.group, this.teamFloor.group, ...this.moreTeamFloors.map((f) => f.group), this.park.group, this.extras.grounds, this.extras.upstairs, this.pool.group];
+    mergeStatic(mergeRoots, pinsOf([this.office, this.rooms, this.gameRoom, this.upstairs, this.teamFloor, ...this.moreTeamFloors, this.park, this.extras, this.pool], mergeRoots));
     // The cars go in after: they move, so the see-through pass (fixed boxes) must never hide bits of them — their roofs vanished as you got in.
     this.rooms.areas.grounds.add(street.group);
     // Props' models load after this: each joins the camera's see-through pass as it arrives.
@@ -256,7 +290,7 @@ export class World {
       this.collectOccludable([m]);
       this.warm(m);
     };
-    this.occluders = [...cameraOccluders(), ...this.upstairs.occluders, ...this.teamFloor.occluders];
+    this.occluders = [...cameraOccluders(), ...this.upstairs.occluders, ...this.teamFloor.occluders, ...this.moreTeamFloors.flatMap((f) => f.occluders)];
     this.occluders.push({
       minX: ELEVATOR.x - ELEVATOR.width / 2,
       maxX: ELEVATOR.x + ELEVATOR.width / 2,
@@ -367,8 +401,11 @@ export class World {
   // --- state ------------------------------------------------------------------
 
   sync(desks: Desk[], line: Presentation[], peers: Peer[], selfId: string): void {
+    this.synced();
     this.desks = desks;
     this.line = line;
+    const taken = new Set(desks.filter((d) => d.worker).map((d) => d.id));
+    this.teamFloorsOpen = openTeamFloors((id) => taken.has(id));
     this.syncDesks(desks);
     this.syncWorkers(desks, line);
     this.syncPeers(peers, selfId);
@@ -571,6 +608,13 @@ export class World {
     const hasTask = (id: string) => this.progress?.goals.some((g) => g.tasks.some((t) => t.deskId === id && t.status !== "done")) ?? false;
     const freeIds = desks.filter((d) => d.worker?.status === "idle" && !hasTask(d.id) && !spots.has(d.id)).map((d) => d.id);
     this.waitingAt.clear();
+    // A team huddle on a plan: the planner and everyone weighing in gather round the stand-up circle.
+    const huddleAt = new Map<string, { i: number; n: number }>();
+    for (const g of this.progress?.goals ?? []) {
+      if (!g.huddle) continue;
+      const who = [g.huddle.plannerDesk, ...g.huddle.deskIds];
+      who.forEach((d, i) => huddleAt.set(d, { i, n: who.length }));
+    }
     for (const desk of desks) {
       const w = desk.worker;
       if (!w) continue;
@@ -590,8 +634,9 @@ export class World {
         const n = Number(desk.id.replace(/\D/g, "")) || 0;
         const onBreak = (now + n * 37_000) % WAIT_CYCLE_MS > WAIT_CYCLE_MS - BREAK_MS;
         if (onBreak) {
-          const i = (n + Math.floor(now / 45_000)) % BREAK_SPOTS.length;
-          dest = { ...BREAK_SPOTS[i], seated: false, key: `break-${i}` };
+          // Round the lounge, or a game of pool.
+          const i = (n + Math.floor(now / 45_000)) % (BREAK_SPOTS.length + POOL.spots.length);
+          dest = i < BREAK_SPOTS.length ? { ...BREAK_SPOTS[i], seated: false, key: `break-${i}` } : { ...POOL.spots[i - BREAK_SPOTS.length], seated: false, key: `pool-${i - BREAK_SPOTS.length}` };
         } else {
           const at = freeIds.indexOf(desk.id);
           const s = waitSpot(at);
@@ -599,6 +644,9 @@ export class World {
           this.waitingAt.set(desk.id, s);
         }
       }
+
+      const hd = huddleAt.get(desk.id);
+      if (hd && !spots.has(desk.id)) dest = { ...huddleSpot(hd.i, hd.n), seated: false, key: `huddle-${hd.i}` };
 
       // One of your characters looks like itself; rebuild the bot if that changed.
       const look = w.identity?.look ?? null;
@@ -634,7 +682,7 @@ export class World {
       const terms = task ? briefLine(task) : "";
       const mentor = w.internOf ? this.desks.find((x) => x.id === w.internOf)?.worker : null;
       view.bot.name = w.identity?.name ?? (w.internOf ? `Intern of ${mentor?.identity?.name ?? w.internOf.replace("desk-", "desk ")}` : null);
-      const activity = this.waitingAt.has(desk.id) ? "🙋 At the stand-up, waiting for a task" : w.activity;
+      const activity = (w.lentTo ? `🤝 Working for ${w.lentTo} (${w.hiredBy}'s) · ` : "") + (hd && !spots.has(desk.id) ? "🤝 In the team huddle" : this.waitingAt.has(desk.id) ? "🙋 At the stand-up, waiting for a task" : w.activity);
       view.bot.setCard(w.status, w.hiredBy, terms ? `${activity} · ${terms}` : activity, desk.id === this.presenting, w.doing ?? "");
     }
     for (const id of [...this.workers.keys()]) if (!seen.has(id)) this.removeWorker(id);
@@ -819,6 +867,10 @@ export class World {
     this.rooms.update(dt, now, { x: pp.x, z: pp.z });
     this.cullAreas();
     this.gameRoom.update(dt, now);
+    // Workers on a break at the pool table take their shots.
+    let atPool = 0;
+    for (const v of this.workers.values()) if (v.destKey.startsWith("pool-") && !v.path.length) atPool++;
+    this.pool.setPlayers(atPool);
     this.props.update(dt, now, this.props.group.visible);
     // Breaks start (and move on) with time, not just when the office changes.
     if (now - this.lastBreakLook > 3000 && this.desks.length) {
@@ -1024,7 +1076,27 @@ export class World {
       b.tex.needsUpdate = true;
       return;
     }
+    // Nothing you can see needed it: now and then, repaint one you can't, so none goes stale.
+    // The first look at the monitor wall had a whole session of terminal output to catch up
+    // on — a 25–45 ms frame; a little every few seconds, nobody notices.
+    if (now - this.awayPaintAt < AWAY_PAINT_MS) return;
+    for (const b of this.boards()) {
+      if (!b.dirty || now - b.lastAt < AWAY_PAINT_MS || b.visible()) continue;
+      b.dirty = false;
+      const key = b.key();
+      if (key === b.lastKey) continue;
+      b.lastKey = key;
+      b.lastAt = now;
+      b.paint();
+      b.tex.needsUpdate = true;
+      this.awayPaintAt = now;
+      return;
+    }
   }
+  private awayPaintAt = 0;
+  /** Resolved by the first sync() (the office from the server). */
+  private synced: () => void = () => {};
+  private firstSync = new Promise<void>((r) => (this.synced = r));
 
   resize(): void {
     const w = window.innerWidth;
@@ -1049,21 +1121,31 @@ export class World {
     // halves the shadow pass).
     this.shadowTick = (this.shadowTick + 1) % 2;
     this.renderer.shadowMap.needsUpdate = this.quality === "high" || this.shadowTick === 0;
-    if (this.outlines) {
-      // The outline pass walks the scene twice to swap materials: only what's visible
-      // (whole floors and areas are hidden at a time — no need to walk them).
-      const traverse = this.scene.traverse;
-      this.scene.traverse = this.scene.traverseVisible;
-      try {
-        this.effect.render(this.scene, this.camera);
-      } finally {
-        this.scene.traverse = traverse;
-      }
-    } else this.renderer.render(this.scene, this.camera);
+    if (this.outlines) this.drawOutlined();
+    else this.renderer.render(this.scene, this.camera);
     relight();
     this.trackFrame();
   }
   private shadowTick = 0;
+
+  /** How the furniture merge went (for the perf scripts). */
+  get merged(): typeof mergeStats {
+    return mergeStats;
+  }
+
+  /** The scene, then its outlines. */
+  private drawOutlined(): void {
+    // The outline pass walks the scene twice to swap materials: only what's visible
+    // (whole floors and areas are hidden at a time, and merged furniture's originals
+    // are drawn by their merged pieces — no need to walk them).
+    const traverse = this.scene.traverse;
+    this.scene.traverse = this.scene.traverseVisible;
+    try {
+      this.effect.render(this.scene, this.camera);
+    } finally {
+      this.scene.traverse = traverse;
+    }
+  }
 
   /** Lights moved out of their rooms (see the constructor), and the room each belongs to. */
   private areaLights: { light: THREE.Light; home: THREE.Object3D }[] = [];
@@ -1090,8 +1172,10 @@ export class World {
    * the game hitches. Hidden areas are shown for the one off-screen frame.
    */
   async precompile(): Promise<void> {
-    // The model files first (they're small and local), so they're warmed up too — but never wait long.
-    await Promise.race([modelsPlaced(), new Promise((r) => setTimeout(r, 4000))]);
+    // The model files first (they're small and local), so they're warmed up too, and the
+    // office from the server (its workers are drawn, and its boards painted, below: the first
+    // paint of the monitor wall's terminals took 30–50 ms) — but never wait long.
+    await Promise.race([Promise.all([modelsPlaced(), this.firstSync]), new Promise((r) => setTimeout(r, 4000))]);
     // Every board painted once now, seen or not, so the first look at one is just a look.
     for (const b of this.boards()) {
       b.paint();
@@ -1099,33 +1183,44 @@ export class World {
       b.lastKey = b.key();
       b.dirty = false;
     }
-    const hidden: THREE.Object3D[] = [];
     // Everything is drawn once, wherever it is: three.js uploads an object's
     // geometry and textures the first time it's drawn, and doing that the
     // first time you looked at the lobby or stepped outside froze the game for
     // up to a quarter of a second. Behind the loading screen, nobody notices.
-    const culled: THREE.Object3D[] = [];
-    this.scene.traverse((o) => {
-      if (!o.visible) {
-        hidden.push(o);
-        o.visible = true;
-      }
-      if (o.frustumCulled) {
-        culled.push(o);
-        o.frustumCulled = false;
-      }
-    });
+    // (Merged furniture's originals stay hidden: their merged pieces draw them.)
+    const showAll = (): (() => void) => {
+      const hidden: THREE.Object3D[] = [];
+      const culled: THREE.Object3D[] = [];
+      this.scene.traverse((o) => {
+        if (!o.visible && !isMergedPart(o)) {
+          hidden.push(o);
+          o.visible = true;
+        }
+        if (o.frustumCulled) {
+          culled.push(o);
+          o.frustumCulled = false;
+        }
+      });
+      return () => {
+        for (const o of hidden) o.visible = false;
+        for (const o of culled) o.frustumCulled = true;
+      };
+    };
+    let restore = showAll();
     try {
       await this.renderer.compileAsync(this.scene, this.camera);
-      // The outline pass makes its own materials the first time it draws each one (and the shadow pass its own).
+      // The frames drawn while that compiled hid the areas you can't see again: show it all
+      // once more for the draw that compiles the outline and shadow materials (three makes
+      // those the first time it draws each thing — so far, only what's seen from the door).
+      restore();
+      restore = showAll();
       this.renderer.shadowMap.needsUpdate = true;
-      if (this.outlines) this.effect.render(this.scene, this.camera);
+      if (this.outlines) this.drawOutlined();
       else this.renderer.render(this.scene, this.camera);
     } catch {
       /* compiling ahead is only an optimization */
     } finally {
-      for (const o of hidden) o.visible = false;
-      for (const o of culled) o.frustumCulled = true;
+      restore();
     }
   }
 
@@ -1232,6 +1327,7 @@ export class World {
     const up = floor !== 1;
     this.upstairs.group.visible = floor === 2;
     this.teamFloor.group.visible = floor === 3;
+    this.moreTeamFloors.forEach((f, i) => (f.group.visible = floor === i + 4));
     this.rooms.group.visible = !up;
     this.park.group.visible = !up && seeGrounds;
     this.extras.grounds.visible = !up && seeGrounds;
@@ -1291,9 +1387,10 @@ export class World {
     const len = toHead.length();
     this.ray.set(cam, toHead.normalize());
     const now = new Set<THREE.Object3D>();
+    // A merged piece of furniture is hidden as one (what draws the mesh: see mergeStatic).
     for (const o of this.occludable) {
-      if (o.box.distanceToPoint(cam) < 1.1) now.add(o.mesh);
-      else if (len > 0.3 && this.ray.intersectBox(o.box, this.hit) && this.hit.distanceTo(cam) < len - 0.35) now.add(o.mesh);
+      if (o.box.distanceToPoint(cam) < 1.1) now.add(drawnBy(o.mesh));
+      else if (len > 0.3 && this.ray.intersectBox(o.box, this.hit) && this.hit.distanceTo(cam) < len - 0.35) now.add(drawnBy(o.mesh));
     }
     for (const m of this.hiddenNow) if (!now.has(m)) m.visible = true;
     for (const m of now) m.visible = false;

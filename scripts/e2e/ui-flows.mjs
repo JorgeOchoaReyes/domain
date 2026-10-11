@@ -3,9 +3,15 @@
 // spoken stand-up with who does what, work done (the phone pings, Arnold offers a
 // review), office hours with real slides, the monitor (N, approve), reviews from the
 // phone, a task to everyone (someone offers), messaging, the CCTV wall and its chair,
-// sitting in your office, the end-of-day recap and Resume yesterday.
+// sitting in your office, your own terminal (💻 Mine), the end-of-day recap and Resume yesterday — plus the dock
+// (More), quieter toasts, and 🔔 Needs you (the inbox, and the phone's same list).
 //
 //   npm run e2e:ui           (needs Chrome; set CHROME to its path if it's elsewhere)
+//   E2E_VOICE=1 npm run e2e:ui   also: the stand-up's 🎤 hears a recording (Chrome's fake microphone
+//                            plays a WAV) and Whisper on this computer writes it in the box. On Windows
+//                            the WAV is spoken by the system voice; elsewhere give one: E2E_VOICE=say.wav
+//                            (16-bit, saying "Add a dark mode toggle and fix the login bug"). The first
+//                            run downloads the voice model (≈80 MB) into ~/.domain/models.
 //
 // It starts its own office and page on free ports and cleans up after itself.
 import { spawn, execFileSync } from "node:child_process";
@@ -30,11 +36,31 @@ mkdirSync(PROJECT);
 execFileSync("git", ["init", "-q", "-b", "main"], { cwd: PROJECT });
 writeFileSync(join(PROJECT, "README.md"), "hi");
 execFileSync("git", ["-c", "user.email=a@b", "-c", "user.name=a", "commit", "-qam", "init", "--allow-empty"], { cwd: PROJECT });
+// The opt-in voice check: a WAV for Chrome's fake microphone.
+const VOICE_SAID = "Add a dark mode toggle and fix the login bug.";
+let VOICE_WAV = "";
+if (process.env.E2E_VOICE) {
+  VOICE_WAV = process.env.E2E_VOICE !== "1" ? process.env.E2E_VOICE : join(ROOT, "say.wav");
+  if (process.env.E2E_VOICE === "1") {
+    if (process.platform !== "win32") throw new Error("E2E_VOICE=1 speaks the WAV with Windows' voice; elsewhere set E2E_VOICE to a WAV file");
+    // A second of quiet first (the microphone opening), then the sentence, then quiet.
+    const ps = `Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $f = New-Object System.Speech.AudioFormat.SpeechAudioFormatInfo(16000, [System.Speech.AudioFormat.AudioBitsPerSample]::Sixteen, [System.Speech.AudioFormat.AudioChannel]::Mono); $s.SetOutputToWaveFile('${VOICE_WAV.replace(/'/g, "''")}', $f); $p = New-Object System.Speech.Synthesis.PromptBuilder; $p.AppendBreak([TimeSpan]::FromMilliseconds(1000)); $p.AppendText('${VOICE_SAID}'); $p.AppendBreak([TimeSpan]::FromMilliseconds(2500)); $s.Speak($p); $s.Dispose()`;
+    execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", ps], { stdio: "ignore" });
+  }
+}
+// A repo elsewhere on "this computer" for ＋ Add a repo → On this computer to find (the scan looks only here).
+const CODE = join(ROOT, "code");
+const SIDE = join(CODE, "side-app");
+mkdirSync(SIDE, { recursive: true });
+execFileSync("git", ["init", "-q", "-b", "main"], { cwd: SIDE });
+execFileSync("git", ["remote", "add", "origin", "https://github.com/acme/side-app.git"], { cwd: SIDE });
+writeFileSync(join(SIDE, "README.md"), "side");
+execFileSync("git", ["-c", "user.email=a@b", "-c", "user.name=a", "commit", "-qam", "init", "--allow-empty"], { cwd: SIDE });
 const SERVER_PORT = await freePort();
 const PAGE_PORT = await freePort();
 const CDP_PORT = await freePort();
 const shell = process.platform === "win32";
-const server = spawn("npx", ["tsx", "src/server/index.ts"], { shell, stdio: "ignore", env: { ...process.env, DOMAIN_SIMULATE: "1", PORT: String(SERVER_PORT), DOMAIN_CWD: PROJECT, DOMAIN_PREFS: join(ROOT, "prefs.json"), DOMAIN_ADDRESS: join(ROOT, "office.json") } });
+const server = spawn("npx", ["tsx", "src/server/index.ts"], { shell, stdio: "ignore", env: { ...process.env, DOMAIN_SIMULATE: "1", PORT: String(SERVER_PORT), DOMAIN_CWD: PROJECT, DOMAIN_REPO_ROOTS: CODE, GIT_AUTHOR_NAME: "e2e", GIT_AUTHOR_EMAIL: "e2e@example.com", GIT_COMMITTER_NAME: "e2e", GIT_COMMITTER_EMAIL: "e2e@example.com", DOMAIN_PREFS: join(ROOT, "prefs.json"), DOMAIN_ADDRESS: join(ROOT, "office.json") } });
 const page = spawn("npx", ["vite", "--port", String(PAGE_PORT), "--strictPort"], { shell, stdio: "ignore", env: { ...process.env, VITE_SERVER_PORT: String(SERVER_PORT) } });
 const killTree = (p) => {
   try {
@@ -42,7 +68,17 @@ const killTree = (p) => {
     else p.kill();
   } catch {}
 };
-process.on("exit", () => [server, page].forEach(killTree));
+let chrome = null;
+// Everything it started goes when it ends — passing, failing or interrupted (the server takes its shells with it).
+process.on("exit", () => [server, page, chrome].filter(Boolean).forEach(killTree));
+for (const sig of ["SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"]) process.on(sig, () => process.exit(130));
+process.on("uncaughtException", (e) => { console.error(e); process.exit(1); });
+process.on("unhandledRejection", (e) => { console.error(e); process.exit(1); });
+// A run that hangs ends itself (and its processes) rather than playing on.
+setTimeout(() => {
+  console.error("e2e: gave up after 20 minutes");
+  process.exit(1);
+}, 20 * 60_000).unref();
 for (let i = 0; i < 60; i++) {
   try {
     await fetch(`http://localhost:${PAGE_PORT}/`);
@@ -53,7 +89,7 @@ for (let i = 0; i < 60; i++) {
 }
 await new Promise((r) => setTimeout(r, 3000));
 const CHROME = process.env.CHROME ?? (process.platform === "win32" ? "C:/Program Files/Google/Chrome/Application/chrome.exe" : process.platform === "darwin" ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" : "google-chrome");
-const chrome = spawn(CHROME, ["--headless=new", `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${mkdtempSync(join(tmpdir(), "cdp-"))}`, "--window-size=1500,900", "--enable-gpu", "--ignore-gpu-blocklist", "--use-angle=d3d11", "about:blank"]);
+chrome = spawn(CHROME, ["--headless=new", "--mute-audio", `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${mkdtempSync(join(tmpdir(), "cdp-"))}`, "--window-size=1500,900", "--enable-gpu", "--ignore-gpu-blocklist", "--use-angle=d3d11", ...(VOICE_WAV ? ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream", `--use-file-for-fake-audio-capture=${VOICE_WAV}%noloop`, "--autoplay-policy=no-user-gesture-required"] : []), "about:blank"]);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let tabs;
 for (let i = 0; i < 40; i++) {
@@ -110,6 +146,106 @@ await ev(() => [...document.querySelectorAll("button")].find((b) => /Enter the o
 await sleep(2500);
 await closeAll();
 
+// --- 0a. The dock: a few clear buttons, the rest under More ---------------------------
+const dock = await ev(() => [...document.querySelectorAll(".dock > .btn, .dock-more-wrap > .btn")].map((b) => b.dataset.act));
+check("dock: a few clear buttons (Needs you … More)", dock?.length <= 6 && dock[0] === "inbox" && dock.at(-1) === "more" && ["goals", "monitor", "laptop", "phone"].every((a) => dock.includes(a)), JSON.stringify(dock));
+await ev(() => document.querySelector('.dock [data-act="more"]').click());
+await sleep(300);
+const more = await ev(() => !document.querySelector(".more-menu").classList.contains("hidden") && [...document.querySelectorAll(".more-menu .more-item")].map((b) => b.dataset.act));
+check("More: stand-up, focus, round up, office hours, travel, chat, Office, settings, controls", Array.isArray(more) && ["standup", "focus", "roundup", "hours", "travel", "chat", "office", "settings", "help"].every((a) => more.includes(a)), JSON.stringify(more));
+await shot("0a-more-menu.png");
+await key("Escape", "Escape", 27);
+await sleep(300);
+check("More: Esc puts it away (and doesn't open settings)", !!(await ev(() => document.querySelector(".more-menu").classList.contains("hidden") && !document.querySelector(".settings-modal"))));
+check("More: 📦 Repos & GitHub and 🔌 MCP tools, one click away", Array.isArray(more) && more.includes("repos") && more.includes("mcp"), JSON.stringify(more));
+
+// --- 0r. Repos and GitHub, in plain sight --------------------------------------------------
+const card = await until(() => document.querySelector(".pj-hud") && [...document.querySelectorAll(".pj-hud button")].map((b) => b.textContent.trim().replace(/\s+/g, " ")), 10000, 500);
+check("HUD project card: the repo count, GitHub, and ＋ Add repo", Array.isArray(card) && card.some((t) => /^📦 1 repo$/.test(t)) && card.some((t) => /Sign in to GitHub|@/.test(t)) && card.some((t) => /＋ Add repo/.test(t)), JSON.stringify(card));
+await ev(() => document.querySelector(".pj-hud-main").click());
+await until(() => document.querySelector(".projects-modal .pa-add-btn"), 8000, 250);
+await shot("0r1-projects-before.png");
+check("Projects: one big ＋ Add a repo button", !!(await ev(() => /＋ Add a repo/.test(document.querySelector(".projects-modal .pa-add-btn")?.textContent ?? ""))));
+await ev(() => document.querySelector(".projects-modal .pa-add-btn").click());
+const addTabs = await until(() => { const t = [...document.querySelectorAll(".pa-tab")].map((b) => b.dataset.tab); return t.length ? t : null; }, 5000, 250);
+check("＋ Add a repo: on this computer, from GitHub, a folder path, a new repo", JSON.stringify(addTabs) === JSON.stringify(["local", "github", "folder", "new"]), JSON.stringify(addTabs));
+const foundSide = await until(() => [...document.querySelectorAll(".pa-found li")].some((li) => /side-app/.test(li.textContent)) && [...document.querySelectorAll(".pa-found li")].map((li) => li.querySelector("b")?.textContent), 10000, 250);
+check("＋ Add a repo → On this computer finds the repo (and not the project)", Array.isArray(foundSide) && foundSide.length === 1, JSON.stringify(foundSide));
+await shot("0r2-add-chooser.png");
+await ev(() => [...document.querySelectorAll(".pa-found li")].find((li) => /side-app/.test(li.textContent)).querySelector(".pj-add").click());
+const opened = await until(() => { const l = [...document.querySelectorAll(".pj-open-repos li b")].map((b) => b.textContent); return l.length === 2 ? l : null; }, 10000, 250);
+check("one click Add: it's open alongside the project", !!opened && opened.some((t) => /side-app/.test(t)), JSON.stringify(opened));
+await ev(() => document.querySelector('.pa-tab[data-tab="new"]').click());
+await sleep(200);
+const ghOff = await ev(() => document.querySelector(".pa-new-gh") && !document.querySelector(".pa-new-gh").checked);
+check("a new repo: \"also on GitHub\" is off unless you tick it", !!ghOff);
+await ev(() => { const i = document.querySelector(".pa-new-name"); i.value = "e2e-fresh"; document.querySelector(".pa-create").click(); });
+const made = await until(() => { const l = [...document.querySelectorAll(".pj-open-repos li b")].map((b) => b.textContent); return l.length === 3 ? l : null; }, 15000, 250);
+check("a new, empty repo: git init next to the project, opened alongside", !!made && made.some((t) => /e2e-fresh/.test(t)), JSON.stringify(made));
+await ev(() => document.querySelector('.pa-tab[data-tab="local"]').click());
+await sleep(300);
+await shot("0r3-projects-after.png");
+const chips = await ev(() => [...document.querySelectorAll(".pj-hud-chip")].map((b) => b.textContent.trim()));
+check("HUD project card counts them", Array.isArray(chips) && chips.includes("📦 3 repos"), JSON.stringify(chips));
+await closeAll();
+await ev(() => window.domain.laptop.open("repo"));
+const lt = await until(() => document.querySelector(".rp-top .rp-add") && { add: document.querySelector(".rp-add").textContent.trim(), mcp: !!document.querySelector(".rp-mcp"), open: document.querySelectorAll(".rp-open li").length, gh: !!document.querySelector(".rp-gh") }, 8000, 250);
+check("laptop Repo app: ＋ Add a repo, 🔌 MCP tools, the open repos, GitHub", lt?.add === "＋ Add a repo" && lt.mcp && lt.open === 3 && lt.gh, JSON.stringify(lt));
+await sleep(1200);
+await shot("0r4-laptop-repo.png");
+await closeAll();
+await ev(() => document.querySelector('.dock [data-act="more"]').click());
+await sleep(300);
+await ev(() => document.querySelector('.more-menu [data-act="mcp"]').click());
+const mcpHead = await until(() => document.querySelector(".mcp-sec.theirs h4")?.textContent, 8000, 250);
+check("More → 🔌 MCP tools: Found in your CLIs", /Found in your CLIs/.test(mcpHead ?? ""), mcpHead ?? "");
+await sleep(800);
+await shot("0r5-mcp.png");
+await closeAll();
+await ev(() => window.domain.openHire(window.domain.office().desks.find((d) => !d.worker).id));
+const hireRepo = await until(() => { const s = document.querySelector(".tm-repo-in"); return s && [...s.options].map((o) => o.textContent); }, 6000, 250);
+check("hire card: a 📦 Repo choice, ending with ＋ Add a repo…", Array.isArray(hireRepo) && hireRepo.length === 5 && /Where new hires work/.test(hireRepo[0]) && hireRepo.at(-1) === "＋ Add a repo…", JSON.stringify(hireRepo));
+await shot("0r6-hire-repo.png");
+await closeAll();
+// Back to just the project for the rest of the run.
+await ev(() => window.domain.net.send({ t: "repoClose", path: "side-app" }));
+await ev(() => window.domain.net.send({ t: "repoClose", path: "e2e-fresh" }));
+await sleep(800);
+
+// --- 0a'. Settings → Voice: how the 🎤 hears you, and the voice model ---------------------
+await ev(() => document.querySelector('.dock [data-act="more"]').click());
+await sleep(300);
+await ev(() => document.querySelector('.more-menu .more-item[data-act="settings"]').click());
+await sleep(300);
+const voiceSet = await until(() => {
+  const cards = [...document.querySelectorAll(".st-voice .st-view-card")];
+  const state = document.querySelector(".st-whisper-state")?.textContent ?? "";
+  return cards.length && !/asking/.test(state) ? { cards: cards.map((c) => `${c.dataset.ve}${c.classList.contains("on") ? "*" : ""}`), state } : null;
+}, 8000, 250);
+check("Settings → Voice: on this computer (Whisper) by default, browser, system dictation — and the model", voiceSet?.cards.join() === "whisper*,browser,system" && /whisper-base\.en/.test(voiceSet.state), JSON.stringify(voiceSet));
+await ev(() => document.querySelector(".st-voice")?.scrollIntoView());
+await shot("0a-settings-voice.png");
+await closeAll();
+
+// --- 0b. Quieter toasts ------------------------------------------------------------------
+await ev(() => { for (let k = 0; k < 3; k++) window.domain.hud.toast("🧪 Same thing, said three times", "warn"); window.domain.hud.note("🧪 Routine news, quietly"); });
+await sleep(200);
+const toasts = await ev(() => ({ same: [...document.querySelectorAll("#toasts .toast")].filter((t) => /Same thing/.test(t.textContent)).map((t) => t.textContent), routine: [...document.querySelectorAll("#toasts .toast")].some((t) => /Routine news/.test(t.textContent)), recent: window.domain.hud.recent.some((r) => /Routine news/.test(r.text)) }));
+check("toasts: the same one three times is one toast ×3", toasts?.same.length === 1 && /×3/.test(toasts.same[0]), JSON.stringify(toasts?.same));
+check("toasts: routine news doesn't pop up — it's in Recent", toasts && !toasts.routine && toasts.recent);
+
+// --- 0c. Your desk: sit (E), then E again is your computer, on 💻 Mine (nobody's presenting yet) ---
+await ev(() => window.domain.player.placeAt(13.6, 7.7, 0));
+await sleep(600);
+await key("e");
+await sleep(600);
+await key("e");
+await sleep(800);
+check("your desk: E, E opens your computer on 💻 Mine", !!(await ev(() => !!document.querySelector('.lt-tabs [data-app="mine"].on'))));
+await closeAll();
+await key("w");
+await sleep(400);
+
 // --- 0. A team of three ---------------------------------------------------------------
 for (const [i, role] of [[0, "builder"], [1, "reviewer"]]) {
   await ev((a) => window.domain.openHire(window.domain.office().desks[a[0]].id), [i, role]);
@@ -131,6 +267,30 @@ await closeAll();
 // --- 1. Spoken stand-up: who does what, then start the day -------------------------------
 await key("u");
 await sleep(1500);
+if (VOICE_WAV) {
+  // 🎤 → listening (the fake microphone plays the WAV) → it stops by itself after the pause →
+  // transcribing on this computer → the words in the box.
+  await ev(() => {
+    window.__chips = [];
+    new MutationObserver(() => {
+      const c = document.querySelector(".mic-chip");
+      const t = c?.textContent?.replace(/\d+s/, "Ns").replace(/\d+%/, "N%");
+      if (t && window.__chips.at(-1) !== t) window.__chips.push(t);
+    }).observe(document.body, { childList: true, subtree: true, characterData: true });
+    document.querySelector(".su-said").value = "";
+    document.querySelector(".su-mic").click();
+  });
+  const t0 = Date.now();
+  if (await until(() => /Listening/.test(document.querySelector(".mic-chip")?.textContent ?? ""), 15000, 200)) await shot("1-standup-listening.png");
+  const heard = await until(() => document.querySelector(".su-said").value.trim() || null, 240000, 250);
+  const ms = Date.now() - t0;
+  const chips = await ev(() => window.__chips);
+  const norm = (x) => (x ?? "").toLowerCase().replace(/[^a-z ]/g, "").split(/\s+/).filter(Boolean);
+  const missing = norm(VOICE_SAID).filter((w) => !norm(heard).includes(w));
+  check("voice: the stand-up 🎤 hears you and Whisper writes it in the box", !!heard && missing.length === 0, `"${heard}" in ${(ms / 1000).toFixed(1)} s${missing.length ? ` · missing: ${missing.join(" ")}` : ""}`);
+  check("voice: it says what it's doing (listening, then transcribing)", chips?.some((c) => /Listening/.test(c)) && chips?.some((c) => /Transcribing|Downloading/.test(c)), JSON.stringify(chips));
+  await shot("1-standup-voice.png");
+}
 await ev(() => {
   document.querySelector(".su-said").value = "Today I want to add a dark mode toggle, fix the login bug, and write tests for checkout. By end of day the PR is open.";
   document.querySelector(".su-make").click();
@@ -154,6 +314,20 @@ check("work done: phone notification", !!ready && !/Need a decision: Need|“Fin
 check("work done: Arnold offers Review now", !!(await ev(() => [...document.querySelectorAll("button")].some((b) => /Review now/.test(b.textContent)))));
 check("work done: lined up outside your office", !!(await ev(() => window.domain.office().presentations.filter((p) => p.report).length >= 1)));
 await shot("2-ready-ping.png");
+
+// --- 2a. One place for what needs you: the inbox --------------------------------------------
+const badge = await until(() => Number(document.querySelector('.dock [data-act="inbox"] .dock-badge:not(.hidden)')?.textContent ?? 0), 8000, 500);
+check("Needs you: the dock counts it", badge >= 1, `${badge}`);
+await key("i");
+await sleep(500);
+const inboxRows = await ev(() => !document.querySelector(".inbox-pop").classList.contains("hidden") && [...document.querySelectorAll(".inbox-pop .ib-item")].map((li) => li.textContent.replace(/\s+/g, " ").trim()));
+check("Needs you (I): finished work, with Review now", Array.isArray(inboxRows) && inboxRows.some((r) => /finished|plan for|decision/.test(r) && /Review now/.test(r)), JSON.stringify(inboxRows).slice(0, 200));
+await shot("2a-inbox.png");
+const phoneSame = await ev(() => { window.domain.phone.open("alerts"); const n = document.querySelectorAll(".ph-inbox .ib-item").length; window.domain.phone.close(); return n; });
+check("phone Alerts: the same list", phoneSame >= 1 && Math.abs(phoneSame - inboxRows.length) <= 1, `${phoneSame} on the phone, ${inboxRows.length} in the inbox`);
+await key("i");
+await sleep(300);
+check("Needs you: I again puts it away", !!(await ev(() => document.querySelector(".inbox-pop").classList.contains("hidden"))));
 
 // --- 2b. Office hours: the deck is real slides --------------------------------------------
 await closeAll();
@@ -218,6 +392,8 @@ await ev(() => { document.querySelector(".tm-compose textarea").value = "Update 
 const offered = await until(() => document.querySelector('.tm-log [data-answer="take"]') && [...document.querySelectorAll(".tm-log .tm-m")].at(-1)?.textContent, 10000);
 check("laptop: someone offers to take it", !!offered, (offered ?? "").replace(/\s+/g, " ").slice(0, 100));
 await shot("5-offer.png");
+const inboxOffer = await ev(() => window.domain.inboxItems().find((x) => x.kind === "offer")?.actions.map((a) => a.id).join(","));
+check("Needs you: the offer is there too, with its buttons", inboxOffer === "take,next", inboxOffer ?? "");
 await ev(() => document.querySelector('.tm-log [data-answer="take"]').click());
 const took = await until(async () => {
   const t = window.domain.progress().goals.flatMap((g) => g.tasks).find((t) => /README/.test(t.title));
@@ -277,6 +453,46 @@ await key("w");
 await sleep(500);
 check("armchair: W gets you up", !(await ev(() => window.domain.player.sitting)));
 
+// --- 7c. 💻 Mine: your own terminal, a real shell on this computer -----------------------------
+await closeAll();
+await ev(() => window.domain.laptop.open("mine"));
+await sleep(800);
+check("laptop: 💻 Mine is an app", !!(await ev(() => !!document.querySelector('.lt-tabs [data-app="mine"].on') && !!document.querySelector(".mn"))));
+await ev(() => document.querySelector(".mn-new").click());
+const mineTabs = await until(() => document.querySelectorAll(".mn-tab").length, 10000, 250);
+check("Mine: ＋ New tab opens a shell", mineTabs === 1, `${mineTabs} tab(s)`);
+const mineLines = () => ev(() => [...document.querySelectorAll(".mn-term .xterm-rows > div")].map((d) => d.textContent.trim()));
+// The shell's prompt first, then type into it like a person would.
+await until(() => [...document.querySelectorAll(".mn-term .xterm-rows > div")].some((d) => d.textContent.trim()), 15000, 500);
+await sleep(1500);
+await ev(() => document.querySelector(".mn-term .xterm-helper-textarea").focus());
+await cmd("Input.insertText", { text: "echo hello-from-mine" });
+await sleep(200);
+await key("Enter", "Enter", 13);
+let said = null;
+for (let i = 0; i < 30 && !said; i++) {
+  await sleep(500);
+  said = (await mineLines())?.find((l) => l === "hello-from-mine") ?? null;
+}
+check("Mine: echo hello-from-mine prints it", !!said, JSON.stringify((await mineLines())?.filter(Boolean).slice(-4)));
+await shot("7c-mine.png");
+await closeAll();
+await sleep(400);
+await ev(() => window.domain.laptop.open("mine"));
+const kept = await until(() => [...document.querySelectorAll(".mn-term .xterm-rows > div")].some((d) => d.textContent.trim() === "hello-from-mine") && document.querySelectorAll(".mn-tab").length, 8000, 250);
+check("Mine: the tab (and its output) is still there after closing the laptop", kept === 1, String(kept));
+await ev(() => { const net = window.domain.net; const send = net.send.bind(net); net.send = (m) => { (window.__sent ??= []).push(m); send(m); }; });
+await ev(() => document.querySelector(".mn-hand").click());
+await ev(() => { const t = document.querySelector(".mn-handoff textarea"); t.value = "Look at the output from my shell"; t.closest("form").requestSubmit(); });
+const handed = await until(() => window.domain.progress().goals.flatMap((g) => g.tasks).find((t) => /^In project: Look at the output/.test(t.title))?.title, 8000, 500);
+const handedNote = await ev(() => (window.__sent ?? []).filter((m) => m.t === "quickTask").map((m) => m.files?.[0]?.text ?? "").join("\n"));
+check("Mine: … with the tab's last lines attached", /hello-from-mine/.test(handedNote ?? ""), (handedNote ?? "").split("\n").slice(-2).join(" | "));
+check("Mine: 🎯 Hand this to the team makes a task for the folder", !!handed, handed ?? "");
+await ev(() => document.querySelector(".mn-tab [data-close]").click());
+const gone = await until(() => document.querySelector(".mn-none") ? "closed" : null, 8000, 250);
+check("Mine: ✕ closes the tab (and ends its shell)", gone === "closed");
+await closeAll();
+
 // --- 8. End of day: stop -> recap ---------------------------------------------------------------
 await closeAll();
 await ev(() => window.domain.net.send({ t: "sessionStop" }));
@@ -293,6 +509,43 @@ check("stand-up: Resume yesterday is offered", !!resumeBtn, resumeBtn ?? "");
 await ev(() => document.querySelector(".su-resume")?.click());
 const resumed = await until(() => window.domain.progress().session && JSON.stringify({ eod: window.domain.progress().session.eod, minutes: window.domain.progress().session.minutes }), 8000);
 check("Resume yesterday: same plan, session on", !!resumed, resumed ?? "");
+
+// --- 10. Agent CLIs: versions and updates; restarting a worker -------------------------------------
+await closeAll();
+await ev(() => document.querySelector('.dock [data-act="more"]').click());
+await sleep(300);
+await ev(() => document.querySelector('.more-menu [data-act="office"]').click());
+await sleep(600);
+await ev(() => [...document.querySelectorAll(".om-tile")].find((b) => /Agent CLIs/.test(b.textContent ?? ""))?.click());
+const cliRows = await until(() => document.querySelectorAll(".ac-list li").length, 5000, 250);
+check("More → Office → Agent CLIs lists every agent", cliRows === 4, `${cliRows} rows`);
+const looked = await until(() => window.domain.agents()?.checkedAt > 0 && [...document.querySelectorAll(".ac-status")].map((e) => e.textContent).join(" | "), 60000);
+check("Agent CLIs: versions looked up", !!looked, looked ?? "");
+await shot("10-agent-clis.png");
+await closeAll();
+await ev(() => (window.__before = window.domain.office().desks[0].worker?.id ?? null));
+await ev(() => window.domain.openTerminal(window.domain.office().desks[0].id));
+await sleep(800);
+await ev(() => document.querySelector(".modal.term .term-restart")?.click());
+const after = await until(() => { const w = window.domain.office().desks[0].worker; return w && w.status !== "asleep" && w.id !== window.__before ? w.status : null; }, 10000, 500);
+check("restart a worker: a new session at the same desk", !!after, after ?? "");
+
+// --- 11. Local models first (when Ollama or LM Studio runs on this computer) -------------------------
+await closeAll();
+const localOnes = await until(() => window.domain.localModels?.().length ? window.domain.localModels() : null, 8000, 500);
+if (localOnes) {
+  await ev(() => window.domain.openHire(window.domain.office().desks.find((d) => !d.worker).id));
+  await sleep(1000);
+  const firstOpt = await ev(() => document.querySelector('.tm-agents li[data-agent="codex"] .tm-model option')?.textContent);
+  check("hire card: a local model is listed first, free and private", /^🖥 .*free, private/.test(firstOpt ?? ""), firstOpt ?? "");
+  await ev(() => document.querySelector(".tm-policy").click());
+  await sleep(800);
+  const rows = await ev(() => [...document.querySelectorAll(".po-local-list li")].map((li) => li.textContent.replace(/\s+/g, " ").trim()));
+  check("Team defaults: local models with their context window", rows?.length > 0 && rows.some((r) => /context/.test(r)), JSON.stringify(rows).slice(0, 200));
+  await ev(() => document.querySelector(".po-local-list")?.scrollIntoView());
+  await shot("11-local-models.png");
+  await closeAll();
+} else results.push("SKIP  local models: none running on this computer");
 
 console.log(results.join("\n"));
 const failed = results.filter((r) => r.startsWith("FAIL")).length;

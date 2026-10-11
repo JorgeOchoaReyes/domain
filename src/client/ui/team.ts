@@ -1,6 +1,7 @@
 import { alumnusHtml, formerWorkers, onAlumniChange } from "./fire.js";
 import { onSkillsChange, skillsLine, skillsOf } from "./skills.js";
 import { mcpToolsFor, onMcpChange } from "./mcp.js";
+import { openRepos, projectState, repoOptionsHtml } from "./projects.js";
 import * as THREE from "three";
 import { OutlineEffect } from "three/examples/jsm/effects/OutlineEffect.js";
 import type { AgentKind, Desk, Worker } from "../../shared/protocol.js";
@@ -27,6 +28,8 @@ import { listVoices, speak, stopSpeaking } from "../voice.js";
 import { esc, openModal } from "./modal.js";
 import { agentsState, installAgent, isInstalled, onAgentsChange } from "./agents.js";
 import { ROLES, roleCharacter, type Role } from "../../shared/roles.js";
+import { isLocalModel, modelChoices } from "../../shared/localModels.js";
+import { loopState } from "./loop.js";
 import "../styles/team.css";
 
 /**
@@ -155,11 +158,13 @@ export interface TeamContext {
   onSave(c: Character): void;
   onDelete(id: string): void;
   onEditPolicy(): void;
+  /** "＋ Add a repo…" from a repo dropdown: the Add-a-repo chooser, then `then` with the new repo's folder. */
+  addRepoThen?(then: (path: string) => void): void;
 }
 
 export interface HireContext extends TeamContext {
-  /** Put a character (by id), or a plain agent, at the desk. */
-  onHire(choice: string | { agent: AgentKind; model: string; leash: Leash }): void;
+  /** Put a character (by id), or a plain agent, at the desk — in `repo` when one was picked (else its own, or where new hires work). */
+  onHire(choice: string | { agent: AgentKind; model: string; leash: Leash }, repo?: string): void;
   /** Bring a former worker back to the desk. */
   onRehire?(id: string): void;
   getAlumni?(): void;
@@ -212,14 +217,22 @@ export function openTeam(ctx: TeamContext & Partial<Pick<HireContext, "onHire">>
   openRoster(ctx, null);
 }
 
-function openRoster(ctx: TeamContext & Partial<Pick<HireContext, "onHire">>, desk: { id: string; label: string } | null, local = new Map<string, Character | null>()): void {
+function openRoster(ctx: TeamContext & Partial<Pick<HireContext, "onHire">>, desk: { id: string; label: string } | null, local = new Map<string, Character | null>(), picked = ""): void {
   const hiring = desk !== null && !!ctx.onHire;
   const team = teamOf(ctx, local);
   const policy = ctx.progress.policy;
   let leash: Leash = policy.leash;
+  // The repo this hire works in: "" is the default (a character's own, else where new hires work).
+  let repoPick = picked;
+  const hireAt = openRepos().find((r) => samePathish(r.path, projectState.hireRepo || projectState.info?.path || ""))?.name ?? "this project";
+  const repoRow = hiring && openRepos().length && !projectState.guest
+    ? `<section class="tm-repo"><label class="tm-repo-l">📦 <b>Repo</b> <select class="tm-repo-in" title="Which repo this hire works in">${repoOptionsHtml(repoPick, { none: `Where new hires work · ${hireAt}` })}</select>
+        <span class="tm-sub">a character with its own repo works there unless you pick one</span></label></section>`
+    : "";
   const body = document.createElement("div");
   body.className = "team";
   body.innerHTML = `
+    ${repoRow}
     <section>
       <div class="tm-head"><h4>👥 Your team <span class="tm-count">${team.length}/${MAX_TEAM}</span></h4>
         <button class="btn primary tm-new" ${team.length >= MAX_TEAM ? "disabled" : ""}>＋ New character</button></div>
@@ -236,9 +249,9 @@ function openRoster(ctx: TeamContext & Partial<Pick<HireContext, "onHire">>, des
       <h4>⚡ Quick hire <span class="tm-sub">a plain worker, no character</span></h4>
       <div class="seg tm-leash">${(Object.keys(LEASH_LABEL) as Leash[]).map((l) => `<button data-l="${l}" title="${esc(LEASH_RULES[l])}">${LEASH_ICON[l]} ${esc(LEASH_LABEL[l])}</button>`).join("")}</div>
       <ul class="tm-agents">${AGENT_KINDS.map((k) => {
-        const models = [...new Set(["", ...policy.models[k], policy.defaultModel[k]])];
+        const models = modelChoices(k, policy.models[k], loopState.config?.localModels ?? [], [policy.defaultModel[k]]);
         return `<li data-agent="${k}"><span class="dot" style="background:${AGENT_COLOR[k]}"></span><b>${AGENT_LABELS[k]}</b>
-          <select class="tm-model" title="Model">${models.map((m) => `<option value="${esc(m)}" ${m === policy.defaultModel[k] ? "selected" : ""}>${esc(modelLabel(m))}</option>`).join("")}</select>
+          <select class="tm-model" title="Model — the ones on this computer (🖥) are free and private">${models.map((m) => `<option value="${esc(m)}" ${m === policy.defaultModel[k] ? "selected" : ""}>${esc(modelLabel(m))}${isLocalModel(m) ? " · free, private" : ""}</option>`).join("")}</select>
           <button class="btn small tm-quick-hire">Hire</button>
           <span class="tm-tools" data-agent="${k}"></span><span class="tm-skills" data-agent="${k}"></span>
           <button class="btn small primary tm-install" title="Install it with npm">⬇ Install</button></li>`;
@@ -325,7 +338,7 @@ function openRoster(ctx: TeamContext & Partial<Pick<HireContext, "onHire">>, des
       ctx.onSave(c);
       local.set(c.id, c);
       modal.close();
-      if (hiring) ctx.onHire?.(c.id);
+      if (hiring) ctx.onHire?.(c.id, repoPick || undefined);
       else openRoster(ctx, desk, local);
     }),
   );
@@ -337,7 +350,7 @@ function openRoster(ctx: TeamContext & Partial<Pick<HireContext, "onHire">>, des
     const c = team.find((x) => x.id === li.dataset.id)!;
     li.querySelector(".tm-hire")?.addEventListener("click", () => {
       modal.close();
-      ctx.onHire?.(c.id);
+      ctx.onHire?.(c.id, repoPick || undefined);
     });
     li.querySelector(".tm-edit")!.addEventListener("click", () => {
       modal.close();
@@ -374,12 +387,36 @@ function openRoster(ctx: TeamContext & Partial<Pick<HireContext, "onHire">>, des
       li.querySelector(".tm-quick-hire")!.addEventListener("click", () => {
         const model = li.querySelector<HTMLSelectElement>(".tm-model")!.value;
         modal.close();
-        ctx.onHire?.({ agent: li.dataset.agent as AgentKind, model, leash });
+        ctx.onHire?.({ agent: li.dataset.agent as AgentKind, model, leash }, repoPick || undefined);
       });
       li.querySelector(".tm-install")!.addEventListener("click", () => installAgent(li.dataset.agent as AgentKind));
     });
+    const repoIn = body.querySelector<HTMLSelectElement>(".tm-repo-in");
+    repoIn?.addEventListener("keydown", (e) => e.stopPropagation());
+    repoIn?.addEventListener("change", () => {
+      if (repoIn.value !== "+add") return void (repoPick = repoIn.value);
+      repoIn.value = repoPick;
+      if (!ctx.addRepoThen) return;
+      // Add one, then back here with it picked.
+      modal.close();
+      ctx.addRepoThen((path) => openRoster(ctx, desk, local, path));
+    });
   }
   (body.querySelector<HTMLElement>(".tm-hire:not([disabled])") ?? body.querySelector<HTMLElement>(".tm-new"))?.focus();
+}
+
+/** A character's repo choices: the default, every open repo, its own if it isn't open now, and ＋ Add a repo…. */
+function characterRepoOptions(repo: string): string {
+  const open = openRepos();
+  const missing = repo && !open.some((r) => samePathish(r.path, repo));
+  const name = repo.split(/[\\/]/).filter(Boolean).pop() ?? repo;
+  // A repo that isn't open: listed (and picked) on its own, so nothing else is.
+  return `${repoOptionsHtml(missing ? "\u0000" : repo, { none: "Where new hires work" })}${missing ? `<option value="${esc(repo)}" selected>📦 ${esc(name)} (not open now)</option>` : ""}`;
+}
+
+function samePathish(a: string, b: string): boolean {
+  const n = (p: string) => p.replace(/[\\/]+$/, "").toLowerCase();
+  return n(a) === n(b);
 }
 
 /** Make a new character (null) or change one. */
@@ -392,11 +429,15 @@ function openEditor(
   ctx: TeamContext & Partial<Pick<HireContext, "onHire">>,
   desk: { id: string; label: string } | null,
   local: Map<string, Character | null>,
+  /** Back from "＋ Add a repo…": the character as you were editing it. */
+  draft: Character | null = null,
 ): void {
   const team = teamOf(ctx, local);
   const taken = new Set(team.filter((x) => x.id !== existing?.id).map((x) => x.name.toLowerCase()));
   const policy = ctx.progress.policy;
-  const c: Character = existing
+  const c: Character = draft
+    ? draft
+    : existing
     ? structuredClone(existing)
     : {
         id: Math.random().toString(36).slice(2, 10),
@@ -427,6 +468,9 @@ function openEditor(
         <div><label>Model</label><select class="tm-model-in"></select></div>
         <div><label>Leash</label><div class="seg tm-leash-in">${(Object.keys(LEASH_LABEL) as Leash[]).map((l) => `<button data-l="${l}" title="${esc(LEASH_RULES[l])}">${LEASH_ICON[l]} ${esc(LEASH_LABEL[l])}</button>`).join("")}</div></div>
       </div>
+
+      <label>📦 Repo <span class="tm-sub">— where it works when you hire it (if that repo's open; else where new hires work)</span></label>
+      <select class="tm-repo-in">${characterRepoOptions(c.repo ?? "")}</select>
 
       <label>How it works <span class="tm-sub">— added to every task it gets · start from a role, then make it yours</span></label>
       <div class="templates tm-presets">${ROLES.map((r, i) => `<button class="btn chip" data-p="${i}" title="${esc(r.blurb)}">${r.icon} ${esc(r.title)}</button>`).join("")}</div>
@@ -483,6 +527,23 @@ function openEditor(
   }
   nameIn.addEventListener("input", () => (c.name = nameIn.value));
   personaIn.addEventListener("input", () => (c.persona = personaIn.value));
+  // Its repo: one of the open ones, or ＋ Add a repo… (then back here with it picked).
+  const repoIn = $<HTMLSelectElement>(".tm-repo-in");
+  repoIn.addEventListener("keydown", (e) => e.stopPropagation());
+  repoIn.addEventListener("change", () => {
+    if (repoIn.value !== "+add") {
+      if (repoIn.value) c.repo = repoIn.value;
+      else delete c.repo;
+      return;
+    }
+    repoIn.value = c.repo ?? "";
+    if (!ctx.addRepoThen) return;
+    modal.close();
+    ctx.addRepoThen((path) => {
+      c.repo = path;
+      openEditor(existing, ctx, desk, local, c);
+    });
+  });
   $(".tm-dice").addEventListener("click", () => {
     c.name = randomName(taken);
     nameIn.value = c.name;
@@ -502,8 +563,8 @@ function openEditor(
 
   const renderModels = () => {
     const def = policy.defaultModel[c.agent];
-    const choices = [...new Set(["", ...policy.models[c.agent], c.model])];
-    modelIn.innerHTML = choices.map((m) => `<option value="${esc(m)}" ${m === c.model ? "selected" : ""}>${m ? esc(m) : `Team default (${esc(modelLabel(def))})`}</option>`).join("");
+    const choices = modelChoices(c.agent, policy.models[c.agent], loopState.config?.localModels ?? [], [c.model]);
+    modelIn.innerHTML = choices.map((m) => `<option value="${esc(m)}" ${m === c.model ? "selected" : ""}>${m ? `${esc(modelLabel(m))}${isLocalModel(m) ? " · free, private" : ""}` : `Team default (${esc(modelLabel(def))})`}</option>`).join("");
   };
   modelIn.addEventListener("change", () => (c.model = modelIn.value));
 

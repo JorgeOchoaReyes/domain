@@ -128,6 +128,7 @@ export function addExtras(props: Props): Extras {
   const gsolid = solid;
   const gadd = (o: THREE.Object3D) => grounds.add(o);
   const dog = buildDog();
+  dog.root.userData.dynamic = true;
   gadd(dog.root);
   const g = { x: DOG_ROUTE[0].x, z: DOG_ROUTE[0].z, leg: 1, rest: 1500, mode: "walk" as "walk" | "sit" | "fetch" | "return" | "wag", until: 0 };
   dog.root.position.set(g.x, 0, g.z);

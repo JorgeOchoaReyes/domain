@@ -163,6 +163,19 @@ export class GitHub {
     }));
   }
 
+  /** A new, empty repository under your account (only when you ask for one). */
+  async createRepo(name: string, priv: boolean, topic?: string): Promise<GithubRepo> {
+    const r = (await this.request("POST", "/user/repos", { name, private: priv, auto_init: false }, topic)) as Record<string, unknown>;
+    return {
+      fullName: String(r.full_name ?? name),
+      description: String(r.description ?? ""),
+      private: r.private === true,
+      updatedAt: String(r.updated_at ?? ""),
+      cloneUrl: String(r.clone_url ?? ""),
+      defaultBranch: String(r.default_branch ?? "main"),
+    };
+  }
+
   async issues(owner: string, repo: string): Promise<GithubIssue[]> {
     const list = (await this.request("GET", `/repos/${owner}/${repo}/issues?state=open&per_page=50`, undefined, "github")) as Record<string, unknown>[];
     return list

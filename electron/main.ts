@@ -1,6 +1,7 @@
 import { app, BrowserWindow, Menu, dialog, session, shell, utilityProcess, type UtilityProcess } from "electron";
 import { fileURLToPath } from "node:url";
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
+import { defaultsReader, startMacDictation, type DictateResult } from "./dictation.js";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { homedir } from "node:os";
@@ -140,10 +141,26 @@ function buildMenu(project: string): void {
           { role: "quit" },
         ],
       },
+      // macOS: an Edit menu (copy and paste, and the system's own Edit → Start Dictation…).
+      ...(process.platform === "darwin" ? [{ role: "editMenu" as const }] : []),
       { role: "viewMenu" },
       { role: "windowMenu" },
     ]),
   );
+}
+
+/**
+ * The 🎤 button on macOS: start the Mac's dictation in the box that has
+ * focus (electron/dictation.ts). Windows voice typing is started by the
+ * server itself (src/server/dictate.ts), so this is macOS-only.
+ */
+function dictate(): Promise<DictateResult> {
+  if (process.platform !== "darwin") return Promise.resolve({ ok: false, error: "Use your computer's dictation to talk" });
+  BrowserWindow.getAllWindows()[0]?.focus();
+  return startMacDictation({
+    sendAction: (action) => Menu.sendActionToFirstResponder(action),
+    readDefault: defaultsReader(execFile as never),
+  });
 }
 
 /**
@@ -213,12 +230,35 @@ async function createWindow(): Promise<void> {
     return { action: "allow" };
   });
 
-  // The office is a local page and asks for two things: the microphone (to
-  // talk to workers in a review) and the mouse (clicking the game captures it
-  // to steer the view). Nothing else.
-  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
-    callback(permission === "media" || permission === "pointerLock");
+  // The office is a local page and asks for two things: the microphone (the
+  // 🎤 records you, and Whisper on this computer writes it down) and the mouse
+  // (clicking the game captures it to steer the view). Nothing else — and only
+  // for the office's own page: never the camera, never another site.
+  const officeOrigin = (() => {
+    try {
+      return target ? new URL(target).origin : "";
+    } catch {
+      return "";
+    }
+  })();
+  const fromOffice = (url: string | undefined) => {
+    try {
+      return !!url && !!officeOrigin && new URL(url).origin === officeOrigin;
+    } catch {
+      return false;
+    }
+  };
+  session.defaultSession.setPermissionRequestHandler((wc, permission, callback, details) => {
+    if (!fromOffice((details as { requestingUrl?: string }).requestingUrl ?? wc.getURL())) return callback(false);
+    if (permission === "pointerLock") return callback(true);
+    if (permission === "media") {
+      const kinds = (details as { mediaTypes?: string[] }).mediaTypes ?? [];
+      return callback(kinds.length > 0 && kinds.every((k) => k === "audio"));
+    }
+    callback(false);
   });
+  // Checks (as opposed to requests) keep Electron's default, except the microphone's.
+  session.defaultSession.setPermissionCheckHandler((_wc, permission, requestingOrigin) => (permission === "media" ? fromOffice(requestingOrigin) : true));
 
   if (!target) {
     dialog.showErrorBox("domain couldn't open the office", `${failed || "The office's server didn't start."}\n\nTry quitting and opening domain again. If it keeps happening, another program may be using its port.`);
@@ -302,6 +342,8 @@ async function startServer(): Promise<string> {
           setTimeout(() => relaunchOn(path), 600);
         } else if (m.t === "pickFolder") {
           void pickProject().then((path) => child.postMessage({ t: "pickedFolder", id: m.id, path }));
+        } else if (m.t === "dictate") {
+          void dictate().then((r) => child.postMessage({ t: "dictated", id: m.id, ...r }));
         }
       });
       child.once("exit", (code) => {
@@ -319,6 +361,7 @@ async function startServer(): Promise<string> {
     Object.assign(globalThis, {
       __domainRelaunch: (path: string) => setTimeout(() => relaunchOn(path), 600),
       __domainPickFolder: () => pickProject(),
+      __domainDictate: () => dictate(),
     });
     // The specifier is held in a variable so TypeScript does not try to
     // resolve the separately-built server bundle at typecheck time.

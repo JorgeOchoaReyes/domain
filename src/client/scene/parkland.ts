@@ -108,6 +108,7 @@ export function buildParkland(): Parkland {
     [0.12, 0.5, "#fff3b0", -0.05],
   ] as const) {
     const f = mesh(new THREE.ConeGeometry(r, h, 10), toon(color, { emissive: color }), C.x + dx, 0.15 + h / 2, C.z, false);
+    f.userData.dynamic = true;
     flames.push(f);
     add(f);
   }
@@ -141,6 +142,7 @@ export function buildParkland(): Parkland {
       petals.scale.set(1, 0.6, 1);
       f.add(petals);
       f.add(mesh(new THREE.SphereGeometry(0.04, 6, 4), toon("#ffb000"), 0, 0.46, 0, false));
+      f.userData.dynamic = true;
       blooms.push(f);
       add(f);
     }

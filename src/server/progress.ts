@@ -4,7 +4,9 @@ import { dirname } from "node:path";
 import { DEFAULT_POLICY, coercePolicy, type TaskBrief, type TeamPolicy } from "../shared/policy.js";
 import { MAX_TEAM, coerceCharacter, type Character } from "../shared/team.js";
 import { SECRET_MASK, coerceMcpServer, type McpServer } from "../shared/mcp.js";
-import type { PullRequestInfo } from "../shared/project.js";
+import type { AgentPullRequest, PullRequestInfo } from "../shared/project.js";
+import { MAX_SAMPLES, estimateTask, sampleOf, type EstimateInput, type EstimateSample } from "../shared/estimate.js";
+import type { GoalDemo, HuddleState } from "../shared/huddle.js";
 import {
   ACHIEVEMENTS,
   XP,
@@ -330,7 +332,7 @@ export class Progress {
    * Put a worker on a task. Returns the task's goal and title so the server
    * can brief the worker, or null if it can't be assigned.
    */
-  assign(who: string, goalId: string, taskId: string, deskId: string, brief?: TaskBrief): { goal: Goal; title: string } | null {
+  assign(who: string, goalId: string, taskId: string, deskId: string, brief?: TaskBrief, worker?: { agent: string; model: string }): { goal: Goal; title: string } | null {
     const g = this.goal(goalId);
     const task = g?.tasks.find((t) => t.id === taskId);
     if (!g || !task || task.status === "done") return null;
@@ -346,6 +348,9 @@ export class Progress {
       timeUp: false,
       planApproved: !brief?.planFirst,
     };
+    // How long it'll likely take and cost, from its size and how long similar tasks took.
+    task.estimate = estimateTask(estimateInput(task.title, brief, worker), this.estimates);
+    task.took = null;
     this.feed(who, `put a worker on “${task.title}”`, XP.assign);
     this.award(who, XP.assign, `Assigned: ${task.title}`);
     this.changed();
@@ -361,6 +366,7 @@ export class Progress {
     else if (!done && task.status === "done") {
       task.status = "todo";
       task.doneAt = null;
+      task.took = null;
       g.doneAt = null;
       this.changed();
     }
@@ -414,6 +420,7 @@ export class Progress {
     const at = this.taskAt(deskId);
     if (!at) return;
     const t = at.goal.tasks.find((x) => x.id === at.taskId)!;
+    if (t.run) t.run.presentedAt = Date.now();
     if (t.status === "doing") {
       t.status = "review";
       this.changed();
@@ -509,6 +516,32 @@ export class Progress {
     const g = this.goal(goalId);
     if (!g) return;
     g.pr = pr;
+    this.changed();
+  }
+
+  /** A pull request from one agent's branch was opened for a goal, or its state changed. */
+  setAgentPr(goalId: string, pr: AgentPullRequest): void {
+    const g = this.goal(goalId);
+    if (!g) return;
+    const list = g.agentPrs ?? [];
+    const at = list.findIndex((x) => x.number === pr.number);
+    g.agentPrs = at < 0 ? [...list, pr] : list.map((x, i) => (i === at ? pr : x));
+    this.changed();
+  }
+
+  /** A goal's team huddle started, moved on, or ended (null). */
+  setHuddle(goalId: string, huddle: HuddleState | null): void {
+    const g = this.goal(goalId);
+    if (!g) return;
+    g.huddle = huddle ? structuredClone(huddle) : null;
+    this.changed();
+  }
+
+  /** A goal's demo is being captured, or was. */
+  setDemo(goalId: string, demo: GoalDemo | null): void {
+    const g = this.goal(goalId);
+    if (!g) return;
+    g.demo = demo;
     this.changed();
   }
 
@@ -649,8 +682,10 @@ export class Progress {
   private completeTask(who: string, g: Goal, taskId: string): void {
     const t = g.tasks.find((x) => x.id === taskId);
     if (!t || t.status === "done") return;
+    this.learn(t);
     t.status = "done";
     t.doneAt = Date.now();
+    if (t.deskId) t.doneBy = t.deskId;
     t.deskId = null;
     this.stats(who).tasksDone++;
     if (this.state.session) this.state.session.tasksDone++;
@@ -664,6 +699,29 @@ export class Progress {
       this.award(who, XP.goalDone, `Goal complete: ${g.title}`);
     }
     this.changed();
+  }
+
+  /** Finished tasks, estimate vs. what they took. */
+  get estimates(): EstimateSample[] {
+    return this.state.estimates ?? [];
+  }
+
+  /**
+   * A handed-out task is finishing: note what it really took — from handing it
+   * out to its last presentation (time waiting for your review doesn't count) —
+   * next to its estimate, so the next estimates learn from it.
+   */
+  private learn(t: GoalTask, now = Date.now()): void {
+    const r = t.run;
+    if (!r || !t.estimate) return;
+    const end = t.status === "review" && r.presentedAt ? r.presentedAt : now;
+    const minutes = (end - r.startedAt) / 60_000;
+    if (!(minutes > 0)) return;
+    const sample = sampleOf(estimateInput(t.title, t.brief ?? undefined, { agent: t.estimate.agent, model: t.estimate.model }), t.estimate.minutes, minutes, now);
+    t.took = { minutes: sample.minutes, cost: sample.cost };
+    const list = (this.state.estimates ??= []);
+    list.push(sample);
+    if (list.length > MAX_SAMPLES) list.splice(0, list.length - MAX_SAMPLES);
   }
 
   private stats(name: string): PlayerStats {
@@ -742,6 +800,7 @@ export class Progress {
         players: Array.isArray(raw.players) ? raw.players : [],
         feed: Array.isArray(raw.feed) ? raw.feed.slice(0, FEED_LEN) : [],
         lastPlan: raw.lastPlan && typeof raw.lastPlan === "object" && typeof raw.lastPlan.minutes === "number" ? raw.lastPlan : null,
+        estimates: Array.isArray(raw.estimates) ? raw.estimates.filter((x) => x && typeof x.minutes === "number" && typeof x.guess === "number").slice(-MAX_SAMPLES) : [],
       };
       // Workers don't survive a restart, so nobody is on a task any more.
       for (const g of this.state.goals) for (const t of g.tasks) if (t.status !== "done") Object.assign(t, { deskId: null, status: "todo", run: null });
@@ -761,6 +820,21 @@ export class Progress {
       /* best effort */
     }
   }
+}
+
+/** What a task's estimate is worked out from: its title, its brief, and who's on it. */
+function estimateInput(title: string, brief?: TaskBrief, worker?: { agent: string; model: string }): EstimateInput {
+  return {
+    title,
+    notes: brief?.notes,
+    done: brief?.done.length,
+    files: brief?.files?.length,
+    planFirst: brief?.planFirst,
+    audited: !!brief?.auditor,
+    agent: worker?.agent ?? "",
+    // The task's own model, or whatever the worker is on.
+    model: brief?.model || worker?.model || "",
+  };
 }
 
 function norm(s: string): string {

@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
 import type { AgentKind, Report, WorkerStatus } from "../shared/protocol.js";
 import { AGENT_LABELS } from "../shared/protocol.js";
+import type { Trouble } from "../shared/trouble.js";
 import { SimulatedWorker } from "./worker.js";
 import { PtyWorker, ptyAvailable } from "./ptyWorker.js";
 import { isModelName, type Leash } from "../shared/policy.js";
@@ -32,6 +33,8 @@ export interface IWorkerSession {
   dispose(): void;
   /** What it's doing right now, in a word or three, read off its screen (when the backend can tell). */
   doing?(): string;
+  /** What's wrong, read off its screen (signed out, offline, an API error, needs an update); null when nothing is. */
+  trouble?(): Trouble | null;
   /** Told when that changes. */
   onDoing?(listener: () => void): () => void;
   /**
@@ -85,7 +88,7 @@ export interface CreateWorkerOptions {
 }
 
 /** The CLI command each agent kind launches when a real terminal is used. */
-const AGENT_COMMAND: Record<AgentKind, string> = {
+export const AGENT_COMMAND: Record<AgentKind, string> = {
   claude: "claude",
   codex: "codex",
   opencode: "opencode",

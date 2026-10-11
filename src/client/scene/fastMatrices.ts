@@ -17,7 +17,8 @@ import * as THREE from "three";
  * once, for every Object3D, by importing this module.
  */
 
-type Tracked = THREE.Object3D & { __prs?: Float64Array };
+/** `__onMove`: told when this object's position, rotation or scale changed (see mergeStatic). */
+type Tracked = THREE.Object3D & { __prs?: Float64Array; __onMove?: () => void };
 
 function changed(o: Tracked): boolean {
   const p = o.position;
@@ -47,6 +48,7 @@ export function installFastMatrices(): void {
     if (this.matrixAutoUpdate && changed(this)) {
       this.matrix.compose(this.position, this.quaternion, this.scale);
       this.matrixWorldNeedsUpdate = true;
+      this.__onMove?.();
     }
     if (this.matrixWorldNeedsUpdate || force) {
       if (this.matrixWorldAutoUpdate === true) {

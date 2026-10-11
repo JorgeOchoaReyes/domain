@@ -1,4 +1,5 @@
-import { AGENT_KINDS, AGENT_LABELS, type AgentKind } from "../../shared/protocol.js";
+import { AGENT_KINDS, AGENT_LABELS, type AgentKind, type ClientMessage } from "../../shared/protocol.js";
+import { AGENT_CONTEXT, SLOW_TPS } from "../../shared/localModels.js";
 import {
   GREEN_MAX_LINES,
   MAX_START_TEAM,
@@ -15,6 +16,7 @@ import {
   type OnTimeUp,
   type TeamPolicy,
 } from "../../shared/policy.js";
+import type { PrPer } from "../../shared/project.js";
 import { loopState } from "./loop.js";
 import { AGENT_COLOR } from "../scene/characters.js";
 import { esc, openModal } from "./modal.js";
@@ -27,7 +29,7 @@ import { esc, openModal } from "./modal.js";
  * office and saved with your progress. (It can also be seeded from `"team"`
  * in domain.config.json.)
  */
-export function openPolicy(policy: TeamPolicy, onSave: (p: TeamPolicy) => void): void {
+export function openPolicy(policy: TeamPolicy, onSave: (p: TeamPolicy) => void, send?: (m: ClientMessage) => void): void {
   const p: TeamPolicy = structuredClone(policy);
   const body = document.createElement("div");
   body.className = "policy";
@@ -65,7 +67,7 @@ export function openPolicy(policy: TeamPolicy, onSave: (p: TeamPolicy) => void):
           </div>`,
         ).join("")}
       </div>
-      ${localModelsHtml()}
+      ${localModelsHtml(!!send)}
       <p class="as-note po-error"></p>
     </section>
     <section>
@@ -93,6 +95,10 @@ export function openPolicy(policy: TeamPolicy, onSave: (p: TeamPolicy) => void):
       <div class="seg po-gate">
         <button data-k="fix">🔁 Failed check: send it back to fix (up to 2 tries)</button>
         <button data-k="show">👀 Failed check: show it in the review</button>
+      </div>
+      <div class="seg po-prper">
+        <button data-r="goal" title="Your branch is pushed as domain/&lt;goal&gt; and one pull request opens for the whole goal">🔀 Ship to GitHub: one pull request per goal</button>
+        <button data-r="agent" title="Each agent's own branch is pushed as it is and gets its own pull request, listing the tasks it did">🔀 Ship to GitHub: one pull request per agent</button>
       </div>
     </section>`;
   const footer = document.createElement("div");
@@ -144,9 +150,18 @@ export function openPolicy(policy: TeamPolicy, onSave: (p: TeamPolicy) => void):
   body.querySelector<HTMLInputElement>(".po-isolate")!.addEventListener("change", (e) => (p.isolate = (e.target as HTMLInputElement).checked));
   seg(".po-merge", "g", () => p.merge, (v) => (p.merge = v as MergeMode));
   seg(".po-gate", "k", () => p.gate, (v) => (p.gate = v as GateMode));
+  seg(".po-prper", "r", () => p.prPer ?? "goal", (v) => (p.prPer = v as PrPer));
   renderDefaults();
   // One click puts a local model on Codex's list (and OpenCode's, if it's set up for that provider);
   // an Ollama model on Claude Code's too (it runs through Ollama's Anthropic-compatible API).
+  // A copy of an Ollama model with an agent-sized context window.
+  body.querySelectorAll<HTMLButtonElement>("[data-copy]").forEach((b) =>
+    b.addEventListener("click", () => {
+      send?.({ t: "localCopy", model: b.dataset.copy!, ctx: AGENT_CONTEXT });
+      b.disabled = true;
+      b.textContent = "⏳ Making it…";
+    }),
+  );
   body.querySelectorAll<HTMLButtonElement>("[data-local]").forEach((b) =>
     b.addEventListener("click", () => {
       const model = b.dataset.local!;
@@ -203,13 +218,25 @@ function checkNote(): string {
   return cmd ? `<code>${esc(cmd)}</code>` : `none set — add <code>"check": "npm test"</code> to domain.config.json`;
 }
 
+/** One local model: offer it, its context window (with a bigger copy when it's too small), its speed here. */
+function localRow(m: string, canCopy: boolean): string {
+  const i = loopState.localInfo[m];
+  const k = (n: number) => `${Math.round(n / 1024)}K`;
+  const ollama = m.startsWith("ollama/");
+  const small = ollama && (!i?.ctx || i.ctx < AGENT_CONTEXT);
+  const ctx = !ollama ? "" : i?.ctx ? `${k(i.ctx)} context${i.max ? ` (up to ${k(i.max)})` : ""}` : "Ollama's default context — too small for an agent";
+  const speed = i?.tps ? ` · ${Math.round(i.tps)} tokens/s here${i.tps < SLOW_TPS ? " (slow: small tasks only)" : ""}` : "";
+  const copy = small && (!i?.max || i.max >= AGENT_CONTEXT) && canCopy ? `<button class="btn small" data-copy="${esc(m)}" title="Same model, nothing downloaded — it just runs with a bigger window (and uses more memory)">⤢ Make a ${k(AGENT_CONTEXT)} copy</button>` : "";
+  return `<li><button class="btn chip" data-local="${esc(m)}">${esc(m)}</button><span class="as-note ${small ? "po-warn" : ""}">${esc(ctx)}${esc(speed)}</span>${copy}</li>`;
+}
+
 /** Models served on this machine, offered with one click. */
-function localModelsHtml(): string {
+function localModelsHtml(canCopy: boolean): string {
   const local = loopState.config?.localModels ?? [];
   if (!local.length) {
     return `<p class="as-note">🖥 Local models: none found. Start <b>Ollama</b> or <b>LM Studio</b> and reopen this to add their models.</p>`;
   }
   return `<div class="po-local"><span class="as-note">🖥 On this machine — click to offer to Codex and OpenCode (and Ollama's to Claude Code):</span>
-    ${local.map((m) => `<button class="btn chip" data-local="${esc(m)}">${esc(m)}</button>`).join("")}
+    <ul class="po-local-list">${local.map((m) => localRow(m, canCopy)).join("")}</ul>
     <p class="as-note">Codex runs these with <code>--oss --local-provider</code>; Claude Code runs Ollama's through its Anthropic-compatible API (Ollama 0.14 or newer). OpenCode needs that provider in its own config.</p></div>`;
 }

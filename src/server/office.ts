@@ -1,4 +1,5 @@
 import { skillBlockArgs } from "./skills.js";
+import { askedQuestion } from "../shared/asking.js";
 import { join, resolve, dirname } from "node:path";
 import { mkdirSync, rmSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import type {
@@ -19,6 +20,10 @@ import { LEASH_RULES, type Leash, type TaskBrief } from "../shared/policy.js";
 import type { WorkerIdentity } from "../shared/team.js";
 import { DropWatcher, writeBrief } from "./reports.js";
 import { officeWorktrees, Workspaces, type Workspace } from "./workspace.js";
+import { samePath } from "./prefs.js";
+
+/** How long a worker that asked you something has to keep working before its question counts as moved past. */
+export const MOVED_ON_MS = 30_000;
 
 interface Seat {
   desk: Desk;
@@ -27,6 +32,8 @@ interface Seat {
   cleanup: (() => void)[];
   /** The worker's own git worktree and branch, if it has one. */
   workspace: Workspace | null;
+  /** The open repo it works in, when that's not the project (its folder). */
+  repo?: string;
   /** What it was doing before it went quiet, to show again when it picks up. */
   busyWith?: string;
   /** What it was doing when it stopped to ask you something. */
@@ -44,6 +51,8 @@ interface Seat {
   held?: string[];
   /** Remembered from last time and not running yet: the gong (or E) wakes it. */
   asleep?: Remembered;
+  /** It asked you something (a blocked report) and went back to work: when that lasts, it's moved past it. */
+  pastQuestion?: ReturnType<typeof setTimeout>;
   /**
    * A worker in its own folder reports and replies there (its .domain/,
    * which git ignores) — never outside it, where agents must ask permission.
@@ -77,6 +86,8 @@ interface Remembered {
   identity: WorkerIdentity | null;
   workspace: Workspace | null;
   activity: string;
+  /** The open repo it worked in, when not the project. */
+  repo?: string;
 }
 
 /**
@@ -108,6 +119,12 @@ export class Office {
   mcpNames: ((agent: AgentKind, identity: WorkerIdentity | null, model: string) => string[]) | null = null;
   /** A worker's skills (on, and turned off), to show and to block. */
   skillsFor: ((agent: AgentKind, identity: WorkerIdentity | null) => { on: string[]; off: string[] }) | null = null;
+  /** Called when a worker worked its own way past the question it asked you: it's off your list. */
+  onMovedOn: ((deskId: string, question: string) => void) | null = null;
+  /** Whether the worker at a desk is on a task (set by the server): only then is a question it ends on for you. */
+  hasTask: ((deskId: string) => boolean) | null = null;
+  /** How long it keeps working past its question before that counts (tests shorten it). */
+  movedOnMs = MOVED_ON_MS;
   /** Called when you or a worker says something during its review. */
   onSaid: ((deskId: string, from: "agent" | "you", text: string) => void) | null = null;
 
@@ -118,6 +135,8 @@ export class Office {
   private readonly reviewsDir: string;
   /** Workers' own branches. Disabled for simulated workers and outside a git repo. */
   readonly workspaces: Workspaces | null;
+  /** Workers' own branches in the other repos open alongside the project. */
+  private repoWorkspaces = new Map<string, Workspaces>();
 
   private trusted: () => boolean;
   private memory: string | null;
@@ -181,12 +200,25 @@ export class Office {
 
   // --- desks --------------------------------------------------------------
 
-  hire(deskId: string, agent: AgentKind, hiredBy: string, model = "", leash: Leash = "ask", isolate = false, identity: WorkerIdentity | null = null): boolean {
+  hire(
+    deskId: string,
+    agent: AgentKind,
+    hiredBy: string,
+    model = "",
+    leash: Leash = "ask",
+    isolate = false,
+    identity: WorkerIdentity | null = null,
+    repo?: string | null,
+  ): boolean {
     const seat = this.seats.find((s) => s.desk.id === deskId);
     if (!seat || seat.session) return false;
+    // The repo it works in: the project, or another one open alongside it.
+    seat.repo = this.otherRepo(repo);
+    const workspaces = this.workspacesFor(seat.repo);
     // Its own branch and folder, so parallel workers never edit the same files.
-    seat.workspace = isolate && this.workspaces ? this.workspaces.create(deskId, agent) : null;
-    const session = this.launch(deskId, agent, model, leash, seat.workspace?.path ?? this.cwd, identity);
+    seat.workspace = isolate && workspaces ? workspaces.create(deskId, agent) : null;
+    if (!seat.workspace && seat.repo) workspaces?.ignoreDomainDir();
+    const session = this.launch(deskId, agent, model, leash, seat.workspace?.path ?? this.repoDir(seat.repo), identity);
     seat.session = session;
     seat.desk.worker = this.toWorker(session, hiredBy, model, leash, seat.workspace?.branch ?? null, identity);
     this.attach(seat, session);
@@ -287,13 +319,82 @@ export class Office {
     for (const off of seat.cleanup) off();
     seat.cleanup = [];
     seat.session.dispose();
-    const session = this.launch(deskId, w.agent, model, w.leash, seat.workspace?.path ?? this.cwd, w.identity);
+    const session = this.launch(deskId, w.agent, model, w.leash, seat.workspace?.path ?? this.repoDir(seat.repo), w.identity);
     seat.session = session;
     Object.assign(w, { id: session.id, status: session.getStatus(), activity: session.getActivity(), report: null });
     this.dequeue(deskId);
     this.attach(seat, session);
     this.changed();
     return "restarted";
+  }
+
+  /**
+   * Move a desk's worker to another open repo (or back to the project): its
+   * terminal restarts there — in a worktree of its own when `isolate`, as a
+   * hire would get — on `model` if given. Its old folder is cleared as a
+   * leaving worker's is: a branch with work not merged yet is kept (named in
+   * `kept`). Null when there's nobody running at that desk.
+   */
+  moveToRepo(deskId: string, repo: string | null, isolate: boolean, model?: string): { moved: boolean; kept?: string } | null {
+    const seat = this.seats.find((s) => s.desk.id === deskId);
+    const w = seat?.desk.worker;
+    if (!seat?.session || !w) return null;
+    const target = this.otherRepo(repo);
+    if ((!target && !seat.repo) || (target && seat.repo && samePath(target, seat.repo))) return { moved: false };
+    const old = seat.workspace;
+    const oldWorkspaces = this.workspacesFor(seat.repo);
+    for (const off of seat.cleanup) off();
+    seat.cleanup = [];
+    seat.session.dispose();
+    this.deleteReportFile(deskId);
+    this.watcher?.forget(deskId);
+    this.replies?.forget(deskId);
+    this.stopDrops(seat);
+    const kept =old && oldWorkspaces?.remove(old) === "kept" ? old.branch : undefined;
+    seat.repo = target;
+    const workspaces = this.workspacesFor(target);
+    seat.workspace = isolate && workspaces ? workspaces.create(deskId, w.agent) : null;
+    if (!seat.workspace && target) workspaces?.ignoreDomainDir();
+    if (model !== undefined) w.model = model;
+    const session = this.launch(deskId, w.agent, w.model, w.leash, seat.workspace?.path ?? this.repoDir(target), w.identity);
+    seat.session = session;
+    Object.assign(w, { id: session.id, status: session.getStatus(), activity: session.getActivity(), report: null, branch: seat.workspace?.branch ?? null });
+    this.dequeue(deskId);
+    this.attach(seat, session);
+    this.changed();
+    return { moved: true, ...(kept ? { kept } : {}) };
+  }
+
+  /** The repo a desk's worker works in: its folder (the project's, unless it's in another open repo). */
+  repoOf(deskId: string): string {
+    return this.repoDir(this.seats.find((s) => s.desk.id === deskId)?.repo);
+  }
+
+  /** Workers' own branches in the repo a desk's worker works in (null: none there). */
+  workspacesOf(deskId: string): Workspaces | null {
+    return this.workspacesFor(this.seats.find((s) => s.desk.id === deskId)?.repo);
+  }
+
+  /** Workers' own branches in a repo: the project's, or another open repo's (kept once found). */
+  workspacesFor(repo?: string | null): Workspaces | null {
+    const other = this.otherRepo(repo);
+    if (!other) return this.workspaces;
+    if (this.simulate) return null;
+    const have = this.repoWorkspaces.get(other);
+    if (have) return have;
+    const ws = new Workspaces(other, officeWorktrees(other));
+    if (!ws.enabled) return null;
+    this.repoWorkspaces.set(other, ws);
+    return ws;
+  }
+
+  /** A repo's folder when it's another one than the project (undefined: the project). */
+  private otherRepo(repo: string | null | undefined): string | undefined {
+    return repo && !samePath(repo, this.cwd) ? resolve(repo) : undefined;
+  }
+
+  private repoDir(repo: string | undefined): string {
+    return repo ?? this.cwd;
   }
 
   private attach(seat: Seat, session: IWorkerSession): void {
@@ -305,7 +406,10 @@ export class Office {
         const w = seat.desk.worker;
         if (w) {
           // Presenting (a report is up) belongs to the review, not to the terminal going quiet.
-          if (w.report && status !== "done") return;
+          if (w.report && status !== "done") {
+            if (w.report.status === "blocked") this.watchPastQuestion(seat, status);
+            return;
+          }
           if (status === "idle" && w.status === "working") seat.busyWith = w.activity;
           if (status === "waiting" && w.status !== "waiting") seat.beforeAsk = w.activity;
           if (status !== "waiting" && w.status === "waiting" && seat.held?.length) {
@@ -320,6 +424,9 @@ export class Office {
             return;
           }
           w.status = status;
+          // Back at it: whatever it asked is behind it. Gone quiet: did it end on a question for you?
+          if (status !== "idle") delete w.asking;
+          else this.checkAsking(seat);
           // An empty activity: keep the task's own label ("🎯 Add the README…").
           // (A new task set since then has its own label: only "Free · …" goes back to the old one.)
           w.activity =
@@ -342,6 +449,57 @@ export class Office {
     }
   }
 
+  /**
+   * A worker that asked you something (a blocked report) and then got on with
+   * it anyway — it found the answer itself, or you gave it in the chat — has
+   * moved past its question: once it's been working for a while, the question
+   * comes off your list (and out of the line). A short burst (answering you
+   * in its review) doesn't count.
+   */
+  private watchPastQuestion(seat: Seat, status: string): void {
+    if (status !== "working") {
+      if (seat.pastQuestion) clearTimeout(seat.pastQuestion);
+      seat.pastQuestion = undefined;
+      return;
+    }
+    if (seat.pastQuestion) return;
+    seat.pastQuestion = setTimeout(() => {
+      seat.pastQuestion = undefined;
+      const w = seat.desk.worker;
+      if (!seat.session || !w?.report || w.report.status !== "blocked") return;
+      const deskId = seat.desk.id;
+      const question = w.report.question || w.report.title;
+      w.report = null;
+      this.dequeue(deskId);
+      this.watcher?.forget(deskId);
+      this.deleteReportFile(deskId);
+      w.status = "working";
+      w.activity = seat.busyWith && !seat.busyWith.startsWith("Waiting") ? seat.busyWith : "Back at it";
+      this.onMovedOn?.(deskId, question);
+      this.changed();
+    }, this.movedOnMs);
+    seat.pastQuestion.unref?.();
+  }
+
+  /**
+   * It's gone quiet on a task: when what it last said ends in a question
+   * ("Where's the covers app?"), it's waiting for you — even with no menu on
+   * its screen and no report — so it shows as needing you, not as free.
+   */
+  private checkAsking(seat: Seat): void {
+    const deskId = seat.desk.id;
+    // Let the screen settle first (the prompt redraws after the answer).
+    setTimeout(() => {
+      const w = seat.desk.worker;
+      if (!w || w.status !== "idle" || w.report || !seat.session?.screen || this.hasTask?.(deskId) === false) return;
+      const q = askedQuestion(seat.session.screen());
+      if (!q || q === w.asking) return;
+      w.asking = q;
+      w.activity = `❓ ${q}`;
+      this.changed();
+    }, 1500).unref?.();
+  }
+
   fire(deskId: string): boolean {
     const seat = this.seats.find((s) => s.desk.id === deskId);
     // Someone asleep from last time just goes home (nothing's running).
@@ -349,6 +507,7 @@ export class Office {
       seat.asleep = undefined;
       seat.desk.worker = null;
       seat.workspace = null;
+      seat.repo = undefined;
       this.changed();
       return true;
     }
@@ -359,6 +518,7 @@ export class Office {
     seat.session = null;
     seat.desk.worker = null;
     seat.workspace = null;
+    seat.repo = undefined;
     this.dequeue(deskId);
     this.watcher?.forget(deskId);
     this.replies?.forget(deskId);
@@ -415,6 +575,16 @@ export class Office {
     if (!seat) return;
     seat.internOf = mentor;
     this.changed();
+  }
+
+  /** Lend a desk's worker to someone (null: it's back with its owner). */
+  lend(deskId: string, to: string | null): boolean {
+    const w = this.seats.find((s) => s.desk.id === deskId)?.desk.worker;
+    if (!w || (w.lentTo ?? null) === to) return false;
+    if (to) w.lentTo = to;
+    else delete w.lentTo;
+    this.changed();
+    return true;
   }
 
   /** Whether someone's working at a desk (not asleep, not empty). */
@@ -545,9 +715,9 @@ export class Office {
     return this.seats.find((s) => s.desk.id === deskId)?.workspace ?? null;
   }
 
-  /** Where a desk's worker works: its own worktree, or the project folder. */
+  /** Where a desk's worker works: its own worktree, or its repo's folder (the project's). */
   workdir(deskId: string): string {
-    return this.workspaceOf(deskId)?.path ?? this.cwd;
+    return this.workspaceOf(deskId)?.path ?? this.repoOf(deskId);
   }
 
   /** Attach the check's verdict (or "running") to a worker's report. */
@@ -713,7 +883,9 @@ export class Office {
               ...(s.mcp?.length ? { mcp: s.mcp } : {}),
               ...(s.skills?.length ? { skills: s.skills } : {}),
               ...(s.internOf && s.desk.worker ? { internOf: s.internOf } : {}),
+              ...(s.repo ? { repo: s.repo } : {}),
               ...(s.desk.worker.status === "working" && s.session?.doing?.() ? { doing: s.session.doing() } : {}),
+              ...(s.session?.trouble?.() ? { trouble: s.session.trouble()! } : {}),
             }
           : null,
       })),
@@ -811,7 +983,17 @@ export class Office {
       const w = s.desk.worker;
       if (!w) continue;
       team.push(
-        s.asleep ?? { deskId: s.desk.id, agent: w.agent, hiredBy: w.hiredBy, model: w.model, leash: w.leash, identity: w.identity, workspace: s.workspace, activity: taskLabel(s.busyWith) ?? taskLabel(w.activity) ?? "" },
+        s.asleep ?? {
+          deskId: s.desk.id,
+          agent: w.agent,
+          hiredBy: w.hiredBy,
+          model: w.model,
+          leash: w.leash,
+          identity: w.identity,
+          workspace: s.workspace,
+          activity: taskLabel(s.busyWith) ?? taskLabel(w.activity) ?? "",
+          ...(s.repo ? { repo: s.repo } : {}),
+        },
       );
     }
     try {
@@ -836,8 +1018,12 @@ export class Office {
       if (!seat || seat.session || !AGENT_LABELS[r.agent]) continue;
       // Its own folder is kept between runs; if it's gone, it works in the project.
       const workspace = r.workspace && existsSync(r.workspace.path) ? r.workspace : null;
-      seat.asleep = { ...r, workspace };
+      // So is the repo it worked in (older offices didn't say: the project).
+      const repo = typeof r.repo === "string" && existsSync(r.repo) ? this.otherRepo(r.repo) : undefined;
+      seat.asleep = { ...r, workspace, ...(repo ? { repo } : {}) };
+      if (!repo) delete seat.asleep.repo;
       seat.workspace = workspace;
+      seat.repo = repo;
       seat.desk.worker = {
         id: `asleep-${r.deskId}`,
         agent: r.agent,
@@ -867,21 +1053,60 @@ export class Office {
     for (const seat of this.seats) {
       const r = seat.asleep;
       if (!r || (deskId && seat.desk.id !== deskId)) continue;
-      seat.asleep = undefined;
-      const session = this.launch(seat.desk.id, r.agent, r.model, r.leash, seat.workspace?.path ?? this.cwd, r.identity, true);
-      seat.session = session;
-      seat.desk.worker = this.toWorker(session, r.hiredBy, r.model, r.leash, seat.workspace?.branch ?? null, r.identity);
-      seat.desk.worker.activity = "☀️ Waking up…";
-      seat.busyWith = r.activity;
-      this.attach(seat, session);
-      if (!session.summon) {
-        const was = r.activity ? ` You were on: "${r.activity.replace(/^\W+/, "")}".` : "";
-        typeLine(session, `[Office] Good morning — the office is open again and your manager rang the gong.${was} Pick up where you left off.`);
-      }
+      const was = r.activity ? ` You were on: "${r.activity.replace(/^\W+/, "")}".` : "";
+      this.relaunch(seat, r, "☀️ Waking up…", `[Office] Good morning — the office is open again and your manager rang the gong.${was} Pick up where you left off.`);
       woken++;
     }
     if (woken) this.changed();
     return woken;
+  }
+
+  /** Start a remembered worker's agent again, back in its last conversation, and tell it why. */
+  private relaunch(seat: Seat, r: Remembered, activity: string, line: string): void {
+    seat.asleep = undefined;
+    const session = this.launch(seat.desk.id, r.agent, r.model, r.leash, seat.workspace?.path ?? this.repoDir(seat.repo), r.identity, true);
+    seat.session = session;
+    seat.desk.worker = this.toWorker(session, r.hiredBy, r.model, r.leash, seat.workspace?.branch ?? null, r.identity);
+    seat.desk.worker.activity = activity;
+    seat.busyWith = r.activity;
+    this.attach(seat, session);
+    if (!session.summon) typeLine(session, line);
+  }
+
+  /**
+   * Stop a desk's agent without letting it go — its CLI is being updated: it
+   * stays at its desk, asleep, until restart() starts it again. Returns
+   * whether there was one running.
+   */
+  pause(deskId: string, activity: string): boolean {
+    const seat = this.seats.find((s) => s.desk.id === deskId);
+    const w = seat?.desk.worker;
+    if (!seat?.session || !w) return false;
+    seat.asleep = { deskId, agent: w.agent, hiredBy: w.hiredBy, model: w.model, leash: w.leash, identity: w.identity, workspace: seat.workspace, activity: taskLabel(seat.busyWith) ?? taskLabel(w.activity) ?? "" };
+    for (const off of seat.cleanup) off();
+    seat.cleanup = [];
+    seat.session.dispose();
+    seat.session = null;
+    this.dequeue(deskId);
+    seat.desk.worker = { ...w, id: `asleep-${deskId}`, status: "asleep", activity, report: null };
+    this.changed();
+    return true;
+  }
+
+  /**
+   * Start a desk's agent again, back in its last conversation: it was stuck,
+   * or paused for an update. `why` is told to it. Returns whether it restarted.
+   */
+  restart(deskId: string, why: string, activity = "🔄 Restarting…"): boolean {
+    const seat = this.seats.find((s) => s.desk.id === deskId);
+    if (!seat?.desk.worker) return false;
+    if (seat.session && !this.pause(deskId, activity)) return false;
+    const r = seat.asleep;
+    if (!r) return false;
+    const was = r.activity ? ` You were on: "${r.activity.replace(/^\W+/, "")}" — carry on with it.` : "";
+    this.relaunch(seat, r, activity, `[Office] ${why}${was}`);
+    this.changed();
+    return true;
   }
 }
 

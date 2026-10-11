@@ -1,7 +1,9 @@
 import type { ClientMessage, Desk, ServerMessage } from "../../shared/protocol.js";
 import { AGENT_LABELS } from "../../shared/protocol.js";
 import { LOOP_STAGES, STAGE_ICON, goalProgress, goalStage, stageLabel, type Goal } from "../../shared/progress.js";
+import type { PrPer } from "../../shared/project.js";
 import { esc } from "./modal.js";
+import type { LocalModelInfo } from "../../shared/localModels.js";
 import { icon } from "./icons.js";
 import { isGithubProject, projectState } from "./projects.js";
 import "../styles/loop.css";
@@ -34,6 +36,10 @@ export const loopState = {
   devServers: [] as string[],
   /** The current (or last) deploy's goal and its whole output. */
   deploy: { goalId: null as string | null, log: "" },
+  /** What's known of each local model: its context window, its speed here. */
+  localInfo: {} as Record<string, LocalModelInfo>,
+  /** The team policy's choice: one pull request per goal, or one per agent. */
+  prPer: "goal" as PrPer,
 };
 
 const listeners = new Set<(msg: ServerMessage) => void>();
@@ -48,9 +54,17 @@ const LOG_MAX = 256 * 1024;
 
 /** Feed every server message through here; it keeps loopState current. */
 export function ingestLoop(msg: ServerMessage): void {
+  if (msg.t === "progress") {
+    loopState.prPer = msg.progress.policy.prPer ?? "goal";
+    return;
+  }
   switch (msg.t) {
     case "config":
       loopState.config = { project: msg.project, preview: msg.preview, deploy: msg.deploy, simulate: msg.simulate, check: msg.check, git: msg.git, localModels: msg.localModels ?? [] };
+      break;
+    case "localModels":
+      if (loopState.config) loopState.config.localModels = msg.models;
+      loopState.localInfo = msg.info;
       break;
     case "devServers":
       loopState.devServers = msg.urls;
@@ -87,6 +101,10 @@ export interface LoopHandlers {
   hire?(): void;
   /** Hand a task out on your terms (opens the assignment card); without it, assign on the defaults. */
   assign?(goalId: string, taskId: string, deskId: string): void;
+  /** Watch a goal's team huddle on its plan. */
+  openHuddle?(goal: Goal): void;
+  /** Watch a goal's demo (the screenshot or captured run). */
+  openDemo?(goal: Goal): void;
 }
 
 export interface LoopButton {
@@ -144,6 +162,17 @@ export function loopView(goal: Goal, desks: Desk[], goals: Goal[], line: { deskI
 
   switch (stage) {
     case "plan": {
+      if (goal.huddle) {
+        const hd = goal.huddle;
+        return {
+          status:
+            hd.status === "gathering"
+              ? `🤝 Team huddle on the draft plan (${hd.draft.length} tasks): ${hd.notes.length} of ${hd.deskIds.length} teammates have weighed in.`
+              : "🤝 The team has weighed in — the plan is being revised; its tasks appear here on their own.",
+          main: { label: "🤝 Watch the huddle", style: "primary", run: h.openHuddle ? () => h.openHuddle!(goal) : null },
+          more: [{ label: "⏭ Skip the huddle", style: "plain", run: () => send({ t: "huddleSkip", goalId: goal.id }) }],
+        };
+      }
       if (goal.planningDesk) {
         const d = desks.find((x) => x.id === goal.planningDesk);
         return {
@@ -216,27 +245,36 @@ export function loopView(goal: Goal, desks: Desk[], goals: Goal[], line: { deskI
           more: [{ ...markDone, style: "good" }],
         };
       }
+      // The demo of what was built: shown to everyone before it ships.
+      const demo = goal.demo;
+      const demoBtn: LoopButton | null = !h.openDemo
+        ? null
+        : demo
+          ? { label: demo.status === "running" ? "🎬 Capturing the demo…" : "🎬 Watch the demo", style: demo.status === "ready" ? "good" : "plain", run: () => h.openDemo!(goal) }
+          : { label: "🎬 Capture a demo", style: "plain", run: () => send({ t: "demo", goalId: goal.id }) };
+      const withDemo = (v: LoopView): LoopView =>
+        demoBtn ? { ...v, status: `${demo?.status === "ready" ? "🎬 The demo is ready. " : ""}${v.status}`, more: [demoBtn, ...v.more] } : v;
       if (ship?.status === "running") {
         const stop: LoopButton = { label: "⏹ Stop", style: "plain", run: () => send({ t: "shipCancel", goalId: goal.id }) };
         if (ship.mode === "deploy") {
-          return {
+          return withDemo({
             status: `🚀 Running \`${ship.command}\`…`,
             main: { label: "🖥 Watch the deploy", style: "primary", run: () => h.openLaptop?.("deploy") },
             more: [stop, markDone],
-          };
+          });
         }
         const d = desks.find((x) => x.id === ship.deskId);
-        return {
+        return withDemo({
           status: `🚢 ${d?.worker ? workerName(d) : "A worker"} is shipping it — it lands here when they write shipped.md.`,
           main: { label: "🚢 Shipping…", style: "plain", run: null },
           more: [stop, markDone],
-        };
+        });
       }
       if (ship?.status === "failed") {
         const fix: LoopButton | null = pick
           ? { label: `🔧 Ask ${AGENT_LABELS[pick.worker!.agent]} to fix it`, style: "primary", run: () => send({ t: "ship", goalId: goal.id, deskId: pick.id }) }
           : null;
-        return {
+        return withDemo({
           status: `💥 \`${ship.command}\` failed (exit ${ship.exitCode ?? "?"}). ${pick ? "One click hands the log to a worker." : "Hire a worker to fix it."}`,
           main: fix ?? { label: "🖥 See the log", style: "primary", run: () => h.openLaptop?.("deploy") },
           more: [
@@ -244,41 +282,56 @@ export function loopView(goal: Goal, desks: Desk[], goals: Goal[], line: { deskI
             { label: "🖥 Log", style: "plain", run: () => h.openLaptop?.("deploy") },
             markDone,
           ],
-        };
+        });
       }
       if (isGithubProject() && !ship) {
         const gh = projectState.info!.github!;
         const others: LoopButton[] = [];
         if (cfg?.deploy) others.push({ label: "🚀 Run the deploy instead", style: "plain", run: () => send({ t: "ship", goalId: goal.id }), confirm: `▶ Run \`${cfg.deploy}\`` });
         if (pick) others.push({ label: `🚢 Ask ${AGENT_LABELS[pick.worker!.agent]} to ship it`, style: "plain", run: () => send({ t: "ship", goalId: goal.id, deskId: pick.id }) });
-        return {
-          status: `Every task is approved. Open a pull request on ${gh.owner}/${gh.repo}: your branch is pushed as domain/…, and its checks show up here.`,
-          main: {
-            label: "Open a pull request on GitHub",
-            html: `${icon("github", 16)} Open a pull request on GitHub`,
-            style: "primary",
-            run: () => send({ t: "shipPR", goalId: goal.id }),
-          },
-          more: [...others, markDone],
+        // Agents on their own branches that did this goal's tasks: they can each get a pull request of their own.
+        const workedBy = new Set(goal.tasks.map((t) => t.doneBy ?? t.deskId).filter(Boolean));
+        const branched = desks.filter((d) => d.worker?.branch && workedBy.has(d.id));
+        const perAgent = loopState.prPer === "agent" && branched.length > 0;
+        const goalBtn: LoopButton = {
+          label: "Open a pull request on GitHub",
+          html: `${icon("github", 16)} Open a pull request on GitHub`,
+          style: "primary",
+          run: () => send({ t: "shipPR", goalId: goal.id, per: "goal" }),
         };
+        const agentBtn: LoopButton = {
+          label: `Open a pull request per agent (${branched.length})`,
+          html: `${icon("github", 16)} Open a pull request per agent (${branched.length})`,
+          style: "primary",
+          title: branched.map((d) => `${workerName(d)}: ${d.worker!.branch}`).join("\n"),
+          run: () => send({ t: "shipPR", goalId: goal.id, per: "agent" }),
+        };
+        if (branched.length) others.unshift(perAgent ? { ...goalBtn, html: undefined, label: "One pull request for the goal instead", style: "plain" } : { ...agentBtn, html: undefined, label: `One pull request per agent instead (${branched.length})`, style: "plain" });
+        return withDemo({
+          status: perAgent
+            ? `Every task is approved. Open a pull request on ${gh.owner}/${gh.repo} for each agent, from its own branch (${branched.map((d) => d.worker!.branch).join(", ")}); their checks show up here.`
+            : `Every task is approved. Open a pull request on ${gh.owner}/${gh.repo}: your branch is pushed as domain/…, and its checks show up here.`,
+          main: perAgent ? agentBtn : goalBtn,
+          more: [...others, markDone],
+        });
       }
       if (cfg?.deploy) {
         const viaWorker: LoopButton[] = pick
           ? [{ label: `🚢 Ask ${AGENT_LABELS[pick.worker!.agent]} to open a PR instead`, style: "plain", run: () => send({ t: "ship", goalId: goal.id, deskId: pick.id }) }]
           : [];
-        return {
+        return withDemo({
           status: `Every task is approved. Ship it runs \`${cfg.deploy}\` in ${cfg.project}.`,
           main: { label: "🚀 Ship it", style: "primary", run: () => send({ t: "ship", goalId: goal.id }), confirm: `▶ Run \`${cfg.deploy}\`` },
           more: [...viaWorker, markDone],
-        };
+        });
       }
-      return {
+      return withDemo({
         status: pick
           ? "Every task is approved. No deploy command is set (add \"deploy\" to domain.config.json), so a worker can ship it as a pull request."
           : "Every task is approved. Hire a worker to open a PR, or mark it shipped.",
         main: pick ? { label: `🚢 Ask ${AGENT_LABELS[pick.worker!.agent]} to ship it`, style: "primary", run: () => send({ t: "ship", goalId: goal.id, deskId: pick.id }) } : null,
         more: [markDone],
-      };
+      });
     }
     case "shipped": {
       const url = goal.ship?.url;
@@ -296,7 +349,7 @@ export function loopView(goal: Goal, desks: Desk[], goals: Goal[], line: { deskI
       return {
         status: `${research ? "📊 Delivered" : "🏁 Shipped"} ${when}${goal.ship?.note ? ` — ${goal.ship.note}` : ""}`,
         main,
-        more: [],
+        more: goal.demo && h.openDemo ? [{ label: "🎬 The demo", style: "plain", run: () => h.openDemo!(goal) }] : [],
       };
     }
   }

@@ -9,8 +9,6 @@
 .idea-words input[type=text], .idea-words textarea, .idea-who { font: inherit; font-size: 14px; border: 2px solid var(--ink); border-radius: 10px; padding: 7px 10px; background: #fff; color: var(--ink); }
 .idea-words textarea { flex: 1; resize: vertical; min-height: 96px; }
 .idea-words .seg { display: flex; gap: 6px; }
-.idea-words .seg button { font: 800 13px var(--font); border: 3px solid var(--ink); border-radius: 12px; background: #fff; padding: 5px 10px; cursor: pointer; box-shadow: 0 2px 0 var(--ink); color: var(--ink); }
-.idea-words .seg button.on { background: var(--ink); color: var(--paper); }
 .idea-go { display: flex; flex-direction: column; gap: 8px; }
 .idea-hand { display: flex; gap: 6px; }
 .idea-who { flex: 1; min-width: 0; padding: 6px 8px; }

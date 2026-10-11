@@ -13,17 +13,22 @@ import {
   type TaskBrief,
   type TeamPolicy,
 } from "../../shared/policy.js";
+import { basisLabel, estimateLabel, estimateTask, type EstimateSample } from "../../shared/estimate.js";
 import { AGENT_COLOR } from "../scene/characters.js";
 import { esc, openModal } from "./modal.js";
 import { workerName } from "./team.js";
 import { micButton, wireMic } from "../voice.js";
+import { fitsModel, isLocalModel, modelChoices, suggestLocal, taskSize } from "../../shared/localModels.js";
+import { loopState } from "./loop.js";
+import { openRepos } from "./projects.js";
 
 /**
  * The assignment card: handing a task to a worker on your terms. Who does it,
  * on which model, how long it gets and what happens when time's up, whether
  * it shows you a plan before touching anything, and what "done" means for
  * this task. It opens filled in with the team's defaults, so a plain "Assign"
- * is one click.
+ * is one click. Up top, an estimate — how long it'll likely take and what
+ * it'll cost on the model picked — that follows whatever you change.
  */
 
 export interface AssignOptions {
@@ -35,8 +40,12 @@ export interface AssignOptions {
   deskId?: string;
   /** Tasks each desk is already on, to show who's free. */
   busy: Map<string, string>;
+  /** Finished tasks, estimate vs. what they took (the estimate learns from them). */
+  history?: EstimateSample[];
   onAssign(deskId: string, brief: TaskBrief): void;
   onEditPolicy(): void;
+  /** "＋ Add a repo": the Add-a-repo chooser, then `then` with the new repo's folder. */
+  addRepoThen?(then: (path: string) => void): void;
 }
 
 export function openAssignCard(o: AssignOptions): void {
@@ -55,6 +64,10 @@ export function openAssignCard(o: AssignOptions): void {
   let auditor = start?.auditor ?? "";
   let rounds = start?.rounds ?? DEFAULT_AUDIT_ROUNDS;
   let auditWhen: "end" | "along" = start?.auditWhen ?? "end";
+  // With other repos open: which one it's done in ("": the worker's own).
+  const repos = openRepos();
+  let repo = start?.repo ?? "";
+  const samePath = (a: string, b: string) => a.replace(/[\\/]+$/, "").toLowerCase() === b.replace(/[\\/]+$/, "").toLowerCase();
 
   const body = document.createElement("div");
   body.className = "assign";
@@ -62,6 +75,7 @@ export function openAssignCard(o: AssignOptions): void {
     <div class="as-task">
       <span class="as-kicker">🎯 ${esc(o.goal.title)}</span>
       <h3>${esc(o.task.title)}</h3>
+      <div class="as-estimate"></div>
     </div>
     <section>
       <h4>Who</h4>
@@ -79,6 +93,14 @@ export function openAssignCard(o: AssignOptions): void {
           .join("")}
       </div>
     </section>
+    ${
+      repos.length > 1
+        ? `<section>
+      <h4>📂 Repo <span class="as-hint">where it's done — a worker in another repo moves there first</span></h4>
+      <div class="seg as-repos"></div>
+    </section>`
+        : ""
+    }
     <section>
       <h4>Model <span class="as-hint">for this task</span></h4>
       <div class="seg as-models"></div>
@@ -123,22 +145,63 @@ export function openAssignCard(o: AssignOptions): void {
     body.querySelectorAll<HTMLElement>(".as-worker").forEach((b) => b.classList.toggle("on", b.dataset.desk === deskId));
   const renderModels = () => {
     const w = worker();
-    const choices = [...new Set(["", ...o.policy.models[w.agent], w.model])];
+    const local = loopState.config?.localModels ?? [];
+    const choices = modelChoices(w.agent, o.policy.models[w.agent], local, [w.model]).filter((m) => m !== w.model);
     if (!choices.includes(model)) model = "";
-    body.querySelector(".as-models")!.innerHTML = choices
-      .map((m) => `<button data-model="${esc(m)}" class="${m === model ? "on" : ""}">${m === "" ? `Keep ${esc(modelLabel(w.model))}` : esc(m)}</button>`)
+    body.querySelector(".as-models")!.innerHTML = [
+      ...choices.filter((m) => m === ""),
+      ...choices.filter((m) => m !== ""),
+    ]
+      .map((m) => `<button data-model="${esc(m)}" class="${m === model ? "on" : ""}" ${isLocalModel(m) ? `title="On this computer: free and private"` : ""}>${m === "" ? `Keep ${esc(modelLabel(w.model))}` : esc(modelLabel(m))}</button>`)
       .join("");
     const note = body.querySelector<HTMLElement>(".as-model-note")!;
-    if (model && model !== w.model) {
+    const using = model || w.model;
+    // A small task about to go to a cloud model: one on this computer could do it, free.
+    const size = taskSize(o.task.title, minutes, body.querySelector<HTMLTextAreaElement>(".as-notes")?.value ?? "");
+    const try_ = suggestLocal(w.agent, using, size, local);
+    if (try_) {
+      note.innerHTML = `💡 This looks small — <b>${esc(modelLabel(try_))}</b> on this computer could do it, free and private. <button class="btn small as-use-local" data-model="${esc(try_)}">Use it</button>`;
+      note.querySelector<HTMLButtonElement>(".as-use-local")!.addEventListener("click", () => {
+        model = try_;
+        renderModels();
+      });
+    } else if (!fitsModel(using, size)) {
+      note.textContent = `⚠️ This looks big for ${modelLabel(using)} — a small local model can lose the thread on large tasks. Split it, or pick a cloud model.`;
+    } else if (model && model !== w.model) {
       note.textContent =
         w.agent === "claude"
-          ? `Claude Code switches to ${model} in place and keeps its context.`
-          : `${AGENT_LABELS[w.agent]} picks its model at launch, so it restarts on ${model} (a fresh session).`;
+          ? `Claude Code switches to ${modelLabel(model)} in place and keeps its context.`
+          : `${AGENT_LABELS[w.agent]} picks its model at launch, so it restarts on ${modelLabel(model)} (a fresh session).`;
     } else note.textContent = "";
     body.querySelectorAll<HTMLButtonElement>(".as-models button").forEach((b) =>
       b.addEventListener("click", () => {
         model = b.dataset.model ?? "";
         renderModels();
+      }),
+    );
+  };
+  const renderRepos = () => {
+    const el = body.querySelector(".as-repos");
+    if (!el) return;
+    // The worker's own repo is the default: picking it is the same as not picking.
+    const own = repos.find((r) => samePath(r.path, worker().repo ?? repos[0].path)) ?? repos[0];
+    if (repo && samePath(repo, own.path)) repo = "";
+    el.innerHTML = [
+      `<button data-repo="" class="${repo ? "" : "on"}">Its own · ${esc(own.name)}</button>`,
+      ...repos.filter((r) => r !== own).map((r) => `<button data-repo="${esc(r.path)}" class="${repo && samePath(repo, r.path) ? "on" : ""}">${esc(r.name)}</button>`),
+      ...(o.addRepoThen ? [`<button data-repo="+add" class="as-add-repo" title="Open another repo — from this computer, GitHub, a folder, or a new one">＋ Add a repo</button>`] : []),
+    ].join("");
+    el.querySelectorAll<HTMLButtonElement>("button").forEach((b) =>
+      b.addEventListener("click", () => {
+        if (b.dataset.repo === "+add") {
+          // Add one, then back to this card with it picked.
+          const brief: TaskBrief = { model, minutes, onTimeUp, planFirst, done: [...done], ...(auditor ? { auditor, rounds, auditWhen } : {}) };
+          modal.close();
+          o.addRepoThen!((path) => openAssignCard({ ...o, deskId, task: { ...o.task, brief: { ...brief, repo: path } } }));
+          return;
+        }
+        repo = b.dataset.repo ?? "";
+        renderRepos();
       }),
     );
   };
@@ -188,6 +251,7 @@ export function openAssignCard(o: AssignOptions): void {
       deskId = b.dataset.desk!;
       renderWorkers();
       renderModels();
+      renderRepos();
       renderAuditors();
     }),
   );
@@ -195,6 +259,8 @@ export function openAssignCard(o: AssignOptions): void {
     b.addEventListener("click", () => {
       minutes = Number(b.dataset.m);
       renderTime();
+      // The time budget says how big it is: the model note follows.
+      renderModels();
     }),
   );
   body.querySelectorAll<HTMLElement>(".as-timeup button").forEach((b) =>
@@ -223,12 +289,37 @@ export function openAssignCard(o: AssignOptions): void {
     modal.close();
     const notes = notesEl.value.trim();
     const files = attached();
-    o.onAssign(deskId, { model, minutes, onTimeUp, planFirst, done: lines.length ? lines : [...o.policy.done], ...(auditor ? { auditor, rounds, auditWhen } : {}), ...(notes ? { notes } : {}), ...(files.length ? { files } : {}) });
+    o.onAssign(deskId, { model, minutes, onTimeUp, planFirst, done: lines.length ? lines : [...o.policy.done], ...(auditor ? { auditor, rounds, auditWhen } : {}), ...(notes ? { notes } : {}), ...(files.length ? { files } : {}), ...(repo ? { repo } : {}) });
   });
+
+  // The estimate follows every choice on the card (worker, model, plan first, audit, notes, files).
+  const renderEstimate = () => {
+    const w = worker();
+    const e = estimateTask(
+      {
+        title: o.task.title,
+        notes: notesEl.value,
+        done: doneEl.value.split("\n").filter((x) => x.trim()).length,
+        files: attached().length,
+        planFirst,
+        audited: !!auditor,
+        agent: w.agent,
+        model: model || w.model,
+      },
+      o.history ?? [],
+    );
+    const over = minutes > 0 && e.minutes > minutes;
+    body.querySelector(".as-estimate")!.innerHTML =
+      `<span class="as-est ${e.local ? "local" : ""}">⏳ ${esc(estimateLabel(e))}</span><span class="as-hint">${esc(basisLabel(e))}</span>` +
+      (over ? `<span class="as-est-warn">⚠ more than its ${minutes} min budget</span>` : "");
+  };
+  for (const ev of ["click", "input", "change"]) body.addEventListener(ev, () => setTimeout(renderEstimate, 0));
 
   renderWorkers();
   renderModels();
+  renderRepos();
   renderTime();
   renderAuditors();
+  renderEstimate();
   footer.querySelector<HTMLButtonElement>(".go")!.focus();
 }

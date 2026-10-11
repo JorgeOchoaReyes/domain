@@ -1,6 +1,7 @@
 import type { AgentKind, Desk, Presentation } from "../shared/protocol.js";
 import type { Goal } from "../shared/progress.js";
 import { GREEN_MAX_LINES, type Leash, type TaskBrief, type TeamPolicy } from "../shared/policy.js";
+import { fitsModel, isLocalModel, taskSize } from "../shared/localModels.js";
 
 /**
  * Autopilot: the office runs itself. Goals without tasks get planned; free
@@ -49,6 +50,8 @@ export interface AutopilotDeps {
   /** How many lines a worker's work adds and removes, against your branch (null: can't tell). */
   diffLines?(deskId: string): number | null;
   now?(): number;
+  /** How fast a local model runs here, in tokens a second (undefined: not measured). */
+  speed?(model: string): number | undefined;
 }
 
 export class Autopilot {
@@ -141,9 +144,10 @@ export class Autopilot {
       // Saved tasks first, to their own worker; then the rest, to whoever's free.
       for (const t of [...todo.filter(savedFor), ...todo.filter((t) => !savedFor(t))]) {
         const mine = savedFor(t);
-        const who = mine ? (free.includes(mine) && pool.includes(mine) ? mine : undefined) : pool.find((d) => free.includes(d));
+        const who = mine ? (free.includes(mine) && pool.includes(mine) ? mine : undefined) : this.pickFor(t, pool.filter((d) => free.includes(d)));
         if (!who) {
-          if (mine) continue;
+          // Nobody free, or nobody free it suits (a big task and only small local models free): the next might suit.
+          if (mine || pool.some((d) => free.includes(d))) continue;
           break;
         }
         free.splice(free.indexOf(who), 1);
@@ -152,6 +156,23 @@ export class Autopilot {
         this.d.note(`Autopilot: “${t.title}” to ${who}${auditor ? `, audited by ${auditor}` : ""}`, who);
       }
     }
+  }
+
+  /**
+   * Who of these free workers gets a task, sized to their models: a small
+   * task goes to a worker on a local model when there is one (free and
+   * private); a large one never goes to a local model while there are cloud
+   * workers on the team to take it later.
+   */
+  private pickFor(t: Goal["tasks"][number], candidates: string[]): string | undefined {
+    const desks = this.d.desks();
+    const model = (id: string) => desks.find((d) => d.id === id)?.worker?.model ?? "";
+    const size = taskSize(t.title, t.brief?.minutes ?? 0, t.brief?.notes ?? "");
+    const fit = candidates.filter((d) => fitsModel(model(d), size, this.d.speed?.(model(d))));
+    const anyCloud = desks.some((d) => d.worker && !isLocalModel(d.worker.model));
+    const pool = fit.length ? fit : anyCloud ? [] : candidates;
+    if (size === "small") return pool.find((d) => isLocalModel(model(d))) ?? pool[0];
+    return pool[0];
   }
 
   /** Work that passed its check and its audit needs no more from you. */

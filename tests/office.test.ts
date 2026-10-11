@@ -152,3 +152,76 @@ test("a review with a whiteboard sketch saves it for the worker", async () => {
   office.dispose();
   rmSync(dir, { recursive: true, force: true });
 });
+
+test("pausing a worker keeps it at its desk; restarting starts it again with the same model", () => {
+  const office = new Office(sim);
+  const deskId = office.snapshot().desks[0].id;
+  office.hire(deskId, "codex", "Jorge", "gpt-5", "auto");
+  const before = office.snapshot().desks.find((d) => d.id === deskId)!.worker!;
+
+  assert.equal(office.pause(deskId, "⬆ Waiting for Codex to update…"), true);
+  let w = office.snapshot().desks.find((d) => d.id === deskId)!.worker!;
+  assert.equal(w.status, "asleep");
+  assert.equal(w.activity, "⬆ Waiting for Codex to update…");
+  assert.equal(office.isStaffed(deskId), false);
+  assert.equal(office.pause(deskId, "again"), false);
+
+  assert.equal(office.restart(deskId, "Updated."), true);
+  w = office.snapshot().desks.find((d) => d.id === deskId)!.worker!;
+  assert.notEqual(w.status, "asleep");
+  assert.notEqual(w.id, before.id);
+  assert.equal(w.model, "gpt-5");
+  assert.equal(w.leash, "auto");
+  assert.equal(w.hiredBy, "Jorge");
+  assert.equal(office.isStaffed(deskId), true);
+
+  // A running worker restarts in one go; an empty desk doesn't.
+  assert.equal(office.restart(deskId, "Stuck."), true);
+  assert.equal(office.restart(office.snapshot().desks[1].id, "Nobody."), false);
+  office.dispose();
+});
+
+test("a worker that asked you something and then got on with it: once it's kept at it, the question's off your list", async () => {
+  const office = new Office(sim);
+  office.movedOnMs = 150;
+  const deskId = office.snapshot().desks[0].id;
+  office.hire(deskId, "claude", "Jorge");
+  const moved: string[] = [];
+  office.onMovedOn = (_d, q) => moved.push(q);
+  office.setReport(deskId, { status: "blocked", title: "Can't find the frankie repo", summary: "Where is it?", question: "Where is the frankie repo?", slides: [] } as never);
+  assert.equal(office.snapshot().presentations.length, 1);
+  const session = (office as unknown as { seats: { desk: { id: string }; session: { setStatus(s: string, a: string): void } }[] }).seats.find((s) => s.desk.id === deskId)!.session;
+  // A short burst (answering you) doesn't count.
+  session.setStatus("working", "Answering");
+  await new Promise((r) => setTimeout(r, 50));
+  session.setStatus("idle", "Idle");
+  await new Promise((r) => setTimeout(r, 250));
+  assert.equal(office.snapshot().presentations.length, 1, "still waiting for you");
+  // Back at work for good: it's moved past it.
+  session.setStatus("working", "Installing frankie's dependencies");
+  await new Promise((r) => setTimeout(r, 300));
+  const w = office.snapshot().desks.find((d) => d.id === deskId)!.worker!;
+  assert.equal(office.snapshot().presentations.length, 0, "out of the line");
+  assert.equal(w.report, null);
+  assert.equal(w.status, "working");
+  assert.deepEqual(moved, ["Where is the frankie repo?"]);
+  office.dispose();
+});
+
+test("a worker on a task that goes quiet on a question in words needs you (not free); back at work, it doesn't", async () => {
+  const office = new Office(sim);
+  const deskId = office.snapshot().desks[0].id;
+  office.hire(deskId, "claude", "Jorge");
+  office.hasTask = () => true;
+  const session = (office as unknown as { seats: { desk: { id: string }; session: { setStatus(s: string, a: string): void; screen?: () => string[] } }[] }).seats.find((s) => s.desk.id === deskId)!.session;
+  session.screen = () => ["Where's the covers app?", "", "> "];
+  session.setStatus("idle", "Idle");
+  await new Promise((r) => setTimeout(r, 1700));
+  let w = office.snapshot().desks.find((d) => d.id === deskId)!.worker!;
+  assert.equal(w.asking, "Where's the covers app?");
+  assert.match(w.activity, /❓/);
+  session.setStatus("working", "Cloning covers");
+  w = office.snapshot().desks.find((d) => d.id === deskId)!.worker!;
+  assert.equal(w.asking, undefined);
+  office.dispose();
+});

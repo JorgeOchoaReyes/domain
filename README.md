@@ -83,7 +83,8 @@ project, **File → Open project folder… (Ctrl+O)**.
    appears on its own. Hand out a task — the **assignment card** sets the model,
    a time budget, plan-first and what "done" means.
 5. Watch it work on its laptop, or on yours (**L**) — or go play in the
-   **game room** (**T**); you'll get a shout when a worker needs you.
+   **game room** (**T**); **🔔 Needs you** in the dock counts whatever is
+   waiting on you, and an urgent one gets a shout.
 6. **Round up** (**R**) and hold **office hours** (**O**): each worker presents,
    you approve it (it merges into your branch) or send back changes.
 7. When every task is done, **Ship it**.
@@ -98,6 +99,43 @@ pull request*, *hand off an idea*. Each is a short checklist that ticks itself
 off as you go, with a button on every step that does it for you.
 
 ![Arnold, your assistant, offering the tour](docs/screenshots/pip.jpg)
+
+### The dock, 🔔 Needs you, and toasts
+
+The dock across the top keeps five buttons — **🔔 Needs you** (`I`),
+**🎯 Goals** (`G`), **📺 Monitor** (`K`), **💻 Laptop** (`L`) and
+**📱 Phone** (`P`) — and **☰ More** for the rest: Stand-up (`U`), Focus
+session (`F`), Round up (`R`), Office hours (`O`), Fast travel (`T`), Team
+chat (`C`), the **🏢 Office** menu, 🥽 VR when there's a headset, Settings
+(`Esc`) and Controls (`H`). Every key works wherever its button lives; a dot
+on More means something in it has a count (people in line, unread answers).
+
+**🔔 Needs you** is one place for everything waiting on you, each with its own
+buttons: an agent's **question** (💬 Answer opens it big in the monitor, or
+🚶 Go there), an agent asking to **trust the project's files** (✅ Trust this
+project), a **stuck** agent (signed out, offline, its service erroring — 🛠 See
+the fix), finished work to **review** (🎤 Review now, or Office hours), an
+**"I'll take it" offer** (✅ Let them take it / 🔁 Someone else), a teammate
+asking to **borrow** one of your agents (✅ Lend / 🙅 Not now), a **huddle** or
+**demo** to watch, a worker's **answer** to reply to, and the deadline,
+time-budget and idle-hands reminders. The badge counts them — red when
+something's urgent — and the phone's **Alerts** shows the same list. `N`
+still jumps straight to the next question or review in the monitor. Arnold,
+the phone's buzz and each feature's own prompts are still there; they all
+point at things that are also in this one list.
+
+Below it, **Recent** keeps the routine news that no longer pops up: a plan
+landing, a merge, a deck updated, a huddle moving on, ideas changing hands,
+someone else's arcade score, the less urgent reminders. **Toasts** are now
+for what needs a look or answers what you just did: they're shorter (about
+three seconds, longer for warnings and errors), the same one twice in a few
+seconds becomes one toast with a **×2**, and a burst of everyday ones is
+capped (the rest go to Recent) — warnings and errors always get through.
+
+The look is one design system: the colours, radii, spacing, lines, shadows
+and fonts are CSS variables (`src/client/styles/main.css`), shared by the
+windows, the monitor, the laptop's apps, the phone and the inbox, with one
+style for buttons and segmented choices.
 
 ### The fastest start: ⚡ Quick start
 
@@ -119,24 +157,62 @@ nou                           # what every agent is doing, and what's waiting fo
 nou standup "Today I want dark mode shipped and the login bug fixed"
 nou task "Update the README" --file notes.md   # someone offers to take it: Y / s / a
 nou task "Fix the flaky test" --to Pixel
+nou estimate "Add dark mode"  # how long and what it'll cost, cloud vs local; how close the last ones came
 nou ask Bolt "How's it going?"                  # waits for the answer
 nou watch                     # live: who's working, what's ready, what they say
 nou watch Bolt                # one agent's terminal, live
 nou review / nou review Grace # what's waiting, or one whole deck
 nou approve Grace "Nice"      # or: nou back Grace "Cover the empty case too"
 nou repo                      # your branch vs GitHub, agents' branches, pull requests
+nou repo find                 # repos on this computer (and on GitHub, signed in) you could open, numbered
+nou repo find api             # …just the ones matching "api"
+nou repo add 2                # open number 2 alongside (no restart) — a GitHub one is cloned first
+nou repo add api              # or by name; or any folder: nou repo add ../api; nou repo close api
+nou hire builder --repo api   # hire into it (or: nou repo hire api, for every new hire)
+nou task "Add the endpoint" --to Bolt --repo api   # Bolt moves to api for this one
+nou move Bolt site            # or move an agent for good
+nou pr "Dark mode"            # ship a goal as a pull request (--per agent: one per agent;
+                              #   --agent Bolt: just Bolt's branch)
 nou hire reviewer             # a ready-made agent at a free desk (nou roles lists them)
+nou mcp                       # the office's MCP tools, and the ones your agent CLIs already load
+nou mcp add context7          # give every new hire one your CLIs load (secrets stay on this computer)
 ```
 
 ### Test it end to end
 
 ```bash
 npm test             # unit tests
-npm run e2e:ui       # the whole office in Chrome, simulated agents (31 checks)
-npm run e2e:team     # a shared office: you and a teammate over the network (19 checks)
-npm run e2e:real     # real Claude Code agents on a throwaway repo, from hire to an
-                     # opened pull request — audits, checks, a merge conflict (42 checks)
+npm run e2e:ui       # the whole office in Chrome, simulated agents (47 checks)
+E2E_VOICE=1 npm run e2e:ui   # …and the stand-up 🎤 for real: Chrome's fake microphone plays a
+                     # spoken WAV, Whisper writes it in the box (Windows speaks the WAV;
+                     # elsewhere E2E_VOICE=file.wav). The first run downloads the model.
+npx tsx scripts/voice/transcribe.ts file.wav   # the office's Whisper on a WAV, with timings
+npm run e2e:team     # a shared office: you and a teammate over the network, pods and borrowing (28 checks)
+npm run e2e:real     # real Claude Code agents on a throwaway repo, from hire to
+                     # opened pull requests (per goal and per agent) — audits, checks,
+                     # a merge conflict (46 checks), against a stand-in for GitHub
+npm run e2e:real -- --dry-run   # what it would do, and against which GitHub; starts nothing
 ```
+
+`e2e:real` talks to a local stand-in for GitHub's API by default — no account,
+nothing leaves your machine. To run it against a **real GitHub test
+repository** instead, make a throwaway repo with at least one commit (a README
+is enough) and a token that can push to it and open and close pull requests
+and issues (fine-grained: *Contents*, *Pull requests* and *Issues*, read and
+write, on that repo only), then:
+
+```bash
+E2E_GITHUB_REPO=you/domain-e2e-sandbox E2E_GITHUB_TOKEN=github_pat_… npm run e2e:real
+```
+
+It clones the repo, commits the toy library on top of its default branch
+(locally — the default branch is never pushed), files two issues tagged with
+the run's id, pushes the goal's branch and each agent's branch and opens their
+pull requests, and follows their checks (a repo without CI counts as “no
+checks”). Pass or fail, it then closes every pull request, deletes every branch
+and closes every issue the run made (`E2E_GITHUB_KEEP=1` leaves them for you to
+look at). The token stays in the environment: git reads it through a credential
+helper, and it's never written to disk or the logs.
 
 ### Try it without any agents
 
@@ -224,6 +300,23 @@ reason. Local models still vary a lot: pick one built for agentic coding, and
 big enough for it. Hire one that won't fit in your computer's memory and you're
 told straight away (in a toast and the Logs) rather than left watching it hang.
 
+**Local models first.** They're free and private, so wherever you pick a model
+— the hire card, a character, the assignment card — the ones on this computer
+come first (🖥, *free, private*), even before you've added them to Team
+policy. Hand a small task (a typo, the README, a 15-minute budget) to a cloud
+model and the assignment card offers the local one instead; hand a big one (a
+migration, a refactor across the app) to a local model and it warns you.
+Autopilot does the same: small tasks go to workers on local models, big ones
+wait for a cloud worker (unless the whole team is local).
+
+**End to end.** Team policy shows each Ollama model's **context window**, and
+when it's too small for an agent, **⤢ Make a 32K copy** creates one with
+Ollama — same weights, nothing downloaded, just its own `num_ctx`
+(`qwen3:8b` → `qwen3:8b-32k`). The first time a worker's hired on a local
+model, a **speed check** measures how fast it writes on this computer
+(tokens a second, in a toast and the Logs); a slow one (under 10/s) gets only
+small tasks from autopilot.
+
 ## The office
 
 - **Desk pods** on the west side. A green **+** marks a free desk: press **E**
@@ -249,7 +342,17 @@ building:
   faster for 90 seconds — you'll see the cup in your hand.
 - **🕹 The game room**, for while your workers grind: three arcade cabinets
   (*Snake*, *Bug Smash*, *Brick Breaker*, best scores kept), free throws at the
-  hoop (time the power meter), ping-pong and beanbags. Two screens keep the
+  hoop (time the power meter), ping-pong and beanbags, and a **🎱 pool
+  table**: **E** racks up nine balls and opens it top-down — aim with the
+  mouse (or ←/→), hold the button (or Space) for power, let go to shoot — and
+  you clear the table in as few shots as you can (a scratch costs one; your
+  best is kept). The balls on the table in the room follow along, and workers
+  on a break come over and shoot a few racks of their own. Every cabinet
+  keeps the **office's high scores** too: each finished game goes on a shared
+  board (a person's best, top five), kept by the office and sent to everyone
+  in it — guests in a shared office included. The cabinets show the board
+  between their attract loops, the game's window lists it, and a new top
+  score is shouted out to everyone. Two screens keep the
   workers and the goal in view, and the glowing pad by the door jumps you
   straight back to the work floor. The **jukebox** picks the office's music —
   *Lo-fi focus*, *Disco fever* (the mirror ball spins up and lights sweep the
@@ -281,6 +384,12 @@ building:
   team), a **lounge** (a sofa, a piano you play from your keyboard, darts, a
   vending machine) and a **gym** (treadmills, breathing mats for a calm minute,
   a telescope at the window). The city's outside the glass.
+- **🧑‍💻 Floor 3, the team floor**, up the elevator too: four pods of four
+  desks (A–D) for a bigger team. **More team floors open as the team grows**:
+  once every desk on floor 3 is taken, **floor 4** opens (pods E–H) — you get a
+  shout, and it's in the elevator's fast travel from then on — and when that
+  fills, **floor 5** (pods I–L). Workers ride the elevator between floors like
+  everywhere else, and a floor someone's working on stays open.
 
 Press **T** anywhere to **fast travel** — the work floor, your office, any
 room, outside, or straight to a worker that needs you. When a worker needs you
@@ -302,11 +411,14 @@ through one loop, and there's always exactly one obvious next step.
    the tone tints the office light.
 2. **🧠 Plan**: no tasks yet? *Plan with a worker* briefs one to break the goal
    into a checklist; the tasks appear on their own. Or type them yourself.
+   With more than one worker free, the plan goes to a **🤝 team huddle** first
+   (see below).
 3. **⌨️ Build / 🔎 Research**: hand out tasks; each worker is briefed in its own
    terminal with the goal, the task, its time budget and what "done" means.
 4. **🎤 Review**: round them up (**R**), hold office hours (**O**), approve or
    send back changes. Approved tasks check themselves off.
-5. **🚀 Ship**: when every task is done —
+5. **🚀 Ship**: when every task is done — after a **🎬 demo** of what was built
+   (see below) —
    - *build goals* run your configured deploy command (shown before it runs,
      output streamed to your laptop's Deploy app). If it fails, one click hands
      the log to a worker to fix. With no deploy command, a worker opens a PR,
@@ -316,7 +428,31 @@ through one loop, and there's always exactly one obvious next step.
 
 Manual overrides are always there — tick a task, re-plan, mark shipped — so
 nothing gets stuck. Each goal's files live in `.domain/goals/<id>/`
-(`plan.md`, `deck.md`, `shipped.md`, `deploy.log`).
+(`plan.md`, `deck.md`, `shipped.md`, `deploy.log`, `huddle.md`, `demo.png`).
+
+### 🤝 The team huddle, and 🎬 the demo
+
+- **A huddle at the start of a goal.** When a worker's draft plan lands and
+  others are free (the goal's group, or anyone not on a task — up to four),
+  they don't just get handed tasks: the team gathers round the stand-up circle
+  and everyone weighs in. Each teammate reads the draft and writes a short note
+  — a concern or two, a suggestion, and the task they'd take — shown in the
+  **Team huddle** window (🤝 *Watch the huddle* in the loop) and as speech
+  bubbles in the office. Then the planner revises the plan from the notes, and
+  the revised tasks go on the goal; a task someone asked for is saved for them.
+  It's bounded: one short brief per teammate, three minutes to gather and three
+  to revise — whatever isn't in by then is left out, and if no revision comes
+  the draft stands. **⏭ Skip** sends the plan out as it is, any time.
+  `"huddle": false` in `domain.config.json` (or `DOMAIN_HUDDLE=0`) turns it off.
+- **A demo at the end.** When every task of a build goal is approved, the
+  office captures what was built and offers it to everyone in the office
+  (🎬 *Watch the demo*, also in the loop's Ship step): a **screenshot** of the
+  running app, taken by a headless Chrome or Edge, or — for anything without a
+  page — a **captured terminal run** and its output. What it captures, first
+  that applies: `"demo"` in `domain.config.json` (a URL to screenshot, or a
+  command to run), your `"preview"` URL, a dev server running on this machine,
+  then your `"check"` command. **↻ Capture again** after a fix. Set
+  `DOMAIN_BROWSER` if your browser isn't where it usually installs.
 
 ### 🛠 Running your team
 
@@ -327,6 +463,25 @@ nothing gets stuck. Each goal's files live in `.domain/goals/<id>/`
   out (*nudge it to wrap up*, or *stop and present*), **plan first** (it presents
   a plan in your office; you approve it, then it builds), and the task's own
   **definition of done**.
+- **⏳ Estimates for every job**: the card opens with how long the task will
+  likely take and what it'll cost on the model you picked
+  (`~25 min (15–40) · ≈ $1.70`), or that it's free on a local one, and
+  it changes as you change the worker, model, plan first, audit, notes or
+  files. If the estimate runs past the time budget, the card says so. The
+  first guess comes from the task's size (its words and notes, read the same
+  way as for the local-model hint, then plan first and an audit). After that
+  it's scaled by how long similar tasks really took this team: tasks with
+  shared words in the title, the same size or the same model count most.
+  Every finished task records the time from handing it out to its last
+  presentation (time waiting for your review isn't counted) next to its
+  estimate. The last 200 are kept with your progress, so the estimates get
+  better. The Goals window, the laptop's **Loop** app and the phone's
+  **Goals** show it as well: before a task goes out (on cloud, or free on a
+  local model), while it's being done, and what it took against the estimate
+  once it's done. Each goal also shows the work left on it and how far off
+  the estimates have been lately. Costs are rough per-hour figures for a
+  coding agent on that model (Opus more than Sonnet, Sonnet more than Haiku),
+  not a bill.
 - **Team policy** (🛠 in the Goals window, the hire menu or the card): the
   defaults everything starts from, shared by everyone in the office and saved
   with your progress.
@@ -373,7 +528,7 @@ A laptop in your hands, anywhere: **💬 Team** to message anyone, give someone
 a task or ask for an update; a **Browser** showing the app your workers
 are building (your preview URL, or any local dev server it finds), **Workers**
 with each one's live terminal, the **Loop** for your goal, **Decks** for
-research goals, and the **Deploy** console.
+research goals, the **Deploy** console, and **💻 Mine**, your own terminals.
 
 The browser has tabs: **＋** for a new one (it lists your running dev
 servers), **×** (or a middle-click) to close one; each keeps its own page and
@@ -383,34 +538,97 @@ Press **L** by a couch, a table, an armchair or the campfire and you sit down
 and set it up there. It stays where you left it: walk back and press **E** to
 pick up where you were.
 
+### 💻 Your own terminal (laptop → Mine)
+
+Do your own work without leaving the office: **L → 💻 Mine** (or sit at your
+desk in your office and press **E** again) opens real terminals on this
+computer. **＋ New tab** starts a shell in the project — PowerShell on Windows
+(PowerShell 7 if you have it; Command Prompt and Git Bash are offered too),
+your `$SHELL` elsewhere. The **▾** next to it picks the shell and where it
+starts: the project or any repo you have open.
+
+The same menu offers **🤖 Claude Code (mine)** (and any other agent CLI you
+have installed): your own plain session in that folder. It isn't a worker — no
+desk, no brief, no report files, not in the monitor, the inbox, the chat or
+the review line. Just your tab.
+
+Tabs live on the server: close the laptop or reload the page and they're
+still there, with their recent output (up to six tabs). **✕** on a tab ends its
+shell; they all end when the office stops. Select to copy, paste as usual,
+Ctrl+[ sends Esc (Esc closes the laptop).
+
+The header has **🧩 Open in VS Code** (when `code` is on your PATH),
+**📂 Open folder** (Explorer, Finder, or your file manager), and
+**🎯 Hand this to the team**: a task to whoever's free (someone's hired if
+nobody is), about that folder, with the tab's last 40 lines attached if you
+like.
+
+**Host only.** These are real shells on your computer: guests who join over
+your network — teammates and visitors alike — don't get the app, can't send
+any of its messages (the server checks every one), and are never sent a byte
+of its output. A tab only starts in the project or an open repo, in a shell
+from the server's own list.
+
 ### 📱 Your phone (P)
 
-The top bar keeps the everyday few — Goals, Phone, Laptop, Office, Chat.
-Everything else is on the phone, in your pocket, while you keep walking: a
-row for **Stand-up**, **Focus**, **Round up** and **Reviews**, then **Alerts** (what needs you
-now, with a button to deal with it), **Chat** (message everyone, or open any
-worker's channel), **Goals** with their deadlines, **Reviews** (the line, office
-hours, round up), **Workers** (chat, terminal, or go there), **History**,
-**Music** and **Travel**. The button in the corner buzzes with a count when
-something needs you.
+Everything the dock has is also on the phone, in your pocket, while you keep
+walking: a row for **Stand-up**, **Focus**, **Round up** and **Reviews**, then
+**Alerts** (the same list as 🔔 Needs you, with the same buttons), **Chat**
+(message everyone, or open any worker's channel), **Goals** with their
+deadlines, **Reviews** (the line, office hours, round up), **Workers** (chat,
+terminal, or go there), **History**, **Music** and **Travel**. Its button
+buzzes and a banner drops from it when there's news (tap it to open that
+app); the count of what needs you is on 🔔 Needs you.
 
 ### 🔔 Reminders and deadlines
 
 Give a goal a **due date** (in Goals, or when you set it at stand-up) and you're
 reminded an hour out, fifteen minutes out and when it slips. You also hear —
-with a chime, in Alerts and from Arnold — when a worker has been **waiting on you**
+with a chime, in 🔔 Needs you and from Arnold — when a worker has been **waiting on you**
 for a minute and a half, when someone's been **waiting to present** for five
 minutes, when a task's **time budget** is about to run out, when the **session**
 is ending, and when a worker is **free** while tasks sit unassigned. Urgent ones
-come back every few minutes until they're dealt with.
+pop up and come back every few minutes until they're dealt with; the rest wait
+in Needs you.
 
 ### 🗣 Say it
 
-Wherever you hand out work — the assignment card's **Anything else they
-should know?**, the chat, the laptop's Team app, the phone, a goal's **Add a
-task** — press **🎤** and say it instead of typing. In the desktop app it uses
-your computer's own dictation (Windows: **Win + H**; macOS: **Fn** twice); in a
-browser, the browser's.
+Wherever you hand out work — the stand-up, the assignment card's **Anything
+else they should know?**, the chat, the laptop's Team app, the phone, a goal's
+**Add a task**, reviews and idea boards — press **🎤** and say it instead of
+typing. By default the office writes it down **on this computer**, with
+[Whisper](https://github.com/openai/whisper) (base, English, quantized — run by
+[transformers.js](https://huggingface.co/docs/transformers.js) on onnxruntime):
+free, private, the same in the desktop app (Windows, macOS, Linux) and any
+browser, and offline once the model is here. The audio never leaves the
+computer the office runs on.
+
+- **Talking:** press 🎤 and speak. A card by the button says **● Listening… 3s**
+  with a level meter; it stops by itself when you pause (about a second
+  after you finish), or press 🎤 again or **Enter**. **Esc** throws it away.
+  At most a minute at a time. Then **✨ Transcribing…** (about a second for a
+  sentence), and the words go in where your caret was.
+- **The first time**, the model downloads once (**≈80 MB**, into
+  `~/.domain/models`, shared by the desktop app and `npm run dev`): the card
+  says **Downloading the voice model (≈80 MB, once)… 42%**, then transcribes.
+  Or get it ahead of time: **Settings → Voice → Download now**.
+- **Settings → Voice** picks how the 🎤 hears you: **On this computer
+  (Whisper)** (the default), **Browser** (Chrome's own speech recognition — it
+  sends your audio to Google), or **System dictation** (in the desktop app:
+  Windows voice typing, which the office starts with **Win + H**, or the Mac's
+  dictation, as **Edit → Start Dictation…** does).
+- **Fallbacks:** if Whisper can't run on the office's computer, or the
+  microphone is blocked, the 🎤 says so and uses the next way that can — the
+  desktop app the computer's dictation, a browser its own recognition. If
+  dictation is off (System Settings → Keyboard) or the PC is locked down, the
+  box says how to start it by hand (**Win + H**, or **Fn** twice).
+- **Who:** you and teammates can talk (a teammate's audio is transcribed on
+  your computer); visitors can't use the model, and their 🎤 uses their
+  browser's. The office's music and background sound go quiet while you talk.
+- **Other models:** `DOMAIN_WHISPER_MODEL` picks another one (e.g.
+  `onnx-community/whisper-small.en` — better, slower, bigger; or the
+  multilingual `onnx-community/whisper-base`, with `DOMAIN_WHISPER_LANG=es`
+  to fix its language).
 
 ### 🗣 Voices
 
@@ -491,7 +709,8 @@ back**, same agent, model, permissions and character.
 
 A worker with nothing to do walks to the **stand-up room** and waits round the
 circle for a task (its card says so) — press **E** by it to hand it one. Now
-and then it takes a short break round the lounge, and it walks back to its
+and then it takes a short break round the lounge or at the game room's pool
+table (where it shoots while nobody else is playing), and it walks back to its
 desk the moment there's work. It's only them walking about: no agent is doing
 anything, so it costs nothing.
 
@@ -542,27 +761,81 @@ before.
 
 ## Run the office (🏢)
 
-The **🏢 Office** button holds everything about running the office itself.
+**☰ More → 🏢 Office** holds everything about running the office itself.
 
 ![The Office menu](docs/screenshots/office-menu.jpg)
 
 ### Projects and GitHub
 
-Which project your workers are on, the ones you've opened before, and
-GitHub — without pasting tokens.
+Which repos your workers work in, adding more, and GitHub — without pasting
+tokens or typing paths. It's never more than a click away:
 
-- **Recent projects**: switch in a click (the app restarts on it).
-- **Open a folder**: the native folder picker, or paste a path.
-- **Start from GitHub**: **Sign in with GitHub** uses git's own sign-in (Git
+- **The project card** at the top left of the screen: the project and its
+  branch, **📦 N repos**, your GitHub account (or **Sign in to GitHub**) and
+  **＋ Add repo** — each opens this window.
+- **☰ More → 📦 Repos & GitHub** (and **🔌 MCP tools**), or More → 🏢 Office.
+- **The laptop's 📦 Repo app** (L, or 4): **＋ Add a repo**, **🔌 MCP tools**,
+  every open repo with who works there (and **Close**), and a GitHub part —
+  your sign-in, your repos with search, **Clone + add** in one click.
+
+**＋ Add a repo** (the big button at the top of the window) opens a chooser:
+
+- **On this computer**: the git repos it found, with search and one-click
+  **＋ Add** (or **Open** to switch the office to it). It looks — reading
+  `.git` only, no git commands — in the project's own folder and in
+  `~/projects`, `~/code`, `~/src`, `~/dev`, `~/Documents/GitHub`,
+  `~/source/repos` and `~/repos`, at most three folders deep and for at most
+  1.5 seconds, never into `node_modules`, hidden folders or build output, and
+  remembers what it found for two minutes. Repos already open and the office's
+  own worktrees (`.domain/worktrees`, `.claude/worktrees`) aren't listed. Set
+  `DOMAIN_REPO_ROOTS` (folders separated like `PATH`) to look elsewhere.
+- **From GitHub**: **Sign in with GitHub** uses git's own sign-in (Git
   Credential Manager opens the browser once; domain never stores your token),
-  then pick one of your repos or paste `owner/repo` / a URL. It's cloned into
-  `Documents/domain/projects/`, with the clone's progress shown live, and the
-  office opens on it.
+  then search your repos and **Clone + add** one — or paste `owner/repo` / a
+  URL. It's cloned into `Documents/domain/projects/` with its progress shown
+  live, and opened alongside.
+- **A folder path**: paste one, or the native folder picker in the desktop app.
+- **A new, empty repo**: name it; it runs `git init` in a folder next to the
+  project, with a README and a first commit, and opens it. *Also create it on
+  GitHub* (off unless you tick it) makes a private repo under your account and
+  pushes to it.
+
+Below it, **Open repos** lists each one with its agents, **Hire here** and
+**Close**. **Recent projects** switch the office in a click (the app restarts
+on it).
+
+Every repo dropdown — the hire card's **📦 Repo**, a character's repo in
+**Your team**, a worker's repo in its terminal and in the laptop's Workers
+app, the assignment card's **📂 Repo** — ends with **＋ Add a repo…**: the same
+chooser, and the new repo is picked once it opens.
 - **Ship as a pull request**: on a GitHub project, a finished goal's next step
   is **Open a pull request** — the work is pushed to `domain/<goal>` and a PR
   opens against the default branch, with the goal, its tasks and the session's
   intention. Its checks are followed and shown on the goal.
+- **A pull request per agent**: or open one per agent instead — each agent's
+  own branch (`domain/<agent>-<desk>-…`) is pushed as it is, and its PR lists
+  just the tasks that agent did, so each can be reviewed and merged on its own.
+  Pick it for the team in **Team policy → Branches & checks** (*one pull
+  request per goal / per agent*), or once from the goal's ship step (*One pull
+  request per agent instead*), or with `nou pr --per agent` (`--agent NAME` for
+  one agent's). Agents with nothing GitHub doesn't already have are skipped,
+  and so is an agent whose PR is still open. Every PR's checks are followed
+  and shown on the goal.
 - **GitHub issues → tasks**: import open issues into a goal from the Goals window.
+- **Several repos at once**: whatever you add opens alongside the project —
+  no restart. Each worker works in one repo: the one it was hired into (the
+  hire card's **📦 Repo**; else its character's own repo, if that's open; else
+  where **Hire here** says — the project until you pick another) or moved to
+  (a worker's repo picker — in its terminal, the laptop's Workers app, or the
+  Projects window; it restarts there on a branch of its own). A task can name
+  another repo in the assignment card (**📂 Repo**) or with
+  `nou task … --repo NAME`: the worker moves there first. Each repo has its
+  own worktrees (`~/.domain/worktrees/<repo>-<id>`), its own check (its own
+  `domain.config.json`), and approved work merges into *that* repo's branch.
+  A goal's pull request goes to the repo its tasks were done in, and its
+  checks are followed there. The Repo view and `nou repo` show every open
+  repo. The list is kept in `.domain/repos.json`; an office that never opens
+  another repo works exactly as before.
 
 ![Projects and GitHub](docs/screenshots/projects.jpg)
 
@@ -580,6 +853,31 @@ the panels and when it presents. **Quick hire** still gives you a plain worker.
 | :-: | :-: |
 | ![Hiring from your team](docs/screenshots/your-team.jpg) | ![The character editor](docs/screenshots/character-editor.jpg) |
 
+### Agent CLIs
+
+Which version of each coding agent you have, and the newest out. An
+out-of-date CLI can stop working (Codex 0.157 hung at "model: loading" until it
+was updated), so when one's out Arnold offers it, and **Office → Agent CLIs**
+has an **Update** button. The update waits until none of that agent's workers
+is busy, pauses the free ones (on Windows a running CLI holds its own files),
+installs, and starts them again in their last conversation. The output is in
+Logs.
+
+- Installed with **npm**: updated with `npm install -g <package>@<version>`.
+  If an update breaks something, **📌 Keep** a version: updates install that
+  one until you unpin it.
+- Installed with its **own installer**: Claude Code updates itself
+  (`claude update`); for the others, it says a new one's out and you update
+  it the way you installed it.
+
+**A stuck worker** says why, in its CLI's own words — signed out, can't reach
+its service, an API error (overloaded, rate limit), or it needs an update —
+and goes red ("needs you"). Its terminal shows what it said with the fix one
+click away: **🔑 Sign in** (Claude Code's `/login`, Gemini's `/auth`; for Codex
+and OpenCode, the command to run), **⬆ Update**, or **🔄 Restart** — its CLI
+starts again, back in its last conversation. Restart is always in the
+terminal's footer too. A CLI that says it's retrying isn't flagged.
+
 ### MCP tools
 
 MCP servers are tools your workers can use — read files, browse the web, work
@@ -595,9 +893,15 @@ session only — your agents' own settings are never changed:
 | Gemini CLI | `GEMINI_CLI_SYSTEM_SETTINGS_PATH` |
 | OpenCode | `OPENCODE_CONFIG` |
 
-The window also lists the servers your agents **already load** from their own
-configs, and a health check shows each one's tools, *needs sign-in*, or the
-error. Secret values (tokens, headers) never leave the server or show in logs.
+Open it from **☰ More → 🔌 MCP tools**, the laptop's 📦 Repo app, or More →
+🏢 Office. **Found in your CLIs** lists the servers Claude Code, Codex, Gemini
+CLI and OpenCode **already load** from their own configs; one the office
+doesn't give everyone yet has **＋ Add for everyone**, which copies it (command
+or URL, and its env or headers) into the office's list — `nou mcp add NAME`
+does the same. A health check shows each one's tools, *needs sign-in*, or the
+error. Secret values (tokens, env values, headers, and secret-looking
+arguments like `--api-key …`) never leave the server or show in logs: you see
+`NAME=••••••`.
 
 ![MCP tools](docs/screenshots/mcp.jpg)
 
@@ -617,6 +921,24 @@ office** in their own domain app. Choose what guests can do:
 Some things stay with you whatever the role: your GitHub sign-in and repos,
 switching projects, MCP tools, and sharing itself. Wrong codes are rate-limited,
 guests never see the code, and **Stop sharing** disconnects everyone.
+
+**Pods for people.** Everyone in the office gets a **pod** on the team floor
+(floor 3) — a cluster of four desks for them and their agents, with their name
+hung over it (*⭐ Your pod* on yours; dimmed while they're away). You keep the
+same pod each time you come back (it's remembered by name in
+`.domain/pods.json`); a newcomer gets a free pod, or the pod of someone who
+isn't here. While someone's in, the desks in their pod are theirs to hire at;
+everywhere downstairs is open to all.
+
+**Borrowing an agent.** Agents you hire are yours to direct; a teammate can
+message them, and can also **ask to borrow** one — **🤝 Ask to borrow** on its
+tile in the agent monitor (**K**). You get the question from Arnold, like an
+agent's *"I'll take it"*: **✅ Lend** or **🙅 Not now**. On yes it works for
+them — their tasks, their keys, their reviews — and its card says
+*🤝 Working for Ana (Jorge's)*. It comes back when they **↩ Give back**, when
+you **↩ Call back**, when the task they gave it is done, when it leaves its
+desk, or when either of you leaves the office. An ask nobody answers lapses
+after two minutes.
 
 > First time you share, Windows asks to allow domain on networks — allow
 > **Private networks** (or add an inbound rule for the port in Windows Defender
@@ -680,7 +1002,8 @@ Like Slack, with your workers: **#team** reaches everyone at once, and each
 worker has its own channel with its whole history (a character's history
 follows it from hire to hire). Your message reaches the worker as an
 instruction in its terminal; it answers in the channel, and answers pop up as
-toasts wherever you are. Each channel also shows:
+a short toast wherever you are — and wait in 🔔 Needs you with a 💬 Reply
+button. Each channel also shows:
 
 - **🧠 Now** — what's on its screen right now, with ⏎ / Esc / 1 / 2 keys for
   its prompts.
@@ -732,7 +1055,7 @@ can pin and hand off too.
 
 ## VR
 
-With a headset, **🥽 VR** appears in the dock. Click it and you're standing in
+With a headset, **🥽 VR** appears under **☰ More** in the dock. Click it and you're standing in
 the office:
 
 | Controller | Does |
@@ -802,6 +1125,8 @@ local shell instead.
   "preview": "http://localhost:5173",
   "deploy": "npm run deploy",
   "check": "npm test",
+  "demo": "http://localhost:5173",
+  "huddle": true,
   "team": {
     "models": { "claude": ["opus", "sonnet", "haiku"], "codex": ["ollama/qwen3-coder"] },
     "defaultModel": { "claude": "sonnet" },
@@ -822,6 +1147,8 @@ local shell instead.
 | `preview` | The URL your laptop's browser opens. |
 | `deploy` | The command **Ship it** runs (only ever this command). |
 | `check` | The command run on finished work before you review it. |
+| `demo` | What the demo at the end of a goal shows: a URL to screenshot, or a command whose output to capture (default: `preview`, a running dev server, then `check`). |
+| `huddle` | `false` turns off the team huddle on a goal's plan. |
 | `team` | Starting defaults for Team policy (it's edited in game after that). |
 
 Environment variables:
@@ -831,8 +1158,12 @@ Environment variables:
 | `DOMAIN_CWD` | The project folder workers work in (default: where you start it). |
 | `DOMAIN_SIMULATE` | `1` runs scripted workers instead of real terminals. |
 | `DOMAIN_PREVIEW_URL`, `DOMAIN_DEPLOY_CMD`, `DOMAIN_CHECK_CMD` | Override the config file. |
+| `DOMAIN_DEMO`, `DOMAIN_HUDDLE` | Override `demo`, and turn the huddle off (`0`). |
+| `DOMAIN_BROWSER` | The Chrome, Edge or Chromium that takes demo screenshots (found on its own otherwise). |
 | `DOMAIN_PROJECTS_DIR` | Where GitHub clones go (default `Documents/domain/projects`). |
 | `DOMAIN_PREFS` | Where recent projects are kept (default `~/.domain/prefs.json`). |
+| `DOMAIN_WHISPER_MODEL`, `DOMAIN_WHISPER_DTYPE`, `DOMAIN_WHISPER_LANG` | The 🎤's speech-to-text model (default `onnx-community/whisper-base.en`, `q8`), and a multilingual one's language. |
+| `DOMAIN_MODELS` | Where the voice model is kept (default `~/.domain/models`). |
 | `DOMAIN_GITHUB_API` | The GitHub API base (for GitHub Enterprise). |
 | `OLLAMA_HOST`, `LMSTUDIO_URL` | Where to look for local models. |
 | `PORT`, `HOST` | Server port (`8787`) and bind address (`127.0.0.1`). |
@@ -854,9 +1185,12 @@ Environment variables:
 | `V`           | Switch first / third person (also in Settings) |
 | `B`           | Skateboard on / off — twice as fast, and you glide |
 | `C`           | Team chat |
+| `I`           | 🔔 Needs you: everything waiting on you, each with its button — and Recent, the routine news |
+| `N`           | The next question or review, opened big in the Agent monitor |
+| `K`           | Agent monitor |
 | `Q`           | Put your coffee down |
 | Driving       | `E` by a car gets in · `W`/`S` gas and brake (or reverse) · `A`/`D` steer · `Space` handbrake · `E` gets out |
-| `E`           | Use whatever the floating **E** marks: hire, a waiting worker (give it a task), a car, terminal, office hours, the idea boards, the jukeboxes, coffee, arcades, hoops, the ball, the elevator, your laptop where you left it, darts, the piano, the vending machine, treadmills, the breathing mats, the bookshelf, the telescope, fishing, the garden, the campfire, the microwave, the radio, the lamp, the teddy, the cat, paper toss, the office vending machine, air hockey, pinball, the donuts, Biscuit the dog |
+| `E`           | Use whatever the floating **E** marks: hire, a waiting worker (give it a task), a car, terminal, office hours, the idea boards, the jukeboxes, coffee, arcades, the pool table, hoops, the ball, the elevator, your laptop where you left it, darts, the piano, the vending machine, treadmills, the breathing mats, the bookshelf, the telescope, fishing, the garden, the campfire, the microwave, the radio, the lamp, the teddy, the cat, paper toss, the office vending machine, air hockey, pinball, the donuts, Biscuit the dog |
 | `T`           | Fast travel |
 | `U`           | Stand-up |
 | `G`           | Goals |
@@ -880,6 +1214,8 @@ src/
     layout.ts            the floor plan: building, rooms, grounds, floor 2, work spots, routes, camera walls
     history.ts           what the office remembers happened
     darts.ts             where a dart scores
+    pool.ts              the pool table's physics, rack and the workers' shot picker
+    arcade.ts            the office's arcade high-score boards
     progress.ts          goals, sessions, XP, levels, achievements, the loop's stages
     policy.ts            team policy and task briefs (models, leash, time, done)
   server/
@@ -890,10 +1226,13 @@ src/
     worker.ts            simulated worker
     workspace.ts         a git worktree and branch per worker; merges
     projects.ts          projects, cloning, GitHub sign-in, PRs, issues (with github.ts, prefs.ts)
+    repos.ts             the repos open alongside the project (a repo per agent)
     team.ts              your team's characters
     mcp.ts               MCP: scan agents' configs, health checks, per-worker servers
     lan.ts               local multiplayer: the passcode listener, discovery
+    pods.ts              pods for people on the team floor, and borrowing agents
     ideas.ts             the idea boards: pinned ideas, sketches, hand-offs
+    arcade.ts            the arcade's high scores, saved to .domain/arcade.json and sent to everyone
     agents.ts            which agent CLIs are installed; installing a missing one
     oplog.ts             the operations log
     permissions.ts       what guests may do
@@ -925,59 +1264,26 @@ docs/screenshots/        the pictures in this README
 
 Next up, after v1.0:
 
-- **Agent CLI updates, handled.** Today the office skips an agent's
-  "update available" menu at startup (so a stray keypress can't run its
-  installer mid-task) and leaves updating to you. Next: notice when a CLI has
-  an update, offer it in the Office menu, and run it between tasks — never
-  while a worker's busy — with the output in Logs; pin a known-good version
-  per agent if an update breaks something.
-  This matters: an out-of-date CLI can stop working outright — Codex 0.157,
-  for one, hung at "model: loading" until it was updated. For now a worker
-  stuck like that is flagged as needing you, with a hint to update it.
-- **Stuck agents, recovered.** Next, one-click fixes from the desk (update the
-  CLI, restart its session, re-check its sign-in) and the CLI's own error
-  shown.
-- **Estimates for every job.** Before you hand out a task: how long it'll
-  likely take and what it'll cost — on a cloud model, or free on a local one —
-  from the size of the task and how long similar ones took this team. Shown
-  on the assignment card, the laptop and the phone, and checked against what
-  it really took when the task is done, so the estimates get better.
-- **Local models first.** Suggest a model on this computer whenever one can
-  do the job: local models listed first (marked free and private) when hiring
-  and handing out work, a nudge when a small task is about to go to a big
-  cloud model, and autopilot preferring them for small tasks.
-- **Local models, end to end.** Pick a context window for Ollama models (or
-  have the office make a copy with a bigger one), a speed check on hire, and
-  autopilot that sizes tasks to the model — small ones for small models.
-- **Smoother still.** The first look at your office, the lobby and floor 2
-  still drops a few frames once per session (50–67 ms); the outline pass costs
-  as much as the scene itself; and static furniture could be merged into far
-  fewer draw calls. Measure with `scripts/perf/`.
+- **Smoother still, the rest.** First looks no longer hitch, and static
+  furniture is drawn merged (about 40% fewer draw calls in the scene, its
+  outlines and its shadows). Still to do: the outline pass is a second draw
+  of everything on screen (now ~0.7× the scene's calls), and the people,
+  the Kenney models and the props you can use aren't merged. Measure with
+  `scripts/perf/`.
 - **macOS and Linux**, tested end to end (the builds exist; they haven't been
   run on real machines yet).
 - **VR**, back on track: the last fixes for drawing and reviews in the headset.
-- **More of the team loop**: a real team huddle at the start of a goal
-  (everyone weighs in on the plan), and a shared screenshot/demo of the
-  finished result in the final review.
-- **A repo per agent.** Today the office works on one project at a time
-  (switching restarts it). Next: open several repos at once and pick one per
-  agent or per task — each with its own worktrees, checks, merges and pull
-  requests — and see them all in the Repo view and `nou repo`.
-- **A design cleanup.** The HUD has grown: fewer, clearer dock buttons, one
-  place for what needs you (questions, reviews, offers), quieter toasts, and
-  a consistent look across the monitor, laptop, phone and windows.
-- **Voice in the desktop app, tested.** The 🎤 button now starts Windows
-  voice typing (Win+H) in the desktop app; it needs testing on real machines,
-  and macOS still only shows how to start dictation.
-- **GitHub, against the real thing.** The whole loop — sign-in, issues,
-  pushing, pull requests and their checks — is tested end to end against a
-  stand-in for GitHub's API (`npm run e2e:real`); next, a run against a real
-  test repository, and opening pull requests per agent as well as per goal.
-- **Pods for people.** In a shared office, give each person a pod on the team
-  floor, and let a teammate ask to borrow someone's agent (the owner says yes
-  or no, like an agent's "I'll take it").
-- **More floors and games.** More team floors as teams grow, and more to play
-  between tasks (a pool table, multiplayer arcade high scores).
+- **Voice, on a real Mac and in the installer.** The 🎤 now transcribes on
+  this computer with Whisper, checked end to end on Windows (headless Chrome
+  with a recorded voice, in `E2E_VOICE=1 npm run e2e:ui`). Still to try: a
+  real Mac (the microphone prompt, and macOS dictation as the fallback), the
+  packaged installers (the model engine's native files are unpacked from the
+  app archive, but no installer has been built and run with them yet), and
+  the desktop app with a real microphone.
+- **GitHub, against the real thing.** `npm run e2e:real` can now target a
+  real test repository (`E2E_GITHUB_REPO` + `E2E_GITHUB_TOKEN`, and it cleans
+  up after itself); what's left is actually running it against one and
+  fixing whatever real GitHub turns up.
 
 ## Credits
 

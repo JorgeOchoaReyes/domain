@@ -382,6 +382,15 @@ export function openStandup(
       el.addEventListener("input", () => (touched = true));
       el.addEventListener("change", () => (touched = true));
     }
+    // While Claude plans: the button says so, with the seconds going by, until its plan lands.
+    let thinking: ReturnType<typeof setInterval> | null = null;
+    const idle = () => {
+      if (thinking) clearInterval(thinking);
+      thinking = null;
+      make.disabled = false;
+      make.classList.remove("busy");
+      make.textContent = "✨ Make my plan again";
+    };
     make.addEventListener("click", () => {
       const text = said.value.trim();
       if (!text) {
@@ -391,11 +400,30 @@ export function openStandup(
       }
       asked++;
       apply(simpleDraft(text, teamNow()));
-      status.textContent = "⚡ Quick plan ready — ✨ Claude is making it better (you can start now)…";
+      $(".su-drafted").scrollIntoView({ behavior: "smooth", block: "nearest" });
+      const from = Date.now();
+      make.disabled = true;
+      make.classList.add("busy");
+      const tick = () => {
+        // The stand-up was closed: stop counting.
+        if (!make.isConnected) return idle();
+        const s = Math.round((Date.now() - from) / 1000);
+        make.innerHTML = `<span class="su-spin"></span> Claude is planning… ${s}s`;
+        // No answer in two minutes: the quick plan stands.
+        if (s >= 120) {
+          idle();
+          status.textContent = "⚡ Claude didn't answer — the quick plan below is yours to change";
+        }
+      };
+      tick();
+      if (thinking) clearInterval(thinking);
+      thinking = setInterval(tick, 1000);
+      status.textContent = "⚡ A quick plan is below already — Claude's better one replaces it (you can start now)";
       voice.draft(text);
     });
     fillDraft = (d, via) => {
       if (!asked) return;
+      idle();
       if (via === "simple") {
         status.textContent = "✅ Planned from your sentences (Claude Code wasn't available) — change anything you like";
         voice.speak(d.summary);

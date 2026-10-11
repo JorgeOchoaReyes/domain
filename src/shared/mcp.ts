@@ -39,8 +39,10 @@ export interface McpSeen {
   /** Where it's configured, e.g. "~/.claude.json" or ".mcp.json". */
   source: string;
   transport: "stdio" | "http";
-  /** The command or URL (no env values, no headers). */
+  /** The command or URL (no env values, no headers; secret-looking arguments masked). */
   target: string;
+  /** The names of its environment variables (or headers) — never their values. */
+  envKeys?: string[];
 }
 
 export interface McpHealth {
@@ -55,6 +57,39 @@ export interface McpHealth {
 
 /** What a secret looks like to clients; saving it unchanged keeps the stored value. */
 export const SECRET_MASK = "••••••";
+
+const SECRETISH = /(token|key|secret|passw|pwd|auth|bearer|credential|(^|[-_])pat($|[-_]))/i;
+const TOKEN_SHAPE = /^(ghp_|gho_|ghs_|github_pat_|sk-|sk_|xox[abp]-|AKIA|AIza|glpat-)/;
+
+/** Arguments with anything that looks like a secret masked: a value after --token/--api-key…, KEY=value, or a token's shape. */
+export function maskArgs(args: string[]): string[] {
+  return args.map((a, i) => {
+    const prev = args[i - 1] ?? "";
+    if (/^--?[A-Za-z][\w-]*$/.test(prev) && SECRETISH.test(prev.replace(/^-+/, "")) && !a.startsWith("-")) return SECRET_MASK;
+    const kv = /^(--?)?([A-Za-z_][\w-]*)=(.+)$/.exec(a);
+    if (kv && SECRETISH.test(kv[2])) return `${kv[1] ?? ""}${kv[2]}=${SECRET_MASK}`;
+    if (TOKEN_SHAPE.test(a) || /^Bearer\s/i.test(a)) return SECRET_MASK;
+    return a;
+  });
+}
+
+/** A URL with secret-looking query values (and any user:password) masked. */
+export function maskUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    const pw = !!u.password;
+    if (pw) u.password = "MASKED";
+    for (const [k] of [...u.searchParams]) if (SECRETISH.test(k)) u.searchParams.set(k, "MASKED");
+    return pw || u.search.includes("MASKED") ? u.toString().replace(/MASKED/g, SECRET_MASK) : url;
+  } catch {
+    return url;
+  }
+}
+
+/** What a server runs or where it lives, secret-looking parts masked (env values and headers are never part of it). */
+export function mcpTarget(s: { transport: string; command: string; args: string[]; url: string }): string {
+  return s.transport === "http" ? maskUrl(s.url) : [s.command, ...maskArgs(s.args)].join(" ");
+}
 
 function clean(v: unknown, max: number): string {
   return typeof v === "string" ? v.trim().slice(0, max) : "";

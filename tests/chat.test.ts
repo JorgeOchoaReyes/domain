@@ -99,3 +99,39 @@ test("in a shared office your agents are yours to direct; the office's are every
   assert.equal(mayDirect({ hiredBy: "Ana" }, { name: "Jorge", host: true }, present), true, "the host may always");
   assert.equal(mayDirect(null, ana, present), true, "a free desk");
 });
+
+test("a task to everyone with nobody able to take it: a new agent is hired, and starts on it once it's up", async () => {
+  const desks: { id: string; label: string; worker: { agent: string; status: string; activity: string; identity: null } | null }[] = [
+    { id: "desk-1", label: "Desk 1", worker: { agent: "claude", status: "asleep", activity: "Asleep", identity: null } },
+    { id: "desk-2", label: "Desk 2", worker: null },
+  ];
+  const task = { id: "t1", title: "Review the frankie app", status: "todo", deskId: null as string | null, for: null as string | null };
+  const assigned: string[] = [];
+  let threads: ChatThread[] = [];
+  const ctx = {
+    office: { onSaid: null, snapshot: () => ({ desks }), sessionId: (d: string) => `s-${d}` },
+    progress: {
+      snapshot: () => ({ goals: [{ id: "g1", tasks: [task] }] }),
+      setOffered: () => {},
+      reserve: (_g: string, _t: string, d: string) => ((task.for = d), true),
+    },
+    hireFor: () => {
+      desks[1].worker = { agent: "claude", status: "booting", activity: "Booting", identity: null };
+      return "desk-2";
+    },
+    assignTask: (_who: string, _g: string, t: string, d: string) => (assigned.push(`${t}→${d}`), (task.deskId = d), true),
+    send: () => {},
+    broadcast: (m: ServerMessage) => m.t === "chat" && (threads = m.threads),
+  } as unknown as ServerCtx;
+  chatModule(ctx, new ChatStore(null));
+  ctx.offerTask!("g1", "t1", task.title, [], client);
+  const team = () => threads.find((t) => t.id === "team")!.messages.map((m) => m.text);
+  assert.match(team().at(-1)!, /Nobody was free for “Review the frankie app”, so Jorge hired/);
+  assert.equal(task.for, "desk-2", "saved for the new hire");
+  await new Promise((r) => setTimeout(r, 1200));
+  assert.deepEqual(assigned, [], "not while it's still booting");
+  desks[1].worker!.status = "idle";
+  await new Promise((r) => setTimeout(r, 1200));
+  assert.deepEqual(assigned, ["t1→desk-2"], "it starts once it's up");
+  assert.match(team().at(-1)!, /On “Review the frankie app”/);
+});

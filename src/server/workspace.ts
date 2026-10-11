@@ -276,7 +276,7 @@ export class Workspaces {
   }
 
   /** Keep .domain/ (and the worktrees in it) out of `git status`, locally, without touching .gitignore. */
-  private ignoreDomainDir(): void {
+  ignoreDomainDir(): void {
     if (!this.root) return;
     const gitDir = this.git(this.root, ["rev-parse", "--git-common-dir"]);
     if (!gitDir) return;
