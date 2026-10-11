@@ -366,6 +366,12 @@ function openMonitorNow(focus?: string): void {
   monitorView = openMonitor(monitorActions, () => (monitorView = null), focus).view;
 }
 const laptop = new MyLaptop(loopHandlers, monitorActions);
+// ＋ Hire a worker, from the laptop: the hire card for the next free desk (not the intern bay).
+laptop.hireAny = () => {
+  const d = office.desks.find((x) => !x.worker && !BAY_DESK_IDS.includes(x.id));
+  if (d) hire(d);
+  else hud.toast("🪑 Every desk's taken — let someone go first", "warn");
+};
 const goals = new GoalsWindow({
   loop: loopHandlers,
   create: (title, why, tasks, kind, dueAt) => net.send({ t: "goalCreate", title, why, tasks, kind, dueAt: dueAt ?? null }),

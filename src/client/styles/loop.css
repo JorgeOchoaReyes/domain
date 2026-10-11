@@ -181,3 +181,4 @@
 .rp-table td { padding: 5px 6px; border-top: 1px solid #eee; vertical-align: top; }
 .rp-prs { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 700; }
 .rp code { font: 600 12px var(--font-mono); background: #f3f0ea; border-radius: 5px; padding: 0 4px; }
+.lt-hire { flex: none; align-self: stretch; margin-top: 4px; border-style: dashed; }

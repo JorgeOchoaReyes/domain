@@ -49,6 +49,8 @@ const APPS: { id: LaptopApp; icon: string; label: string }[] = [
   { id: "deploy", icon: "🚀", label: "Deploy" },
 ];
 
+const HIRE_BUTTON = `<button class="btn small lt-hire" title="Hire at the next free desk — no need to walk to one">＋ Hire a worker</button>`;
+
 const TERM_THEME = { background: "#1e1f2e", foreground: "#cdd6f4", cursor: "#ff8a5b", selectionBackground: "#585b70" };
 
 export type LaptopActions = Omit<LoopHandlers, "openLaptop">;
@@ -90,6 +92,9 @@ export class MyLaptop {
 
   // The Monitor app: every terminal at once.
   private monitorView: MonitorView | null = null;
+
+  /** ＋ Hire a worker: the hire card for the next free desk, without walking to one (set by main). */
+  hireAny: (() => void) | null = null;
 
   constructor(
     private actions: LaptopActions,
@@ -373,7 +378,9 @@ export class MyLaptop {
           return `<button class="tm-p ${this.teamTo === d.id ? "on" : ""}" data-to="${d.id}"><b><i style="background:${AGENT_COLOR[w.agent]}"></i>${esc(name)}</b><small>${esc(w.status === "waiting" ? "needs you" : w.status)} · ${esc(w.activity.slice(0, 38))}</small></button>`;
         })
         .join("") +
-      (staffed.length ? "" : `<p class="tm-none">Nobody's hired yet — walk up to a desk with a + and press E.</p>`);
+      (staffed.length ? "" : `<p class="tm-none">Nobody's hired yet.</p>`) +
+      HIRE_BUTTON;
+    this.wireHire(el);
     el.querySelectorAll<HTMLButtonElement>(".tm-p").forEach((b) =>
       b.addEventListener("click", () => {
         this.teamTo = b.dataset.to!;
@@ -605,11 +612,21 @@ export class MyLaptop {
               <i style="background:${STATUS_BULB[w.status]}"></i></button>`;
           })
           .join("")
-      : `<p class="lt-note">No workers yet. Hire one at a desk with a <b>+</b>.</p>`;
+      : `<p class="lt-note">No workers yet.</p>`;
+    list.insertAdjacentHTML("beforeend", HIRE_BUTTON);
+    this.wireHire(list);
     const head = this.content.querySelector<HTMLElement>(".wk-head");
     const d = staffed.find((x) => x.id === this.watching);
     if (head) head.innerHTML = d ? `<b>${esc(workerName(d.worker!))}</b> · ${esc(d.label)} · hired by ${esc(d.worker!.hiredBy)} <span class="grow"></span><span class="lt-note">Type to talk to it · select to copy · Ctrl+[ sends Esc</span><button class="btn small wk-copy">📋 Copy all</button>` : "";
     head?.querySelector(".wk-copy")?.addEventListener("click", () => this.term && copyAll(this.term));
+  }
+
+  private wireHire(el: HTMLElement): void {
+    el.querySelector(".lt-hire")?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.close();
+      this.hireAny?.();
+    });
   }
 
   private watch(deskId: string): void {

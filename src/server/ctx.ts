@@ -62,6 +62,12 @@ export interface ServerCtx {
   heard?(text: string, deskId: string | undefined, client: ClientRec): void;
   /** A task given to "whoever's free": a worker offers to take it, and you say yes (set by the chat module). */
   offerTask?(goalId: string, taskId: string, title: string, skip?: string[], who?: ClientRec): void;
+  /**
+   * Nobody can take a task given to everyone: hire a new agent for it (the
+   * team's usual one) at the first free desk this person may hire at. Its
+   * desk, or null when there's no free desk.
+   */
+  hireFor?(who?: ClientRec): string | null;
   /** Whether this person may direct the worker at that desk (theirs, or nobody else's here). */
   mayDirectDesk?(client: ClientRec, deskId: string): boolean;
   /** Why this person may not hire at that desk (it's in someone else's pod, and they're here), or null (set by the pods module). */

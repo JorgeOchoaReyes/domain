@@ -138,11 +138,38 @@ export function chatModule(ctx: ServerCtx, store = new ChatStore(join(ctx.cwd, "
     for (const g of ctx.progress.snapshot().goals) for (const t of g.tasks) if (t.deskId && t.status !== "done") m.set(t.deskId, t.title);
     return m;
   };
+  /** A just-hired worker starts on its task once it's booted (or gives up after a few minutes: the task stays saved for it). */
+  const startWhenUp = (goalId: string, taskId: string, deskId: string, by: string) => {
+    const until = Date.now() + 5 * 60_000;
+    const timer = setInterval(() => {
+      const w = desks().find((d) => d.id === deskId)?.worker;
+      const task = ctx.progress.snapshot().goals.find((g) => g.id === goalId)?.tasks.find((t) => t.id === taskId);
+      // Gone, fired, or someone else has it now: nothing to do.
+      if (!w || !task || task.status !== "todo" || task.deskId || task.for !== deskId || Date.now() > until) return void clearInterval(timer);
+      if (!["idle", "done"].includes(w.status) || onTask().has(deskId)) return;
+      clearInterval(timer);
+      if (ctx.assignTask(by, goalId, taskId, deskId)) {
+        store.add(TEAM_THREAD, { from: "agent", who: who(deskId)?.name ?? "New hire", text: `🚀 On “${task.title}”.`, at: Date.now() });
+        push();
+      }
+    }, 1000);
+    timer.unref?.();
+  };
   /** A task given to everyone: the best-placed worker offers to take it, in #team, and waits for your OK. */
   ctx.offerTask = (goalId, taskId, title, skip = [], asker) => {
     // Only agents the asker may direct offer (in a shared office, yours — and the office's own).
     const mine = asker && ctx.mayDirectDesk ? desks().filter((d) => !d.worker || ctx.mayDirectDesk!(asker, d.id)) : desks();
     const pick = pickVolunteer(mine, onTask(), skip);
+    // Nobody can: a new agent is hired for it, and starts on it once it's up.
+    const hired = pick ? null : ctx.hireFor?.(asker);
+    if (hired) {
+      ctx.progress.setOffered(goalId, taskId, null);
+      ctx.progress.reserve(goalId, taskId, hired);
+      store.add(TEAM_THREAD, { from: "agent", who: "Office", text: `🧑‍💻 Nobody ${skip.length ? "else " : ""}was free for “${title}”, so ${asker?.name ?? "the office"} hired ${who(hired)?.name ?? "a new agent"} — it starts as soon as it's up.`, at: Date.now() });
+      push();
+      startWhenUp(goalId, taskId, hired, asker?.name ?? "Office");
+      return;
+    }
     if (!pick) {
       ctx.progress.setOffered(goalId, taskId, null);
       store.add(TEAM_THREAD, { from: "agent", who: "Office", text: `${skip.length ? "Nobody else can" : "Nobody on the team can"} take “${title}” yet — it's waiting for the next one free${skip.length ? "" : " (or hire someone)"}.`, at: Date.now() });

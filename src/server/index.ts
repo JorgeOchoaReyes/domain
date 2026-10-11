@@ -1277,6 +1277,17 @@ function personaFor(deskId: string): string {
 
 const ctx: ServerCtx = {
   mayDirectDesk: (client, deskId) => mayDirectDesk(client, deskId),
+  hireFor: (client) => {
+    const policy = progress.policy;
+    const agent = policy.startTeam.agent;
+    const who = client?.name ?? "Office";
+    // Not the intern bay, and not someone else's pod.
+    const desk = office.snapshot().desks.find((d) => !d.worker && !BAY_DESK_IDS.includes(d.id) && !(client && ctx.hireRefusal?.(client, d.id)));
+    if (!desk || !office.hire(desk.id, agent, who, policy.defaultModel[agent], policy.leash, policy.isolate, null, repos.hireRepo)) return null;
+    warnIfTooBig(policy.defaultModel[agent]);
+    history.add({ kind: "hired", who, text: `${who === "Office" ? "The office" : who} hired ${nameAt(desk.id)} at ${desk.id.replace("desk-", "desk ")} for a task nobody was free for`, worker: workerRef(desk.id) });
+    return desk.id;
+  },
   cwd: CWD,
   repos,
   port: PORT,
