@@ -1,4 +1,4 @@
-import { BUILDING, PITCH, PLAZA, POND, ROOMS, STREET, TRACK, TEAM_FLOOR, UPSTAIRS, WORLD_BOUNDS, roomAt, type RoomDef } from "../../shared/layout.js";
+import { BUILDING, PITCH, PLAZA, POND, ROOMS, STREET, TRACK, TEAM_FLOORS, UPSTAIRS, teamFloorRect, WORLD_BOUNDS, roomAt, type RoomDef } from "../../shared/layout.js";
 import { STATUS_BULB } from "../scene/characters.js";
 import type { WorkerStatus } from "../../shared/protocol.js";
 
@@ -104,8 +104,11 @@ export class Minimap {
     // Floor 2 (off to the east, up the elevator).
     g.fillStyle = "#3d405b";
     g.fillRect(...rect({ minX: UPSTAIRS.minX - 0.3, maxX: UPSTAIRS.maxX + 0.3, minZ: UPSTAIRS.minZ - 0.3, maxZ: UPSTAIRS.maxZ + 0.3 }));
-    // Floor 3, the team floor (further east).
-    g.fillRect(...rect({ minX: TEAM_FLOOR.minX - 0.3, maxX: TEAM_FLOOR.maxX + 0.3, minZ: TEAM_FLOOR.minZ - 0.3, maxZ: TEAM_FLOOR.maxZ + 0.3 }));
+    // Floor 3, the team floor, and the ones above it (further east).
+    for (let f = 0; f < TEAM_FLOORS; f++) {
+      const r = teamFloorRect(f);
+      g.fillRect(...rect({ minX: r.minX - 0.3, maxX: r.maxX + 0.3, minZ: r.minZ - 0.3, maxZ: r.maxZ + 0.3 }));
+    }
     // The building and its rooms (your office drawn last, on top).
     g.fillStyle = "#3d405b";
     g.fillRect(...rect({ minX: BUILDING.minX - 0.3, maxX: BUILDING.maxX + 0.3, minZ: BUILDING.minZ - 0.3, maxZ: BUILDING.maxZ + 0.3 }));

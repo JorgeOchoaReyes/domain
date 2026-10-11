@@ -28,7 +28,7 @@ import {
   JUKEBOXES,
   GONG,
 } from "../shared/layout.js";
-import { ALL_ARCADES, BAY_DESK_IDS, UPSTAIRS, UP_ELEVATOR, WORK_SPOTS, inUpstairs, TEAM_FLOOR, TEAM_ELEVATOR, inTeamFloor, floorOf, type WorkSpot } from "../shared/layout.js";
+import { ALL_ARCADES, BAY_DESK_IDS, UPSTAIRS, UP_ELEVATOR, WORK_SPOTS, inUpstairs, TEAM_FLOOR, inTeamFloor, floorOf, teamElevatorX, type WorkSpot } from "../shared/layout.js";
 import { Activities } from "./ui/activities.js";
 import { myLaptopProp } from "./scene/laptop.js";
 import { Net } from "./net.js";
@@ -37,7 +37,8 @@ import { Player, type ViewMode } from "./scene/player.js";
 import { ShotMeter } from "./scene/minigames.js";
 import { openArcade, arcadeBest } from "./ui/arcade.js";
 import { openStandup, standupDraftArrived, type StandupPlan } from "./ui/standup.js";
-import { openTeleport, placeDestinations, teleportFlash, type Destination } from "./ui/teleport.js";
+import { openTeleport, placeDestinations, setTeamFloorsOpen, teleportFlash, type Destination } from "./ui/teleport.js";
+import { ingestArcade } from "./ui/arcadeScores.js";
 import { Minimap } from "./ui/minimap.js";
 import { ObjectiveTracker, nextObjective, type Objective } from "./ui/objective.js";
 import { MyLaptop } from "./ui/mylaptop.js";
@@ -434,6 +435,7 @@ net.onMessage = (msg) => {
   ingestVoices(msg);
   ingestAlumni(msg);
   ingestGithub(msg);
+  ingestArcade(msg, world.gameRoom, (text) => hud.toast(text), myName);
   if (msg.t === "project") showProject();
   if (msg.t === "guest") showGuestBadge();
   switch (msg.t) {
@@ -460,6 +462,7 @@ net.onMessage = (msg) => {
       net.send({ t: "chatGet" });
       useVoices((m) => net.send(m));
       net.send({ t: "historyGet" });
+      net.send({ t: "arcadeGet" });
       break;
     case "office":
       office = msg.office;
@@ -656,6 +659,7 @@ function away(): boolean {
 
 function applyOffice(): void {
   world.sync(office.desks, office.presentations, office.peers, selfId);
+  if (setTeamFloorsOpen(world.teamFloorsOpen)) hud.toast(`🛗 Floor ${world.teamFloorsOpen + 2} is open — the team outgrew the floor below. Take the elevator up (or T)`);
   // A worker that just started needing you gets a shout, wherever you are.
   for (const desk of office.desks) {
     const st = desk.worker?.status;
@@ -1703,7 +1707,7 @@ function atElevator(): boolean {
 /** The elevator doors upstairs (floor 2 or 3): back down, or anywhere. */
 function atUpElevator(): boolean {
   const { x, z } = player.position;
-  return (inUpstairs(x) && Math.abs(x - UP_ELEVATOR.x) < 1.7 && z < UPSTAIRS.minZ + 3) || (inTeamFloor(x) && Math.abs(x - TEAM_ELEVATOR.x) < 1.7 && z < TEAM_FLOOR.minZ + 3);
+  return (inUpstairs(x) && Math.abs(x - UP_ELEVATOR.x) < 1.7 && z < UPSTAIRS.minZ + 3) || (inTeamFloor(x) && Math.abs(x - teamElevatorX(x)) < 1.7 && z < TEAM_FLOOR.minZ + 3);
 }
 
 // --- things to do: darts, piano, treadmill, fishing, laps, the garden… ------------------------
@@ -1804,7 +1808,7 @@ function interactFun(): boolean {
       const before = arcadeBest(arcade.id);
       world.gameRoom.setBest(arcade.id, best);
       if (best > 0 && best >= before) hud.toast(`🕹 ${arcade.name} best: ${best}`);
-    });
+    }, (score) => net.send({ t: "arcadeScore", game: arcade.id, score }));
     return true;
   }
   if (atHoopSpot()) {
@@ -1865,7 +1869,7 @@ function promptTarget(): { x: number; y: number; z: number } | null {
   if (act) return act.key;
   const prop = world.props.near(x, z);
   if (prop) return prop.key;
-  if (atUpElevator()) return inTeamFloor(x) ? { x: TEAM_ELEVATOR.x, y: 3.0, z: TEAM_FLOOR.minZ + 0.4 } : { x: UP_ELEVATOR.x, y: 3.0, z: UPSTAIRS.minZ + 0.4 };
+  if (atUpElevator()) return inTeamFloor(x) ? { x: teamElevatorX(x), y: 3.0, z: TEAM_FLOOR.minZ + 0.4 } : { x: UP_ELEVATOR.x, y: 3.0, z: UPSTAIRS.minZ + 0.4 };
   const arcade = nearArcade();
   if (arcade) return { x: arcade.x, y: 2.35, z: arcade.z };
   if (atHoopSpot()) return { x: HOOP.rim.x, y: HOOP.rim.y + 0.7, z: HOOP.rim.z };

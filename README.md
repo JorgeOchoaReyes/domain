@@ -249,7 +249,17 @@ building:
   faster for 90 seconds — you'll see the cup in your hand.
 - **🕹 The game room**, for while your workers grind: three arcade cabinets
   (*Snake*, *Bug Smash*, *Brick Breaker*, best scores kept), free throws at the
-  hoop (time the power meter), ping-pong and beanbags. Two screens keep the
+  hoop (time the power meter), ping-pong and beanbags, and a **🎱 pool
+  table**: **E** racks up nine balls and opens it top-down — aim with the
+  mouse (or ←/→), hold the button (or Space) for power, let go to shoot — and
+  you clear the table in as few shots as you can (a scratch costs one; your
+  best is kept). The balls on the table in the room follow along, and workers
+  on a break come over and shoot a few racks of their own. Every cabinet
+  keeps the **office's high scores** too: each finished game goes on a shared
+  board (a person's best, top five), kept by the office and sent to everyone
+  in it — guests in a shared office included. The cabinets show the board
+  between their attract loops, the game's window lists it, and a new top
+  score is shouted out to everyone. Two screens keep the
   workers and the goal in view, and the glowing pad by the door jumps you
   straight back to the work floor. The **jukebox** picks the office's music —
   *Lo-fi focus*, *Disco fever* (the mirror ball spins up and lights sweep the
@@ -281,6 +291,12 @@ building:
   team), a **lounge** (a sofa, a piano you play from your keyboard, darts, a
   vending machine) and a **gym** (treadmills, breathing mats for a calm minute,
   a telescope at the window). The city's outside the glass.
+- **🧑‍💻 Floor 3, the team floor**, up the elevator too: four pods of four
+  desks (A–D) for a bigger team. **More team floors open as the team grows**:
+  once every desk on floor 3 is taken, **floor 4** opens (pods E–H) — you get a
+  shout, and it's in the elevator's fast travel from then on — and when that
+  fills, **floor 5** (pods I–L). Workers ride the elevator between floors like
+  everywhere else, and a floor someone's working on stays open.
 
 Press **T** anywhere to **fast travel** — the work floor, your office, any
 room, outside, or straight to a worker that needs you. When a worker needs you
@@ -491,7 +507,8 @@ back**, same agent, model, permissions and character.
 
 A worker with nothing to do walks to the **stand-up room** and waits round the
 circle for a task (its card says so) — press **E** by it to hand it one. Now
-and then it takes a short break round the lounge, and it walks back to its
+and then it takes a short break round the lounge or at the game room's pool
+table (where it shoots while nobody else is playing), and it walks back to its
 desk the moment there's work. It's only them walking about: no agent is doing
 anything, so it costs nothing.
 
@@ -856,7 +873,7 @@ Environment variables:
 | `C`           | Team chat |
 | `Q`           | Put your coffee down |
 | Driving       | `E` by a car gets in · `W`/`S` gas and brake (or reverse) · `A`/`D` steer · `Space` handbrake · `E` gets out |
-| `E`           | Use whatever the floating **E** marks: hire, a waiting worker (give it a task), a car, terminal, office hours, the idea boards, the jukeboxes, coffee, arcades, hoops, the ball, the elevator, your laptop where you left it, darts, the piano, the vending machine, treadmills, the breathing mats, the bookshelf, the telescope, fishing, the garden, the campfire, the microwave, the radio, the lamp, the teddy, the cat, paper toss, the office vending machine, air hockey, pinball, the donuts, Biscuit the dog |
+| `E`           | Use whatever the floating **E** marks: hire, a waiting worker (give it a task), a car, terminal, office hours, the idea boards, the jukeboxes, coffee, arcades, the pool table, hoops, the ball, the elevator, your laptop where you left it, darts, the piano, the vending machine, treadmills, the breathing mats, the bookshelf, the telescope, fishing, the garden, the campfire, the microwave, the radio, the lamp, the teddy, the cat, paper toss, the office vending machine, air hockey, pinball, the donuts, Biscuit the dog |
 | `T`           | Fast travel |
 | `U`           | Stand-up |
 | `G`           | Goals |
@@ -880,6 +897,8 @@ src/
     layout.ts            the floor plan: building, rooms, grounds, floor 2, work spots, routes, camera walls
     history.ts           what the office remembers happened
     darts.ts             where a dart scores
+    pool.ts              the pool table's physics, rack and the workers' shot picker
+    arcade.ts            the office's arcade high-score boards
     progress.ts          goals, sessions, XP, levels, achievements, the loop's stages
     policy.ts            team policy and task briefs (models, leash, time, done)
   server/
@@ -894,6 +913,7 @@ src/
     mcp.ts               MCP: scan agents' configs, health checks, per-worker servers
     lan.ts               local multiplayer: the passcode listener, discovery
     ideas.ts             the idea boards: pinned ideas, sketches, hand-offs
+    arcade.ts            the arcade's high scores, saved to .domain/arcade.json and sent to everyone
     agents.ts            which agent CLIs are installed; installing a missing one
     oplog.ts             the operations log
     permissions.ts       what guests may do
@@ -976,8 +996,6 @@ Next up, after v1.0:
 - **Pods for people.** In a shared office, give each person a pod on the team
   floor, and let a teammate ask to borrow someone's agent (the owner says yes
   or no, like an agent's "I'll take it").
-- **More floors and games.** More team floors as teams grow, and more to play
-  between tasks (a pool table, multiplayer arcade high scores).
 
 ## Credits
 

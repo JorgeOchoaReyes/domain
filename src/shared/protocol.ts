@@ -3,6 +3,7 @@ import type { Alumnus } from "./alumni.js";
 import type { LessonsState } from "./lessons.js";
 import type { SkillSeen } from "./skills.js";
 import type { Idea } from "./ideas.js";
+import type { ArcadeBoards, ArcadeNews } from "./arcade.js";
 import type { AgentsState } from "./agents.js";
 import type { ChatPeek, ChatThread, ChatWork } from "./chat.js";
 import type { HistoryEvent } from "./history.js";
@@ -423,7 +424,11 @@ export type ClientMessage =
   /** Hand an idea to the worker at a desk: it becomes a task and the worker is briefed. */
   | { t: "ideaHandoff"; id: string; deskId: string; brief?: TaskBrief }
   /** Turn an idea into a goal (its bullet lines become tasks). */
-  | { t: "ideaToGoal"; id: string };
+  | { t: "ideaToGoal"; id: string }
+  // --- the arcade's high scores ---------------------------------------------------
+  | { t: "arcadeGet" }
+  /** A finished game's score at a cabinet (it goes on the office's board if it's good enough). */
+  | { t: "arcadeScore"; game: string; score: number };
 
 // ---------------------------------------------------------------------------
 // Server -> Client
@@ -474,6 +479,8 @@ export type ServerMessage =
   | { t: "guest"; role: GuestRole; host: string }
   /** Everything pinned to the idea boards. */
   | { t: "ideas"; ideas: Idea[] }
+  /** The office's arcade high scores, and (when it's why they were sent) who just made a board. */
+  | { t: "arcadeScores"; boards: ArcadeBoards; news?: ArcadeNews }
   /** Which agent CLIs are installed (and whether one is being installed). */
   | { t: "agents"; state: AgentsState }
   /** The office's history, newest first; and each new event as it happens. */

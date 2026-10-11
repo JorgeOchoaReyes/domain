@@ -41,6 +41,13 @@
 }
 .arc-help { font: 700 12px var(--font); color: #9d98c9; text-align: center; min-height: 16px; }
 
+/* Pool: a wider window, a table-shaped screen. */
+.modal.arcade-modal.pool-modal { width: min(720px, 100%); }
+.arc-screen canvas.pool-canvas { aspect-ratio: 640 / 380; }
+/* The office's high scores on an arcade's title screen. */
+.arc-board { font: 800 12px var(--font); color: #c9c6e8; text-align: center; min-height: 16px; }
+.arc-board b { color: var(--warn); }
+
 /* --- the shot meter --------------------------------------------------------- */
 
 .shot-meter {
