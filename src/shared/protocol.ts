@@ -1,4 +1,5 @@
 import type { StandupDraft } from "./standupDraft.js";
+import type { WhisperState } from "./voice.js";
 import type { Alumnus } from "./alumni.js";
 import type { Trouble } from "./trouble.js";
 import type { LocalModelInfo } from "./localModels.js";
@@ -350,6 +351,14 @@ export type ClientMessage =
   | { t: "resume" }
   /** The desktop app's 🎤: start (or stop) the computer's dictation in the box that has focus (answered with "dictated"). */
   | { t: "dictate" }
+  /**
+   * The 🎤 on this computer (Whisper): what you said, as 16 kHz mono 16-bit PCM in base64
+   * (at most a minute) — answered with "transcribed" and the same id. Not for visitors.
+   */
+  | { t: "transcribe"; id: string; pcm: string }
+  /** How the voice model is (answered with "whisper"); and download it now (Settings → Voice). */
+  | { t: "whisperGet" }
+  | { t: "whisperPrepare" }
   /** Where the repo stands: your branch, agents' branches, open pull requests (answered with "repoStatus"). */
   | { t: "repoStatus" }
   /** Answer a worker's "I'll take it": let them, ask someone else, or leave it for whoever's free. */
@@ -553,6 +562,10 @@ export type ServerMessage =
   | { t: "ttsAudio"; id: string; audio?: string; error?: string }
   /** Whether the 🎤 started the computer's dictation, and if not, how to start it by hand. */
   | { t: "dictated"; ok: boolean; error?: string }
+  /** Words for a "transcribe", or why not (`fallback`: the voice model can't run here — use another way). */
+  | { t: "transcribed"; id: string; text?: string; error?: string; fallback?: boolean }
+  /** The voice model: not here yet, downloading (how far), ready, or failed. */
+  | { t: "whisper"; state: WhisperState }
   | { t: "alumni"; list: Alumnus[] }
   | { t: "historyEvent"; event: HistoryEvent }
   /** Every chat thread, with its history. */

@@ -177,7 +177,11 @@ nou hire reviewer             # a ready-made agent at a free desk (nou roles lis
 
 ```bash
 npm test             # unit tests
-npm run e2e:ui       # the whole office in Chrome, simulated agents (46 checks)
+npm run e2e:ui       # the whole office in Chrome, simulated agents (47 checks)
+E2E_VOICE=1 npm run e2e:ui   # …and the stand-up 🎤 for real: Chrome's fake microphone plays a
+                     # spoken WAV, Whisper writes it in the box (Windows speaks the WAV;
+                     # elsewhere E2E_VOICE=file.wav). The first run downloads the model.
+npx tsx scripts/voice/transcribe.ts file.wav   # the office's Whisper on a WAV, with timings
 npm run e2e:team     # a shared office: you and a teammate over the network, pods and borrowing (28 checks)
 npm run e2e:real     # real Claude Code agents on a throwaway repo, from hire to
                      # opened pull requests (per goal and per agent) — audits, checks,
@@ -553,15 +557,42 @@ in Needs you.
 
 ### 🗣 Say it
 
-Wherever you hand out work — the assignment card's **Anything else they
-should know?**, the chat, the laptop's Team app, the phone, a goal's **Add a
-task** — press **🎤** and say it instead of typing. In the desktop app it starts
-your computer's own dictation in that box for you: on **Windows**, voice typing
-(the office presses **Win + H**; press 🎤 again to stop); on **macOS**, the
-Mac's dictation (the same as **Edit → Start Dictation…**; it stops with **Fn**,
-**Done** or a pause). If it can't — dictation turned off in System Settings →
-Keyboard, or a locked-down PC — the box says so and how to start it by hand
-(**Win + H**, or **Fn** twice). In a browser, it uses the browser's.
+Wherever you hand out work — the stand-up, the assignment card's **Anything
+else they should know?**, the chat, the laptop's Team app, the phone, a goal's
+**Add a task**, reviews and idea boards — press **🎤** and say it instead of
+typing. By default the office writes it down **on this computer**, with
+[Whisper](https://github.com/openai/whisper) (base, English, quantized — run by
+[transformers.js](https://huggingface.co/docs/transformers.js) on onnxruntime):
+free, private, the same in the desktop app (Windows, macOS, Linux) and any
+browser, and offline once the model is here. The audio never leaves the
+computer the office runs on.
+
+- **Talking:** press 🎤 and speak. A card by the button says **● Listening… 3s**
+  with a level meter; it stops by itself when you pause (about a second
+  after you finish), or press 🎤 again or **Enter**. **Esc** throws it away.
+  At most a minute at a time. Then **✨ Transcribing…** (about a second for a
+  sentence), and the words go in where your caret was.
+- **The first time**, the model downloads once (**≈80 MB**, into
+  `~/.domain/models`, shared by the desktop app and `npm run dev`): the card
+  says **Downloading the voice model (≈80 MB, once)… 42%**, then transcribes.
+  Or get it ahead of time: **Settings → Voice → Download now**.
+- **Settings → Voice** picks how the 🎤 hears you: **On this computer
+  (Whisper)** (the default), **Browser** (Chrome's own speech recognition — it
+  sends your audio to Google), or **System dictation** (in the desktop app:
+  Windows voice typing, which the office starts with **Win + H**, or the Mac's
+  dictation, as **Edit → Start Dictation…** does).
+- **Fallbacks:** if Whisper can't run on the office's computer, or the
+  microphone is blocked, the 🎤 says so and uses the next way that can — the
+  desktop app the computer's dictation, a browser its own recognition. If
+  dictation is off (System Settings → Keyboard) or the PC is locked down, the
+  box says how to start it by hand (**Win + H**, or **Fn** twice).
+- **Who:** you and teammates can talk (a teammate's audio is transcribed on
+  your computer); visitors can't use the model, and their 🎤 uses their
+  browser's. The office's music and background sound go quiet while you talk.
+- **Other models:** `DOMAIN_WHISPER_MODEL` picks another one (e.g.
+  `onnx-community/whisper-small.en` — better, slower, bigger; or the
+  multilingual `onnx-community/whisper-base`, with `DOMAIN_WHISPER_LANG=es`
+  to fix its language).
 
 ### 🗣 Voices
 
@@ -1058,6 +1089,8 @@ Environment variables:
 | `DOMAIN_BROWSER` | The Chrome, Edge or Chromium that takes demo screenshots (found on its own otherwise). |
 | `DOMAIN_PROJECTS_DIR` | Where GitHub clones go (default `Documents/domain/projects`). |
 | `DOMAIN_PREFS` | Where recent projects are kept (default `~/.domain/prefs.json`). |
+| `DOMAIN_WHISPER_MODEL`, `DOMAIN_WHISPER_DTYPE`, `DOMAIN_WHISPER_LANG` | The 🎤's speech-to-text model (default `onnx-community/whisper-base.en`, `q8`), and a multilingual one's language. |
+| `DOMAIN_MODELS` | Where the voice model is kept (default `~/.domain/models`). |
 | `DOMAIN_GITHUB_API` | The GitHub API base (for GitHub Enterprise). |
 | `OLLAMA_HOST`, `LMSTUDIO_URL` | Where to look for local models. |
 | `PORT`, `HOST` | Server port (`8787`) and bind address (`127.0.0.1`). |
@@ -1167,10 +1200,13 @@ Next up, after v1.0:
 - **macOS and Linux**, tested end to end (the builds exist; they haven't been
   run on real machines yet).
 - **VR**, back on track: the last fixes for drawing and reviews in the headset.
-- **Voice in the desktop app, on a real Mac.** The 🎤 button starts Windows
-  voice typing (Win+H, checked on Windows 11) and macOS dictation (Start
-  Dictation, covered by unit tests only); next, trying it on a real Mac, and
-  a full run on Windows with the app's window in front.
+- **Voice, on a real Mac and in the installer.** The 🎤 now transcribes on
+  this computer with Whisper, checked end to end on Windows (headless Chrome
+  with a recorded voice, in `E2E_VOICE=1 npm run e2e:ui`). Still to try: a
+  real Mac (the microphone prompt, and macOS dictation as the fallback), the
+  packaged installers (the model engine's native files are unpacked from the
+  app archive, but no installer has been built and run with them yet), and
+  the desktop app with a real microphone.
 - **GitHub, against the real thing.** `npm run e2e:real` can now target a
   real test repository (`E2E_GITHUB_REPO` + `E2E_GITHUB_TOKEN`, and it cleans
   up after itself); what's left is actually running it against one and

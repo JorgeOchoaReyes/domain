@@ -3,7 +3,7 @@ import type { CheckResult, Presentation } from "../../shared/protocol.js";
 import type { WorkerIdentity } from "../../shared/team.js";
 import { AGENT_LABELS } from "../../shared/protocol.js";
 import { AGENT_COLOR } from "../scene/characters.js";
-import { Dictation, speak, stopSpeaking, sttSupported } from "../voice.js";
+import { Dictation, phaseText, speak, stopSpeaking, sttSupported } from "../voice.js";
 import { esc, openModal, type Modal } from "./modal.js";
 import { Sketchpad, sketchTools } from "./sketchpad.js";
 
@@ -69,6 +69,10 @@ export class ReviewPanel {
         if (text && this.modal) this.sendSay();
       },
       (err) => this.handlers?.onVoiceError(err),
+      (p) => {
+        if (!this.el.talkBtn || !p) return;
+        this.el.talkBtn.innerHTML = p.phase === "listening" ? `● Listening… ${Math.floor(p.ms / 1000)}s · click to send` : esc(phaseText(p));
+      },
     );
     this.noting = new Dictation(
       (text) => (this.el.notes.value = text),
@@ -76,6 +80,7 @@ export class ReviewPanel {
         this.el.noteMic?.classList.remove("live");
       },
       (err) => this.handlers?.onVoiceError(err),
+      (p) => this.el.noteMic?.classList.toggle("busy", !!p && p.phase !== "listening"),
     );
   }
 
@@ -364,8 +369,8 @@ export class ReviewPanel {
   }
 
   private closed(): void {
-    this.talking.stop();
-    this.noting.stop();
+    this.talking.cancel();
+    this.noting.cancel();
     stopSpeaking();
     this.modal = null;
     const h = this.handlers;

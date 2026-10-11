@@ -640,6 +640,9 @@ body:has(.backdrop) #toasts { top: 18px; bottom: auto; right: 18px; left: auto; 
 
 /* Settings: the view choice up top. */
 .st-views { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.st-views.st-voice { margin-top: 10px; }
+.st-whisper { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: 13px; font-weight: 800; }
+.st-whisper .st-whisper-state { flex: 1; }
 .st-view-card { font: inherit; color: var(--ink); text-align: left; display: flex; flex-direction: column; gap: 3px; padding: 12px 14px; border: 3px solid var(--ink); border-radius: 16px; background: #fff; box-shadow: 0 4px 0 var(--ink); cursor: pointer; }
 .st-view-card b { font-size: 16px; font-weight: 900; }
 .st-view-card span { font-size: 12px; font-weight: 700; color: var(--muted); }
@@ -784,6 +787,20 @@ body[data-guest] .host-only { display: none !important; }
 .btn.mic.live { background: var(--bad); color: #fff; animation: mic-pulse 1s ease-in-out infinite; }
 @keyframes mic-pulse { 50% { transform: scale(1.08); } }
 .ph-send .mic { padding: 0 8px; border-radius: 10px; }
+/* The 🎤 recording on this computer: a level ring while it listens, a spinner while it transcribes, a card saying which. */
+.btn.mic.live { box-shadow: 0 0 0 calc(var(--lvl, 0) * 7px) rgba(239, 71, 111, .35); transition: box-shadow .08s linear; }
+.btn.mic.busy { position: relative; color: transparent; pointer-events: none; }
+.btn.mic.busy::after { content: ""; position: absolute; inset: 0; margin: auto; width: 14px; height: 14px; border: 3px solid var(--ink); border-right-color: transparent; border-radius: 50%; animation: mic-spin .8s linear infinite; }
+@keyframes mic-spin { to { transform: rotate(360deg); } }
+.mic-chip { position: fixed; z-index: 120; display: flex; align-items: center; gap: 7px; max-width: min(420px, calc(100vw - 8px)); padding: 6px 12px; background: var(--paper); color: var(--ink); border: 3px solid var(--ink); border-radius: 12px; box-shadow: var(--shadow); font: 800 13px var(--font); pointer-events: none; white-space: nowrap; animation: pop .12s ease-out; }
+.mic-chip.warn { background: #fff4d6; white-space: normal; }
+.mic-chip.listening b { color: var(--bad); }
+.mic-chip .mic-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--bad); animation: pulse 1s infinite; }
+.mic-chip .mic-meter { width: 54px; height: 8px; border: 2px solid var(--ink); border-radius: 999px; overflow: hidden; background: #fff; }
+.mic-chip .mic-meter span { display: block; height: 100%; background: var(--bad); transition: width .08s linear; }
+.mic-chip .mic-tip { font-weight: 700; opacity: .65; font-size: 12px; }
+.mic-chip .mic-spin { width: 12px; height: 12px; border: 3px solid var(--ink); border-right-color: transparent; border-radius: 50%; animation: mic-spin .8s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .mic-chip .mic-dot, .mic-chip .mic-spin, .btn.mic.busy::after { animation: none; } }
 
 /* MCP tools on agents and workers */
 .tm-tools { flex-basis: 100%; font-size: 11px; font-weight: 700; color: var(--muted); padding-left: 18px; }

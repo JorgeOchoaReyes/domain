@@ -1,5 +1,7 @@
 import { TRACKS, type TrackId } from "../music.js";
 import { esc, openModal } from "./modal.js";
+import { downloadingText, prepareWhisper, setVoiceEngine, voiceCaps, voiceEngine, watchWhisper, whisperState } from "../voice.js";
+import { sizeLabel, type VoiceEngine } from "../../shared/voice.js";
 
 /**
  * Your settings, kept in this browser: how fast you walk and run, mouse
@@ -186,6 +188,22 @@ export function openSettings(current: Settings, onChange: (s: Settings) => void,
         <output class="st-amb-out">${Math.round(s.ambienceVolume * 100)}%</output></label>
     </section>
     <section>
+      <h3>Voice</h3>
+      <p class="st-hint">How the 🎤 hears you, everywhere you can type.</p>
+      <div class="st-views st-voice">
+        ${(
+          [
+            ["whisper", "🖥", "On this computer (Whisper)", "Free and private, works offline — the audio never leaves this computer"],
+            ["browser", "🌐", "Browser", "Chrome only; it sends your audio to Google"],
+            ["system", "⌨️", "System dictation", "Windows voice typing (Win + H) or macOS dictation"],
+          ] as const
+        )
+          .map(([k, ic, name, sub]) => `<button class="st-view-card ${voiceEngine() === k ? "on" : ""}" data-ve="${k}"><span class="st-view-icon">${ic}</span><b>${name}</b><span>${sub}</span></button>`)
+          .join("")}
+      </div>
+      <div class="st-whisper"><span class="st-whisper-state"></span><button class="btn small st-whisper-get">⬇ Download now</button></div>
+    </section>
+    <section>
       <h3>Office hours</h3>
       <div class="st-views st-review">
         <button class="st-view-card ${s.reviewStyle === "window" ? "on" : ""}" data-rs="window"><span class="st-view-icon">🪟</span><b>In a window</b><span>Slides, the review board and the conversation side by side</span></button>
@@ -281,6 +299,46 @@ export function openSettings(current: Settings, onChange: (s: Settings) => void,
       body.querySelectorAll(".st-view-card[data-v]").forEach((x) => x.classList.toggle("on", x === b));
     }),
   );
+  // Voice: which way the 🎤 hears you, and the voice model's download.
+  const caps = voiceCaps();
+  const usable: Record<VoiceEngine, string> = {
+    whisper: caps.whisper === "failed" ? "can't run on the office's computer" : !caps.record ? "this window can't record" : "",
+    browser: caps.desktop ? "not in the desktop app" : !caps.webSpeech ? "not in this browser" : "",
+    system: !caps.desktop ? "desktop app only" : !caps.osDictation ? "not on this computer" : "",
+  };
+  body.querySelectorAll<HTMLButtonElement>(".st-voice .st-view-card").forEach((b) => {
+    const why = usable[b.dataset.ve as VoiceEngine];
+    if (why) b.querySelector("span:last-child")!.textContent += ` (${why})`;
+    b.addEventListener("click", () => {
+      setVoiceEngine(b.dataset.ve as VoiceEngine);
+      body.querySelectorAll(".st-voice .st-view-card").forEach((x) => x.classList.toggle("on", x === b));
+    });
+  });
+  const wState = body.querySelector<HTMLElement>(".st-whisper-state")!;
+  const wGet = body.querySelector<HTMLButtonElement>(".st-whisper-get")!;
+  const showWhisper = () => {
+    if (!wState.isConnected) return unwatch();
+    const st = whisperState();
+    const name = st ? st.model.split("/").pop() : "Whisper";
+    const size = sizeLabel(st?.bytes);
+    wState.textContent = !st
+      ? "🧠 Voice model: asking the office…"
+      : st.status === "ready"
+        ? `🧠 ${name} · ${size ? `${size} · ` : ""}✓ on this computer`
+        : st.status === "downloading"
+          ? `🧠 ${name} · ${downloadingText(st.progress ?? 0, st.bytes)}`
+          : st.status === "failed"
+            ? `🧠 ${name} can't run here: ${st.error ?? "unknown error"} — the 🎤 uses another way`
+            : `🧠 ${name} · ${size ? `${size}, ` : ""}not downloaded yet — it downloads once, the first time you talk${st.error ? ` (last try: ${st.error})` : ""}`;
+    wGet.classList.toggle("hidden", !st || st.status === "ready" || st.status === "failed");
+    wGet.disabled = st?.status === "downloading";
+  };
+  const unwatch = watchWhisper(showWhisper);
+  showWhisper();
+  wGet.addEventListener("click", () => {
+    prepareWhisper();
+    wGet.disabled = true;
+  });
   footer.querySelector(".reset")!.addEventListener("click", () => {
     modal.close();
     Object.assign(s, DEFAULT_SETTINGS);

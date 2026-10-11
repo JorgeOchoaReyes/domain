@@ -94,6 +94,7 @@ export class ProjectorReview {
         (text) => (box.value = text),
         () => mic.classList.remove("live"),
         (err) => this.handlers?.onVoiceError(err),
+        (p) => mic.classList.toggle("busy", !!p && p.phase !== "listening"),
       );
       mic.addEventListener("click", () => {
         if (this.dictation!.isActive) return this.dictation!.stop();
@@ -135,7 +136,7 @@ export class ProjectorReview {
   /** Close it (quietly when it's being replaced; otherwise office hours end). */
   close(quiet = false): void {
     if (!this.el) return;
-    this.dictation?.stop();
+    this.dictation?.cancel();
     stopSpeaking();
     this.el.remove();
     this.el = null;

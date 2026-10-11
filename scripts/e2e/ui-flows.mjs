@@ -7,6 +7,11 @@
 // (More), quieter toasts, and 🔔 Needs you (the inbox, and the phone's same list).
 //
 //   npm run e2e:ui           (needs Chrome; set CHROME to its path if it's elsewhere)
+//   E2E_VOICE=1 npm run e2e:ui   also: the stand-up's 🎤 hears a recording (Chrome's fake microphone
+//                            plays a WAV) and Whisper on this computer writes it in the box. On Windows
+//                            the WAV is spoken by the system voice; elsewhere give one: E2E_VOICE=say.wav
+//                            (16-bit, saying "Add a dark mode toggle and fix the login bug"). The first
+//                            run downloads the voice model (≈80 MB) into ~/.domain/models.
 //
 // It starts its own office and page on free ports and cleans up after itself.
 import { spawn, execFileSync } from "node:child_process";
@@ -31,6 +36,18 @@ mkdirSync(PROJECT);
 execFileSync("git", ["init", "-q", "-b", "main"], { cwd: PROJECT });
 writeFileSync(join(PROJECT, "README.md"), "hi");
 execFileSync("git", ["-c", "user.email=a@b", "-c", "user.name=a", "commit", "-qam", "init", "--allow-empty"], { cwd: PROJECT });
+// The opt-in voice check: a WAV for Chrome's fake microphone.
+const VOICE_SAID = "Add a dark mode toggle and fix the login bug.";
+let VOICE_WAV = "";
+if (process.env.E2E_VOICE) {
+  VOICE_WAV = process.env.E2E_VOICE !== "1" ? process.env.E2E_VOICE : join(ROOT, "say.wav");
+  if (process.env.E2E_VOICE === "1") {
+    if (process.platform !== "win32") throw new Error("E2E_VOICE=1 speaks the WAV with Windows' voice; elsewhere set E2E_VOICE to a WAV file");
+    // A second of quiet first (the microphone opening), then the sentence, then quiet.
+    const ps = `Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $f = New-Object System.Speech.AudioFormat.SpeechAudioFormatInfo(16000, [System.Speech.AudioFormat.AudioBitsPerSample]::Sixteen, [System.Speech.AudioFormat.AudioChannel]::Mono); $s.SetOutputToWaveFile('${VOICE_WAV.replace(/'/g, "''")}', $f); $p = New-Object System.Speech.Synthesis.PromptBuilder; $p.AppendBreak([TimeSpan]::FromMilliseconds(1000)); $p.AppendText('${VOICE_SAID}'); $p.AppendBreak([TimeSpan]::FromMilliseconds(2500)); $s.Speak($p); $s.Dispose()`;
+    execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", ps], { stdio: "ignore" });
+  }
+}
 const SERVER_PORT = await freePort();
 const PAGE_PORT = await freePort();
 const CDP_PORT = await freePort();
@@ -54,7 +71,7 @@ for (let i = 0; i < 60; i++) {
 }
 await new Promise((r) => setTimeout(r, 3000));
 const CHROME = process.env.CHROME ?? (process.platform === "win32" ? "C:/Program Files/Google/Chrome/Application/chrome.exe" : process.platform === "darwin" ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" : "google-chrome");
-const chrome = spawn(CHROME, ["--headless=new", `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${mkdtempSync(join(tmpdir(), "cdp-"))}`, "--window-size=1500,900", "--enable-gpu", "--ignore-gpu-blocklist", "--use-angle=d3d11", "about:blank"]);
+const chrome = spawn(CHROME, ["--headless=new", `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${mkdtempSync(join(tmpdir(), "cdp-"))}`, "--window-size=1500,900", "--enable-gpu", "--ignore-gpu-blocklist", "--use-angle=d3d11", ...(VOICE_WAV ? ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream", `--use-file-for-fake-audio-capture=${VOICE_WAV}%noloop`, "--autoplay-policy=no-user-gesture-required"] : []), "about:blank"]);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let tabs;
 for (let i = 0; i < 40; i++) {
@@ -123,6 +140,21 @@ await key("Escape", "Escape", 27);
 await sleep(300);
 check("More: Esc puts it away (and doesn't open settings)", !!(await ev(() => document.querySelector(".more-menu").classList.contains("hidden") && !document.querySelector(".settings-modal"))));
 
+// --- 0a'. Settings → Voice: how the 🎤 hears you, and the voice model ---------------------
+await ev(() => document.querySelector('.dock [data-act="more"]').click());
+await sleep(300);
+await ev(() => document.querySelector('.more-menu .more-item[data-act="settings"]').click());
+await sleep(300);
+const voiceSet = await until(() => {
+  const cards = [...document.querySelectorAll(".st-voice .st-view-card")];
+  const state = document.querySelector(".st-whisper-state")?.textContent ?? "";
+  return cards.length && !/asking/.test(state) ? { cards: cards.map((c) => `${c.dataset.ve}${c.classList.contains("on") ? "*" : ""}`), state } : null;
+}, 8000, 250);
+check("Settings → Voice: on this computer (Whisper) by default, browser, system dictation — and the model", voiceSet?.cards.join() === "whisper*,browser,system" && /whisper-base\.en/.test(voiceSet.state), JSON.stringify(voiceSet));
+await ev(() => document.querySelector(".st-voice")?.scrollIntoView());
+await shot("0a-settings-voice.png");
+await closeAll();
+
 // --- 0b. Quieter toasts ------------------------------------------------------------------
 await ev(() => { for (let k = 0; k < 3; k++) window.domain.hud.toast("🧪 Same thing, said three times", "warn"); window.domain.hud.note("🧪 Routine news, quietly"); });
 await sleep(200);
@@ -151,6 +183,30 @@ await closeAll();
 // --- 1. Spoken stand-up: who does what, then start the day -------------------------------
 await key("u");
 await sleep(1500);
+if (VOICE_WAV) {
+  // 🎤 → listening (the fake microphone plays the WAV) → it stops by itself after the pause →
+  // transcribing on this computer → the words in the box.
+  await ev(() => {
+    window.__chips = [];
+    new MutationObserver(() => {
+      const c = document.querySelector(".mic-chip");
+      const t = c?.textContent?.replace(/\d+s/, "Ns").replace(/\d+%/, "N%");
+      if (t && window.__chips.at(-1) !== t) window.__chips.push(t);
+    }).observe(document.body, { childList: true, subtree: true, characterData: true });
+    document.querySelector(".su-said").value = "";
+    document.querySelector(".su-mic").click();
+  });
+  const t0 = Date.now();
+  if (await until(() => /Listening/.test(document.querySelector(".mic-chip")?.textContent ?? ""), 15000, 200)) await shot("1-standup-listening.png");
+  const heard = await until(() => document.querySelector(".su-said").value.trim() || null, 240000, 250);
+  const ms = Date.now() - t0;
+  const chips = await ev(() => window.__chips);
+  const norm = (x) => (x ?? "").toLowerCase().replace(/[^a-z ]/g, "").split(/\s+/).filter(Boolean);
+  const missing = norm(VOICE_SAID).filter((w) => !norm(heard).includes(w));
+  check("voice: the stand-up 🎤 hears you and Whisper writes it in the box", !!heard && missing.length === 0, `"${heard}" in ${(ms / 1000).toFixed(1)} s${missing.length ? ` · missing: ${missing.join(" ")}` : ""}`);
+  check("voice: it says what it's doing (listening, then transcribing)", chips?.some((c) => /Listening/.test(c)) && chips?.some((c) => /Transcribing|Downloading/.test(c)), JSON.stringify(chips));
+  await shot("1-standup-voice.png");
+}
 await ev(() => {
   document.querySelector(".su-said").value = "Today I want to add a dark mode toggle, fix the login bug, and write tests for checkout. By end of day the PR is open.";
   document.querySelector(".su-make").click();

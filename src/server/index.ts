@@ -736,6 +736,8 @@ wss.on("connection", (ws, req: IncomingMessage & { domainRole?: ClientRec["role"
     if (!allowed(client.role, msg.t)) {
       // Speech they can't have: say so now, so their browser's own voice speaks instead of waiting.
       if (msg.t === "tts" && typeof msg.id === "string") send(ws, { t: "ttsAudio", id: msg.id.slice(0, 40), error: "not allowed" });
+      // Nor the voice model: their 🎤 falls back to the browser's own.
+      if (msg.t === "transcribe" && typeof msg.id === "string") send(ws, { t: "transcribed", id: msg.id.slice(0, 40), error: "not allowed", fallback: true });
       return;
     }
 

@@ -2,7 +2,7 @@ import { ingestAlumni, openFire } from "./ui/fire.js";
 import { needsAnswer } from "../shared/asking.js";
 import { ingestLessons, openLessons } from "./ui/lessons.js";
 import { ingestSkills } from "./ui/skills.js";
-import { ingestVoices, osDictationHint, speak, useVoices } from "./voice.js";
+import { duckWhileListening, ingestVoices, osDictationHint, speak, useVoices } from "./voice.js";
 import { openVoices } from "./ui/voices.js";
 import { openGiveTask } from "./ui/waiting.js";
 import type { AgentKind, ClientMessage, Desk, Look, OfficeState, Presentation } from "../shared/protocol.js";
@@ -159,6 +159,12 @@ const music = new Music();
 // Browsers only let sound start after you click or press a key: start it then.
 /** The sound of the place: hum and keyboards indoors, wind and birds out; Settings has its volume. */
 const ambience = new Ambience();
+// The office's sound goes quiet while the 🎤 records you.
+duckWhileListening((on) => {
+  const k = on ? 0.12 : 1;
+  if (music.playing) music.set({ on: true, track: settings.track, volume: settings.musicVolume * k });
+  if (ambience.playing) ambience.set({ on: true, volume: settings.ambienceVolume * k });
+});
 const startMusic = () => {
   music.set({ on: settings.music, track: settings.track, volume: settings.musicVolume });
   ambience.set({ on: settings.ambience, volume: settings.ambienceVolume });
@@ -1002,7 +1008,9 @@ function warnVoice(err: string): void {
   hud.toast(
     err === "not-allowed"
       ? "🎤 Microphone blocked — allow it to talk to workers"
-      : /Electron/.test(navigator.userAgent)
+      : err !== "network" && err !== "unsupported" && err !== "service-not-allowed"
+        ? `🎤 ${err}`
+        : /Electron/.test(navigator.userAgent)
         ? `🎤 To talk, click in a text box and ${osDictationHint()} — your computer types what you say`
         : `🎤 Voice input isn't available in this window — open ${location.origin} in Chrome to talk, or type`,
     "warn",
