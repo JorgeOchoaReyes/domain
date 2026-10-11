@@ -1,4 +1,5 @@
 import type { AgentKind } from "./protocol.js";
+import type { PrPer } from "./project.js";
 
 /**
  * How you run your workers: the team's defaults (which model each agent runs,
@@ -117,6 +118,8 @@ export interface TeamPolicy {
   autopilot: AutopilotPolicy;
   /** Workers to start (or wake) as soon as the office opens, so they're ready by the end of the stand-up. */
   startTeam: StartTeam;
+  /** Shipping to GitHub: one pull request per goal, or one per agent from its own branch. */
+  prPer: PrPer;
 }
 
 /** The office running itself (see server/autopilot.ts). */
@@ -169,6 +172,7 @@ export const DEFAULT_POLICY: TeamPolicy = {
   gate: "fix",
   autopilot: DEFAULT_AUTOPILOT,
   startTeam: { agent: "claude", count: 0 },
+  prPer: "goal",
 };
 
 /** How many times a failed check sends the same work back before it reaches you anyway. */
@@ -260,6 +264,7 @@ export function coercePolicy(raw: unknown, base: TeamPolicy = DEFAULT_POLICY): T
     gate: o.gate === "fix" || o.gate === "show" ? o.gate : base.gate,
     autopilot: coerceAutopilot((o as { autopilot?: unknown }).autopilot, base.autopilot ?? DEFAULT_AUTOPILOT),
     startTeam: coerceStartTeam(o.startTeam, base.startTeam ?? DEFAULT_POLICY.startTeam, kinds),
+    prPer: o.prPer === "goal" || o.prPer === "agent" ? o.prPer : (base.prPer ?? DEFAULT_POLICY.prPer),
   };
 }
 

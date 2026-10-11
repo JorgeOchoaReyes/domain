@@ -8,7 +8,7 @@ import type { ChatPeek, ChatThread, ChatWork } from "./chat.js";
 import type { HistoryEvent } from "./history.js";
 import type { GoalKind, ProgressState, SessionSummary, ToneId } from "./progress.js";
 import type { Leash, TaskBrief, TeamPolicy } from "./policy.js";
-import type { GithubAccount, GithubIssue, GithubRepo, OpLog, ProjectInfo, PullRequestInfo, RecentProject, RepoStatus } from "./project.js";
+import type { GithubAccount, GithubIssue, GithubRepo, OpLog, PrPer, ProjectInfo, PullRequestInfo, RecentProject, RepoStatus } from "./project.js";
 import type { Character, WorkerIdentity } from "./team.js";
 import type { McpHealth, McpSeen, McpServer } from "./mcp.js";
 
@@ -368,8 +368,12 @@ export type ClientMessage =
   | { t: "githubIssues" }
   /** Turn GitHub issues into tasks (on a goal, or a new goal when null). */
   | { t: "issuesImport"; goalId: string | null; numbers: number[] }
-  /** Ship a goal as a GitHub pull request: push, open it, follow its checks. */
-  | { t: "shipPR"; goalId: string }
+  /**
+   * Ship a goal as a GitHub pull request: push, open it, follow its checks.
+   * `per: "agent"` opens one per agent instead, each from its own branch (default: the team policy);
+   * `deskId` opens just that agent's.
+   */
+  | { t: "shipPR"; goalId: string; per?: PrPer; deskId?: string }
   /** The full operations log (git, GitHub, MCP, checks, deploys). */
   | { t: "logs" }
   // --- your team ---------------------------------------------------------------
@@ -459,7 +463,7 @@ export type ServerMessage =
   | { t: "githubRepos"; repos: GithubRepo[]; error?: string }
   | { t: "githubIssues"; issues: GithubIssue[]; error?: string }
   /** A goal's pull request was opened or its state changed. */
-  | { t: "pr"; goalId: string; pr: PullRequestInfo }
+  | { t: "pr"; goalId: string; pr: PullRequestInfo; deskId?: string }
   /** One operation started, grew or finished. */
   | { t: "oplog"; entry: OpLog }
   | { t: "oplogAll"; entries: OpLog[] }

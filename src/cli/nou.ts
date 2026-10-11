@@ -37,6 +37,9 @@ const HELP = `nou — your command line for the office
   nou back NAME "…"            send it back with what to change
   nou standup "…"              say what you want today: Claude plans it and picks who does what
   nou repo                     where the repo stands: your branch, agents' branches, pull requests
+  nou pr [GOAL] [--per agent|goal] [--agent NAME]
+                               ship a goal to GitHub as a pull request — one for the goal, or one
+                               per agent from its own branch (default: the team policy); --agent: just theirs
   nou roles                    the ready-made agents
   nou hire ROLE [--desk N]     hire one (e.g. nou hire reviewer)
 
@@ -403,6 +406,42 @@ async function run(conn: Conn, cmd: string, words: string[], flags: Record<strin
       return 0;
     }
 
+    case "pr": {
+      const goal = pickShipGoal(conn.progress, words.join(" "));
+      if (!goal) return usage("nou pr [GOAL] [--per agent|goal] [--agent NAME]  (no goal to ship — name one)");
+      const per = flags.per === "agent" || flags.per === "goal" ? flags.per : undefined;
+      if (flags.per !== undefined && !per) return usage("nou pr [GOAL] --per agent|goal");
+      let deskId: string | undefined;
+      if (typeof flags.agent === "string") {
+        const d = desk(flags.agent);
+        if (!d) return 1;
+        deskId = d.id;
+      }
+      const prs: Extract<ServerMessage, { t: "pr" }>[] = [];
+      let lastAt = 0;
+      const off = conn.on((m) => {
+        if (m.t === "pr" && m.goalId === goal.id) {
+          prs.push(m);
+          lastAt = Date.now();
+        }
+      });
+      conn.send({ t: "shipPR", goalId: goal.id, ...(per ? { per } : {}), ...(deskId ? { deskId } : {}) });
+      console.log(dim(`Shipping “${goal.title}” to GitHub${deskId ? ` (${flags.agent}'s branch)` : per ? ` (one pull request per ${per})` : ""}…`));
+      // The first one can take a while (pushing); then the rest follow quickly.
+      const end = Date.now() + 90_000;
+      while (Date.now() < end && (!prs.length || Date.now() - lastAt < 5000)) await sleep(250);
+      off();
+      if (!prs.length) {
+        console.log(yellow("No pull request opened — see the Logs in the office (are you signed in to GitHub, and is there anything new to push?)."));
+        return 1;
+      }
+      for (const m of prs) {
+        const who = m.deskId ? conn.office.desks.find((d) => d.id === m.deskId) : null;
+        console.log(`${green("🔀")} #${m.pr.number} ${m.pr.title}${who ? dim(` · ${workerName(who)}`) : ""}  ${m.pr.url}`);
+      }
+      return 0;
+    }
+
     case "screen": {
       const d = desk(words[0]);
       if (!d) return 1;
@@ -591,6 +630,17 @@ function watchEvents(conn: Conn): void {
       seen = new Map(m.threads.map((t) => [t.id, t.messages.length]));
     } else if (m.t === "loop" && m.text) console.log(`${stamp()} ${dim(m.text)}`);
   });
+}
+
+/** The goal `nou pr` ships: the one named (by its title), else the session's, else the latest finished one not yet shipped. */
+export function pickShipGoal(progress: ProgressState, query: string): ProgressState["goals"][number] | null {
+  const q = query.trim().toLowerCase();
+  const goals = progress.goals;
+  if (q) return goals.find((g) => g.title.toLowerCase() === q) ?? goals.find((g) => g.title.toLowerCase().includes(q)) ?? null;
+  const session = progress.session?.goalId ? goals.find((g) => g.id === progress.session!.goalId) : null;
+  if (session) return session;
+  const open = goals.filter((g) => !g.shippedAt);
+  return open.filter((g) => g.doneAt).sort((a, b) => (b.doneAt ?? 0) - (a.doneAt ?? 0))[0] ?? open.at(-1) ?? null;
 }
 
 export function repoText(s: RepoStatus): string {

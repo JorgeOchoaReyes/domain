@@ -4,6 +4,19 @@ import { GitHub, SignInNeeded, rollupChecks } from "../src/server/github.ts";
 import { OpLogger } from "../src/server/oplog.ts";
 import { parseGithubRemote } from "../src/shared/project.ts";
 import { TOKEN, mockGithub } from "./helpers/mockGithub.ts";
+import { parseArgs, pickShipGoal } from "../src/cli/nou.ts";
+import { EMPTY_PROGRESS, type Goal } from "../src/shared/progress.ts";
+
+test("nou pr: picks the goal to ship and reads --per / --agent", () => {
+  const goal = (id: string, title: string, extra: Partial<Goal> = {}) => ({ id, title, shippedAt: null, doneAt: null, tasks: [], ...extra }) as unknown as Goal;
+  const goals = [goal("a", "Ship the login page", { doneAt: 5 }), goal("b", "Toy math", { doneAt: 9 }), goal("c", "Old", { shippedAt: 1, doneAt: 10 }), goal("d", "Later")];
+  const progress = { ...EMPTY_PROGRESS, goals };
+  assert.equal(pickShipGoal(progress, "login")?.id, "a", "by (part of) its title");
+  assert.equal(pickShipGoal(progress, "")?.id, "b", "else the latest finished one not shipped yet");
+  assert.equal(pickShipGoal({ ...progress, session: { goalId: "d" } as never }, "")?.id, "d", "the session's goal first");
+  assert.equal(pickShipGoal(progress, "nope"), null);
+  assert.deepEqual(parseArgs(["pr", "toy", "--per", "agent", "--agent", "Bolt"]), { words: ["pr", "toy"], flags: { per: "agent", agent: "Bolt" } });
+});
 
 test("signing in, listing repos and issues through the API, token never logged", async () => {
   const gh = await mockGithub();

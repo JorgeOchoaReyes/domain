@@ -1,5 +1,5 @@
 import { AGENT_LABELS } from "../shared/protocol.js";
-import type { RepoStatus } from "../shared/project.js";
+import type { AgentPullRequest, PrPer, RepoStatus } from "../shared/project.js";
 import { execFile, spawn } from "node:child_process";
 import { existsSync, mkdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
@@ -272,10 +272,95 @@ export function createProjects(ctx: ServerCtx, deps: ProjectDeps = {}): Projects
     }
   }
 
-  async function shipPR(goalId: string, client: ClientRec, ws: WebSocket): Promise<void> {
+  /** Push `ref` to origin as `head` (or, when GitHub already has a different `head`, as head-xxxx); the branch it landed on, or null. */
+  async function pushAs(ref: string, head: string, what: string, where: string, topic: string): Promise<string | null> {
+    let pushed = await gitLogged(ctx, ctx.cwd, ["push", "origin", `${ref}:refs/heads/${head}`], `Pushing ${what} to ${where} as ${head}`, topic);
+    if (!pushed.ok && /rejected|non-fast-forward|fetch first/i.test(pushed.output)) {
+      head = `${head}-${Date.now().toString(36).slice(-4)}`;
+      pushed = await gitLogged(ctx, ctx.cwd, ["push", "origin", `${ref}:refs/heads/${head}`], `Pushing as ${head} instead`, topic);
+    }
+    return pushed.ok ? head : null;
+  }
+
+  /** The agents to open pull requests for: the desks that did the goal's tasks, each with its own branch. */
+  function agentsFor(goalId: string, only?: string): { deskId: string; name: string; branch: string }[] {
+    const goal = ctx.progress.getGoal(goalId);
+    const desks = ctx.office?.snapshot().desks ?? [];
+    const worked = new Set((goal?.tasks ?? []).map((t) => t.doneBy ?? t.deskId).filter((d): d is string => !!d));
+    return desks
+      .filter((d) => d.worker?.branch && (only ? d.id === only : worked.has(d.id)))
+      .map((d) => ({ deskId: d.id, name: d.worker!.identity?.name ?? `${AGENT_LABELS[d.worker!.agent]} · ${d.label}`, branch: d.worker!.branch! }));
+  }
+
+  /**
+   * One pull request per agent: each agent's own branch pushed as it is and opened
+   * against the default branch, listing the tasks it did. `only` limits it to one desk.
+   * Agents with nothing GitHub doesn't already have are skipped; so are ones with a PR still open.
+   */
+  async function shipAgentPRs(goalId: string, client: ClientRec, only?: string): Promise<void> {
+    const goal = ctx.progress.getGoal(goalId);
+    const topic = `ship:${goalId}`;
+    const fail = (why: string) => ctx.log.start("github", `Pull requests per agent for “${goal?.title ?? "goal"}”`, { topic }).done(false, why);
+    if (!goal || (goal.shippedAt && !only)) return;
+    const i = await info();
+    if (!i.github) return void fail("This project has no GitHub remote (origin). Add one, or ship another way.");
+    const agents = agentsFor(goalId, only);
+    if (!agents.length) return void fail(only ? "That desk has no agent on its own branch." : "No agent on its own branch worked on this goal. Turn on “Own branch per worker”, or open one pull request for the goal.");
+    if (!github.account && !(await github.signIn(false))) throw new SignInNeeded();
+    const { owner, repo } = i.github;
+    const base = await github.defaultBranch(owner, repo, topic);
+    const opened: AgentPullRequest[] = [];
+    for (const a of agents) {
+      const open = goal.agentPrs?.find((p) => p.deskId === a.deskId && p.state === "open");
+      if (open) {
+        ctx.log.start("github", `${a.name} already has pull request #${open.number}`, { topic }).done(true, open.url, open.url);
+        continue;
+      }
+      // Nothing to open a PR for when GitHub's base already has all of it (only known once origin/<base> was fetched).
+      const ahead = await git(ctx.cwd, ["rev-list", "--count", `refs/remotes/origin/${base}..refs/heads/${a.branch}`]);
+      if (ahead === "0") {
+        ctx.log.start("github", `${a.name}: nothing new on ${a.branch}`, { topic }).done(true, `${a.branch} has no commits that ${owner}/${repo}'s ${base} doesn't — no pull request.`);
+        continue;
+      }
+      const head = await pushAs(`refs/heads/${a.branch}`, a.branch, `${a.name}'s ${a.branch}`, `${owner}/${repo}`, topic);
+      if (!head) continue;
+      const mine = goal.tasks.filter((t) => (t.doneBy ?? t.deskId) === a.deskId);
+      const tasks = mine.map((t) => `- [${t.status === "done" ? "x" : " "}] ${t.title}`).join("\n");
+      const body = `${goal.why ? `${goal.why}\n\n` : ""}**${a.name}'s part of “${goal.title}”**\n${tasks || "_(its own branch)_"}\n\n_Opened from the office in domain by ${client.name}, one pull request per agent._`;
+      try {
+        const pr = await github.createPull(owner, repo, { title: `${goal.title} — ${a.name}`, head, base, body }, topic);
+        const apr: AgentPullRequest = { ...pr, deskId: a.deskId, name: a.name, head };
+        ctx.log.start("github", `Opened pull request #${pr.number} for ${a.name}`, { topic }).done(true, pr.url, pr.url);
+        ctx.progress.setAgentPr(goal.id, apr);
+        ctx.broadcast({ t: "pr", goalId: goal.id, pr, deskId: a.deskId });
+        opened.push(apr);
+      } catch (e) {
+        if (e instanceof SignInNeeded) throw e;
+        // Logged; carry on with the next agent.
+      }
+    }
+    if (!opened.length || only) return;
+    const list = opened.map((p) => `#${p.number} (${p.name})`).join(", ");
+    ctx.progress.shipped(client.name, goal.id, { mode: "manual", url: opened[0].url, note: `Pull requests ${list} on GitHub, one per agent` });
+    ctx.broadcast({ t: "loop", goalId: goal.id, event: "shipped", text: `🚢 Opened ${opened.length === 1 ? "a pull request" : `${opened.length} pull requests`} for “${goal.title}”, one per agent: ${list}` });
+  }
+
+  async function shipPR(goalId: string, client: ClientRec, ws: WebSocket, opts: { per?: PrPer; deskId?: string } = {}): Promise<void> {
     const goal = ctx.progress.getGoal(goalId);
     const topic = `ship:${goalId}`;
     const fail = (why: string) => ctx.log.start("github", `Pull request for “${goal?.title ?? "goal"}”`, { topic }).done(false, why);
+    if ((opts.deskId ? "agent" : (opts.per ?? ctx.progress.policy.prPer)) === "agent") {
+      try {
+        await shipAgentPRs(goalId, client, opts.deskId);
+      } catch (e) {
+        if (e instanceof SignInNeeded) {
+          fail("Sign in to GitHub first (Projects → Sign in with GitHub).");
+          ctx.send(ws, { t: "githubAccount", account: null, error: e.message });
+        }
+        // Other errors are already in the log.
+      }
+      return;
+    }
     if (!goal || goal.shippedAt) return;
     const i = await info();
     if (!i.github) return void fail("This project has no GitHub remote (origin). Add one, or ship another way.");
@@ -284,13 +369,8 @@ export function createProjects(ctx: ServerCtx, deps: ProjectDeps = {}): Projects
       if (!github.account && !(await github.signIn(false))) throw new SignInNeeded();
       const { owner, repo } = i.github;
       const base = await github.defaultBranch(owner, repo, topic);
-      let head = `domain/${slugify(goal.title)}`;
-      let pushed = await gitLogged(ctx, ctx.cwd, ["push", "origin", `HEAD:refs/heads/${head}`], `Pushing ${i.branch} to ${owner}/${repo} as ${head}`, topic);
-      if (!pushed.ok && /rejected|non-fast-forward|fetch first/i.test(pushed.output)) {
-        head = `${head}-${Date.now().toString(36).slice(-4)}`;
-        pushed = await gitLogged(ctx, ctx.cwd, ["push", "origin", `HEAD:refs/heads/${head}`], `Pushing as ${head} instead`, topic);
-      }
-      if (!pushed.ok) return;
+      const head = await pushAs("HEAD", `domain/${slugify(goal.title)}`, i.branch, `${owner}/${repo}`, topic);
+      if (!head) return;
       const session = ctx.progress.snapshot().session;
       const intention = session?.goalId === goal.id && session.intention ? `\n\n> ${session.intention}` : "";
       const tasks = goal.tasks.map((t) => `- [${t.status === "done" ? "x" : " "}] ${t.title}`).join("\n");
@@ -315,6 +395,18 @@ export function createProjects(ctx: ServerCtx, deps: ProjectDeps = {}): Projects
     const i = await info().catch(() => null);
     if (!i?.github || !github.account) return;
     for (const g of ctx.progress.snapshot().goals) {
+      for (const a of g.agentPrs ?? []) {
+        if (a.state !== "open") continue;
+        try {
+          const now = await github.pullStatus(i.github.owner, i.github.repo, a.number, `ship:${g.id}`);
+          if (now.state !== a.state || now.checks !== a.checks) {
+            ctx.progress.setAgentPr(g.id, { ...a, ...now });
+            ctx.broadcast({ t: "pr", goalId: g.id, pr: now, deskId: a.deskId });
+          }
+        } catch {
+          /* logged */
+        }
+      }
       if (!g.pr || g.pr.state !== "open") continue;
       try {
         const now = await github.pullStatus(i.github.owner, i.github.repo, g.pr.number, `ship:${g.id}`);
@@ -380,7 +472,10 @@ export function createProjects(ctx: ServerCtx, deps: ProjectDeps = {}): Projects
       ctx.log.start("github", `Imported ${titles.length} issue${titles.length === 1 ? "" : "s"} as tasks`, { topic: "issues" }).done(true, titles.join("\n"));
     },
     shipPR: (m, client, ws) => {
-      if (typeof m.goalId === "string") void shipPR(m.goalId, client, ws);
+      if (typeof m.goalId !== "string") return;
+      const per = m.per === "agent" || m.per === "goal" ? m.per : undefined;
+      const deskId = typeof m.deskId === "string" && /^desk-\d{1,3}$/.test(m.deskId) ? m.deskId : undefined;
+      void shipPR(m.goalId, client, ws, { per, deskId });
     },
   };
 

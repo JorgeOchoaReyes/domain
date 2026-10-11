@@ -15,6 +15,7 @@ import {
   type OnTimeUp,
   type TeamPolicy,
 } from "../../shared/policy.js";
+import type { PrPer } from "../../shared/project.js";
 import { loopState } from "./loop.js";
 import { AGENT_COLOR } from "../scene/characters.js";
 import { esc, openModal } from "./modal.js";
@@ -94,6 +95,10 @@ export function openPolicy(policy: TeamPolicy, onSave: (p: TeamPolicy) => void):
         <button data-k="fix">🔁 Failed check: send it back to fix (up to 2 tries)</button>
         <button data-k="show">👀 Failed check: show it in the review</button>
       </div>
+      <div class="seg po-prper">
+        <button data-r="goal" title="Your branch is pushed as domain/&lt;goal&gt; and one pull request opens for the whole goal">🔀 Ship to GitHub: one pull request per goal</button>
+        <button data-r="agent" title="Each agent's own branch is pushed as it is and gets its own pull request, listing the tasks it did">🔀 Ship to GitHub: one pull request per agent</button>
+      </div>
     </section>`;
   const footer = document.createElement("div");
   footer.style.display = "contents";
@@ -144,6 +149,7 @@ export function openPolicy(policy: TeamPolicy, onSave: (p: TeamPolicy) => void):
   body.querySelector<HTMLInputElement>(".po-isolate")!.addEventListener("change", (e) => (p.isolate = (e.target as HTMLInputElement).checked));
   seg(".po-merge", "g", () => p.merge, (v) => (p.merge = v as MergeMode));
   seg(".po-gate", "k", () => p.gate, (v) => (p.gate = v as GateMode));
+  seg(".po-prper", "r", () => p.prPer ?? "goal", (v) => (p.prPer = v as PrPer));
   renderDefaults();
   // One click puts a local model on Codex's list (and OpenCode's, if it's set up for that provider);
   // an Ollama model on Claude Code's too (it runs through Ollama's Anthropic-compatible API).

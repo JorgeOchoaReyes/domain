@@ -108,3 +108,10 @@ test("attached files: plain names that can't climb out, text only, capped", () =
   assert.deepEqual(coerceBrief({ files: [{ name: "a.md", text: "A" }] }, DEFAULT_POLICY).files, [{ name: "a.md", text: "A" }]);
   assert.equal(coerceBrief({}, DEFAULT_POLICY).files, undefined);
 });
+
+test("pull requests per goal by default, per agent when chosen, anything else ignored", () => {
+  assert.equal(DEFAULT_POLICY.prPer, "goal");
+  assert.equal(coercePolicy({ prPer: "agent" }).prPer, "agent");
+  assert.equal(coercePolicy({ prPer: "everyone" }, { ...DEFAULT_POLICY, prPer: "agent" }).prPer, "agent", "a bad value keeps what it was");
+  assert.equal(coercePolicy({}, { ...DEFAULT_POLICY, prPer: undefined as never }).prPer, "goal", "older saved policies get the default");
+});

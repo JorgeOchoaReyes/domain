@@ -1,6 +1,7 @@
 import type { ClientMessage, Desk, ServerMessage } from "../../shared/protocol.js";
 import { AGENT_LABELS } from "../../shared/protocol.js";
 import { LOOP_STAGES, STAGE_ICON, goalProgress, goalStage, stageLabel, type Goal } from "../../shared/progress.js";
+import type { PrPer } from "../../shared/project.js";
 import { esc } from "./modal.js";
 import { icon } from "./icons.js";
 import { isGithubProject, projectState } from "./projects.js";
@@ -34,6 +35,8 @@ export const loopState = {
   devServers: [] as string[],
   /** The current (or last) deploy's goal and its whole output. */
   deploy: { goalId: null as string | null, log: "" },
+  /** The team policy's choice: one pull request per goal, or one per agent. */
+  prPer: "goal" as PrPer,
 };
 
 const listeners = new Set<(msg: ServerMessage) => void>();
@@ -48,6 +51,10 @@ const LOG_MAX = 256 * 1024;
 
 /** Feed every server message through here; it keeps loopState current. */
 export function ingestLoop(msg: ServerMessage): void {
+  if (msg.t === "progress") {
+    loopState.prPer = msg.progress.policy.prPer ?? "goal";
+    return;
+  }
   switch (msg.t) {
     case "config":
       loopState.config = { project: msg.project, preview: msg.preview, deploy: msg.deploy, simulate: msg.simulate, check: msg.check, git: msg.git, localModels: msg.localModels ?? [] };
@@ -251,14 +258,29 @@ export function loopView(goal: Goal, desks: Desk[], goals: Goal[], line: { deskI
         const others: LoopButton[] = [];
         if (cfg?.deploy) others.push({ label: "🚀 Run the deploy instead", style: "plain", run: () => send({ t: "ship", goalId: goal.id }), confirm: `▶ Run \`${cfg.deploy}\`` });
         if (pick) others.push({ label: `🚢 Ask ${AGENT_LABELS[pick.worker!.agent]} to ship it`, style: "plain", run: () => send({ t: "ship", goalId: goal.id, deskId: pick.id }) });
+        // Agents on their own branches that did this goal's tasks: they can each get a pull request of their own.
+        const workedBy = new Set(goal.tasks.map((t) => t.doneBy ?? t.deskId).filter(Boolean));
+        const branched = desks.filter((d) => d.worker?.branch && workedBy.has(d.id));
+        const perAgent = loopState.prPer === "agent" && branched.length > 0;
+        const goalBtn: LoopButton = {
+          label: "Open a pull request on GitHub",
+          html: `${icon("github", 16)} Open a pull request on GitHub`,
+          style: "primary",
+          run: () => send({ t: "shipPR", goalId: goal.id, per: "goal" }),
+        };
+        const agentBtn: LoopButton = {
+          label: `Open a pull request per agent (${branched.length})`,
+          html: `${icon("github", 16)} Open a pull request per agent (${branched.length})`,
+          style: "primary",
+          title: branched.map((d) => `${workerName(d)}: ${d.worker!.branch}`).join("\n"),
+          run: () => send({ t: "shipPR", goalId: goal.id, per: "agent" }),
+        };
+        if (branched.length) others.unshift(perAgent ? { ...goalBtn, html: undefined, label: "One pull request for the goal instead", style: "plain" } : { ...agentBtn, html: undefined, label: `One pull request per agent instead (${branched.length})`, style: "plain" });
         return {
-          status: `Every task is approved. Open a pull request on ${gh.owner}/${gh.repo}: your branch is pushed as domain/…, and its checks show up here.`,
-          main: {
-            label: "Open a pull request on GitHub",
-            html: `${icon("github", 16)} Open a pull request on GitHub`,
-            style: "primary",
-            run: () => send({ t: "shipPR", goalId: goal.id }),
-          },
+          status: perAgent
+            ? `Every task is approved. Open a pull request on ${gh.owner}/${gh.repo} for each agent, from its own branch (${branched.map((d) => d.worker!.branch).join(", ")}); their checks show up here.`
+            : `Every task is approved. Open a pull request on ${gh.owner}/${gh.repo}: your branch is pushed as domain/…, and its checks show up here.`,
+          main: perAgent ? agentBtn : goalBtn,
           more: [...others, markDone],
         };
       }

@@ -125,6 +125,8 @@ nou watch Bolt                # one agent's terminal, live
 nou review / nou review Grace # what's waiting, or one whole deck
 nou approve Grace "Nice"      # or: nou back Grace "Cover the empty case too"
 nou repo                      # your branch vs GitHub, agents' branches, pull requests
+nou pr "Dark mode"            # ship a goal as a pull request (--per agent: one per agent;
+                              #   --agent Bolt: just Bolt's branch)
 nou hire reviewer             # a ready-made agent at a free desk (nou roles lists them)
 ```
 
@@ -134,9 +136,31 @@ nou hire reviewer             # a ready-made agent at a free desk (nou roles lis
 npm test             # unit tests
 npm run e2e:ui       # the whole office in Chrome, simulated agents (31 checks)
 npm run e2e:team     # a shared office: you and a teammate over the network (19 checks)
-npm run e2e:real     # real Claude Code agents on a throwaway repo, from hire to an
-                     # opened pull request — audits, checks, a merge conflict (42 checks)
+npm run e2e:real     # real Claude Code agents on a throwaway repo, from hire to
+                     # opened pull requests (per goal and per agent) — audits, checks,
+                     # a merge conflict (46 checks), against a stand-in for GitHub
+npm run e2e:real -- --dry-run   # what it would do, and against which GitHub; starts nothing
 ```
+
+`e2e:real` talks to a local stand-in for GitHub's API by default — no account,
+nothing leaves your machine. To run it against a **real GitHub test
+repository** instead, make a throwaway repo with at least one commit (a README
+is enough) and a token that can push to it and open and close pull requests
+and issues (fine-grained: *Contents*, *Pull requests* and *Issues*, read and
+write, on that repo only), then:
+
+```bash
+E2E_GITHUB_REPO=you/domain-e2e-sandbox E2E_GITHUB_TOKEN=github_pat_… npm run e2e:real
+```
+
+It clones the repo, commits the toy library on top of its default branch
+(locally — the default branch is never pushed), files two issues tagged with
+the run's id, pushes the goal's branch and each agent's branch and opens their
+pull requests, and follows their checks (a repo without CI counts as “no
+checks”). Pass or fail, it then closes every pull request, deletes every branch
+and closes every issue the run made (`E2E_GITHUB_KEEP=1` leaves them for you to
+look at). The token stays in the environment: git reads it through a credential
+helper, and it's never written to disk or the logs.
 
 ### Try it without any agents
 
@@ -562,6 +586,15 @@ GitHub — without pasting tokens.
   is **Open a pull request** — the work is pushed to `domain/<goal>` and a PR
   opens against the default branch, with the goal, its tasks and the session's
   intention. Its checks are followed and shown on the goal.
+- **A pull request per agent**: or open one per agent instead — each agent's
+  own branch (`domain/<agent>-<desk>-…`) is pushed as it is, and its PR lists
+  just the tasks that agent did, so each can be reviewed and merged on its own.
+  Pick it for the team in **Team policy → Branches & checks** (*one pull
+  request per goal / per agent*), or once from the goal's ship step (*One pull
+  request per agent instead*), or with `nou pr --per agent` (`--agent NAME` for
+  one agent's). Agents with nothing GitHub doesn't already have are skipped,
+  and so is an agent whose PR is still open. Every PR's checks are followed
+  and shown on the goal.
 - **GitHub issues → tasks**: import open issues into a goal from the Goals window.
 
 ![Projects and GitHub](docs/screenshots/projects.jpg)
@@ -969,10 +1002,10 @@ Next up, after v1.0:
 - **Voice in the desktop app, tested.** The 🎤 button now starts Windows
   voice typing (Win+H) in the desktop app; it needs testing on real machines,
   and macOS still only shows how to start dictation.
-- **GitHub, against the real thing.** The whole loop — sign-in, issues,
-  pushing, pull requests and their checks — is tested end to end against a
-  stand-in for GitHub's API (`npm run e2e:real`); next, a run against a real
-  test repository, and opening pull requests per agent as well as per goal.
+- **GitHub, against the real thing.** `npm run e2e:real` can now target a
+  real test repository (`E2E_GITHUB_REPO` + `E2E_GITHUB_TOKEN`, and it cleans
+  up after itself); what's left is actually running it against one and
+  fixing whatever real GitHub turns up.
 - **Pods for people.** In a shared office, give each person a pod on the team
   floor, and let a teammate ask to borrow someone's agent (the owner says yes
   or no, like an agent's "I'll take it").

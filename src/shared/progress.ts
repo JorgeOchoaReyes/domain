@@ -5,7 +5,7 @@
  */
 
 import { DEFAULT_POLICY, type TaskBrief, type TaskRun, type TeamPolicy } from "./policy.js";
-import type { PullRequestInfo } from "./project.js";
+import type { AgentPullRequest, PullRequestInfo } from "./project.js";
 import type { Character } from "./team.js";
 import type { McpServer } from "./mcp.js";
 
@@ -18,6 +18,8 @@ export interface GoalTask {
   /** The desk whose worker is on it, while it's being done or reviewed. */
   deskId: string | null;
   doneAt: number | null;
+  /** The desk whose worker finished it (kept after `deskId` is cleared): per-agent pull requests use it. */
+  doneBy?: string | null;
   /** The terms it was handed out on (model, time budget, plan first, definition of done). */
   brief?: TaskBrief | null;
   /** How it's going against them (the clock, whether the plan was approved). */
@@ -97,6 +99,8 @@ export interface Goal {
   deck: Deck | null;
   /** Its pull request on GitHub, once shipped that way. */
   pr?: PullRequestInfo | null;
+  /** Pull requests opened per agent (each from that agent's own branch). */
+  agentPrs?: AgentPullRequest[] | null;
   /** When it's due (epoch ms), or null: reminders come as it nears. */
   dueAt?: number | null;
   /** The desks working it as a group: tasks go out across them as each finishes. */
