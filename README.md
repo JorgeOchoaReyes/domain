@@ -133,7 +133,7 @@ nou hire reviewer             # a ready-made agent at a free desk (nou roles lis
 ```bash
 npm test             # unit tests
 npm run e2e:ui       # the whole office in Chrome, simulated agents (31 checks)
-npm run e2e:team     # a shared office: you and a teammate over the network (19 checks)
+npm run e2e:team     # a shared office: you and a teammate over the network, pods and borrowing (28 checks)
 npm run e2e:real     # real Claude Code agents on a throwaway repo, from hire to an
                      # opened pull request — audits, checks, a merge conflict (42 checks)
 ```
@@ -618,6 +618,24 @@ Some things stay with you whatever the role: your GitHub sign-in and repos,
 switching projects, MCP tools, and sharing itself. Wrong codes are rate-limited,
 guests never see the code, and **Stop sharing** disconnects everyone.
 
+**Pods for people.** Everyone in the office gets a **pod** on the team floor
+(floor 3) — a cluster of four desks for them and their agents, with their name
+hung over it (*⭐ Your pod* on yours; dimmed while they're away). You keep the
+same pod each time you come back (it's remembered by name in
+`.domain/pods.json`); a newcomer gets a free pod, or the pod of someone who
+isn't here. While someone's in, the desks in their pod are theirs to hire at;
+everywhere downstairs is open to all.
+
+**Borrowing an agent.** Agents you hire are yours to direct; a teammate can
+message them, and can also **ask to borrow** one — **🤝 Ask to borrow** on its
+tile in the agent monitor (**K**). You get the question from Arnold, like an
+agent's *"I'll take it"*: **✅ Lend** or **🙅 Not now**. On yes it works for
+them — their tasks, their keys, their reviews — and its card says
+*🤝 Working for Ana (Jorge's)*. It comes back when they **↩ Give back**, when
+you **↩ Call back**, when the task they gave it is done, when it leaves its
+desk, or when either of you leaves the office. An ask nobody answers lapses
+after two minutes.
+
 > First time you share, Windows asks to allow domain on networks — allow
 > **Private networks** (or add an inbound rule for the port in Windows Defender
 > Firewall). Discovery uses UDP 8790; some networks block it, but typing the
@@ -893,6 +911,7 @@ src/
     team.ts              your team's characters
     mcp.ts               MCP: scan agents' configs, health checks, per-worker servers
     lan.ts               local multiplayer: the passcode listener, discovery
+    pods.ts              pods for people on the team floor, and borrowing agents
     ideas.ts             the idea boards: pinned ideas, sketches, hand-offs
     agents.ts            which agent CLIs are installed; installing a missing one
     oplog.ts             the operations log
@@ -973,9 +992,6 @@ Next up, after v1.0:
   pushing, pull requests and their checks — is tested end to end against a
   stand-in for GitHub's API (`npm run e2e:real`); next, a run against a real
   test repository, and opening pull requests per agent as well as per goal.
-- **Pods for people.** In a shared office, give each person a pod on the team
-  floor, and let a teammate ask to borrow someone's agent (the owner says yes
-  or no, like an agent's "I'll take it").
 - **More floors and games.** More team floors as teams grow, and more to play
   between tasks (a pool table, multiplayer arcade high scores).
 

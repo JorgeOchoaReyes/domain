@@ -417,6 +417,16 @@ export class Office {
     this.changed();
   }
 
+  /** Lend a desk's worker to someone (null: it's back with its owner). */
+  lend(deskId: string, to: string | null): boolean {
+    const w = this.seats.find((s) => s.desk.id === deskId)?.desk.worker;
+    if (!w || (w.lentTo ?? null) === to) return false;
+    if (to) w.lentTo = to;
+    else delete w.lentTo;
+    this.changed();
+    return true;
+  }
+
   /** Whether someone's working at a desk (not asleep, not empty). */
   isStaffed(deskId: string): boolean {
     const seat = this.seats.find((s) => s.desk.id === deskId);

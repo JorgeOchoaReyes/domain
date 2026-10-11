@@ -65,6 +65,8 @@ import { ingestProjects, openProjects, projectBadge, projectState } from "./ui/p
 import { ingestGithub } from "./ui/github.js";
 import { agentsState, ingestAgents, installAgent, isInstalled, setAgentsSender } from "./ui/agents.js";
 import { openHire, openTeam, type TeamContext } from "./ui/team.js";
+import { ingestPods, initPods } from "./ui/pods.js";
+import { PodSigns } from "./scene/podsigns.js";
 import { openPolicy } from "./ui/policy.js";
 import type { LoopHandlers } from "./ui/loop.js";
 import { Hud } from "./ui/hud.js";
@@ -434,6 +436,7 @@ net.onMessage = (msg) => {
   ingestVoices(msg);
   ingestAlumni(msg);
   ingestGithub(msg);
+  ingestPods(msg);
   if (msg.t === "project") showProject();
   if (msg.t === "guest") showGuestBadge();
   switch (msg.t) {
@@ -460,6 +463,7 @@ net.onMessage = (msg) => {
       net.send({ t: "chatGet" });
       useVoices((m) => net.send(m));
       net.send({ t: "historyGet" });
+      net.send({ t: "podsGet" });
       break;
     case "office":
       office = msg.office;
@@ -1042,6 +1046,23 @@ function onChat(threads: ChatThread[]): void {
 }
 /** Offers Arnold has already asked you about. */
 const askedOffers = new Set<string>();
+
+// Pods for people: whose pod is whose on the team floor, and borrowing agents (Arnold asks when someone wants one of yours).
+const podSigns = new PodSigns();
+world.teamFloor.group.add(podSigns.group);
+initPods({
+  send: (m) => net.send(m),
+  me: () => myName,
+  toast: (text, kind) => hud.toast(text, kind),
+  ask: (id, text, yes, no) => {
+    sound.click();
+    assistant.say({ id, urgency: 3, text, action: yes }, no);
+  },
+  changed: (s) => {
+    podSigns.set(s.pods, myName);
+    monitorView?.refresh();
+  },
+});
 
 // --- VR ----------------------------------------------------------------------------------------
 
