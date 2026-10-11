@@ -207,6 +207,7 @@ export class GoalsWindow {
           <h3>${goal.shippedAt ? "🏁 " : goal.kind === "research" ? "📊 " : ""}${esc(goal.title)}</h3>
           ${goal.why ? `<p class="why">${esc(goal.why)}</p>` : ""}
           ${goal.pr ? `<div class="gd-pr">${prChipHtml(goal.pr)}</div>` : ""}
+          ${goal.agentPrs?.length ? `<div class="gd-pr">${goal.agentPrs.map((p) => `<span class="gd-agent-pr">${esc(p.name)} ${prChipHtml(p)}</span>`).join(" ")}</div>` : ""}
         </div>
         <div class="gd-pct ${goal.doneAt ? "done" : ""}">${Math.round(pr.pct * 100)}%</div>
       </div>

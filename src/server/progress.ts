@@ -4,7 +4,7 @@ import { dirname } from "node:path";
 import { DEFAULT_POLICY, coercePolicy, type TaskBrief, type TeamPolicy } from "../shared/policy.js";
 import { MAX_TEAM, coerceCharacter, type Character } from "../shared/team.js";
 import { SECRET_MASK, coerceMcpServer, type McpServer } from "../shared/mcp.js";
-import type { PullRequestInfo } from "../shared/project.js";
+import type { AgentPullRequest, PullRequestInfo } from "../shared/project.js";
 import { MAX_SAMPLES, estimateTask, sampleOf, type EstimateInput, type EstimateSample } from "../shared/estimate.js";
 import {
   ACHIEVEMENTS,
@@ -518,6 +518,16 @@ export class Progress {
     this.changed();
   }
 
+  /** A pull request from one agent's branch was opened for a goal, or its state changed. */
+  setAgentPr(goalId: string, pr: AgentPullRequest): void {
+    const g = this.goal(goalId);
+    if (!g) return;
+    const list = g.agentPrs ?? [];
+    const at = list.findIndex((x) => x.number === pr.number);
+    g.agentPrs = at < 0 ? [...list, pr] : list.map((x, i) => (i === at ? pr : x));
+    this.changed();
+  }
+
   // --- the team's policy and task clocks -------------------------------------------------
 
   /** Whether the policy came from saved progress (so a config file shouldn't override it). */
@@ -658,6 +668,7 @@ export class Progress {
     this.learn(t);
     t.status = "done";
     t.doneAt = Date.now();
+    if (t.deskId) t.doneBy = t.deskId;
     t.deskId = null;
     this.stats(who).tasksDone++;
     if (this.state.session) this.state.session.tasksDone++;

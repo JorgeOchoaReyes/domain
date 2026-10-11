@@ -225,3 +225,128 @@ test("open issues become tasks", async () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("shipping per agent: each agent's own branch is pushed and gets its own pull request, followed like the goal's", async () => {
+  const root = mkdtempSync(join(tmpdir(), "domain-ship-agents-"));
+  let next = 20;
+  const gh = await mockGithub((req, body, res) => {
+    const url = req.url!.split("?")[0];
+    if (url === "/repos/acme/web/pulls" && req.method === "POST") {
+      const b = JSON.parse(body) as { title: string };
+      const n = next++;
+      return !!res.writeHead(201).end(JSON.stringify({ number: n, html_url: `https://github.com/acme/web/pull/${n}`, title: b.title }));
+    }
+    const one = /^\/repos\/acme\/web\/pulls\/(\d+)$/.exec(url);
+    if (one) return !!res.end(JSON.stringify({ number: Number(one[1]), html_url: `https://github.com/acme/web/pull/${one[1]}`, title: "T", state: "open", head: { sha: "abc" } }));
+    return false;
+  });
+  try {
+    const { repo, bare } = repoWithRemote(root);
+    git(repo, "remote", "add", "origin", "https://github.com/acme/web.git");
+    git(repo, "config", `url.${pathToFileURL(bare).href}.pushInsteadOf`, "https://github.com/acme/web.git");
+    // What GitHub's main has, as if fetched.
+    git(repo, "update-ref", "refs/remotes/origin/main", "main");
+    // Two agents with work on their own branches; a third with nothing new.
+    for (const [branch, file] of [
+      ["domain/bolt", "subtract.js"],
+      ["domain/ivy", "README.md"],
+    ]) {
+      git(repo, "checkout", "-q", "-b", branch, "main");
+      writeFileSync(join(repo, file), "x\n");
+      git(repo, "add", "-A");
+      git(repo, "commit", "-q", "-m", file);
+    }
+    git(repo, "checkout", "-q", "main");
+    git(repo, "branch", "domain/idle", "main");
+
+    const f = fakeCtx(repo);
+    const worker = (name: string, branch: string) => ({ agent: "claude", branch, identity: { name } });
+    const desks = [
+      { id: "desk-1", label: "Desk 1", worker: worker("Bolt", "domain/bolt") },
+      { id: "desk-2", label: "Desk 2", worker: worker("Ivy", "domain/ivy") },
+      { id: "desk-3", label: "Desk 3", worker: worker("Idle", "domain/idle") },
+      { id: "desk-4", label: "Desk 4", worker: worker("Elsewhere", "domain/bolt") },
+    ];
+    (f.ctx as unknown as { office: unknown }).office = { snapshot: () => ({ desks }), workdir: () => repo, repoOf: () => repo };
+    const github = new GitHub({ log: f.log, api: gh.api, token: async () => ({ username: "ada", token: "ghp_test_secret_token_123" }), approve: () => {} });
+    const p = createProjects(f.ctx, { prefsFile: join(root, "prefs.json"), pollMs: 0, github });
+    const goal = f.progress.createGoal("Ada", "Toy math", "Better maths", ["Add subtract", "Write the README", "Nothing to show"])!;
+    goal.tasks.forEach((t, i) => {
+      f.progress.assign("Ada", goal.id, t.id, `desk-${i + 1}`);
+      f.progress.setDone("Ada", goal.id, t.id, true);
+    });
+    assert.deepEqual(f.progress.getGoal(goal.id)!.tasks.map((t) => t.doneBy), ["desk-1", "desk-2", "desk-3"], "who finished each task is kept");
+
+    // The team policy says per agent: shipping the goal opens one per agent.
+    f.progress.setPolicy("Ada", { ...f.progress.policy, prPer: "agent" });
+    p.routes.shipPR!({ t: "shipPR", goalId: goal.id } as never, client, ws);
+    await until(() => !!f.progress.getGoal(goal.id)?.shippedAt);
+    const g = f.progress.getGoal(goal.id)!;
+    assert.deepEqual(
+      g.agentPrs!.map((x) => [x.deskId, x.name, x.head, x.number]),
+      [
+        ["desk-1", "Bolt", "domain/bolt", 20],
+        ["desk-2", "Ivy", "domain/ivy", 21],
+      ],
+      "one pull request per agent that has something new — not the idle one, not desks that didn't work on it",
+    );
+    assert.equal(g.pr ?? null, null, "no goal-wide pull request");
+    assert.ok(git(bare, "branch", "--list", "domain/bolt") && git(bare, "branch", "--list", "domain/ivy"), "each agent's branch reached the remote as it is");
+    assert.equal(git(bare, "branch", "--list", "domain/idle"), "", "nothing new: not pushed");
+    const posts = gh.calls.filter((c) => c.method === "POST").map((c) => JSON.parse(c.body) as { head: string; base: string; title: string; body: string });
+    assert.deepEqual(
+      posts.map((b) => [b.head, b.base, b.title]),
+      [
+        ["domain/bolt", "main", "Toy math — Bolt"],
+        ["domain/ivy", "main", "Toy math — Ivy"],
+      ],
+    );
+    assert.match(posts[0].body, /Add subtract/);
+    assert.doesNotMatch(posts[0].body, /Write the README/, "each PR lists only that agent's tasks");
+    assert.equal(g.ship?.url, "https://github.com/acme/web/pull/20");
+    assert.deepEqual(
+      f.broadcasts.filter((m) => m.t === "pr").map((m) => (m as { deskId?: string }).deskId),
+      ["desk-1", "desk-2"],
+    );
+
+    // Their checks are followed, each on its own.
+    await p.poll();
+    assert.deepEqual(f.progress.getGoal(goal.id)!.agentPrs!.map((x) => x.checks), ["success", "success"]);
+
+    // Asking again for one agent whose PR is still open doesn't open another.
+    p.routes.shipPR!({ t: "shipPR", goalId: goal.id, deskId: "desk-1" } as never, client, ws);
+    await until(() => f.log.all().some((e) => /already has pull request #20/.test(e.title)));
+    assert.equal(gh.calls.filter((c) => c.method === "POST").length, 2);
+    p.dispose();
+  } finally {
+    gh.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an explicit choice beats the policy; per agent with no own branches says so", async () => {
+  const root = mkdtempSync(join(tmpdir(), "domain-ship-choice-"));
+  const gh = await mockGithub();
+  try {
+    const { repo, bare } = repoWithRemote(root);
+    git(repo, "remote", "add", "origin", "https://github.com/acme/web.git");
+    git(repo, "config", `url.${pathToFileURL(bare).href}.pushInsteadOf`, "https://github.com/acme/web.git");
+    const f = fakeCtx(repo);
+    (f.ctx as unknown as { office: unknown }).office = { snapshot: () => ({ desks: [{ id: "desk-1", label: "Desk 1", worker: { agent: "claude", branch: null } }] }) };
+    const github = new GitHub({ log: f.log, api: gh.api, token: async () => ({ username: "ada", token: "ghp_test_secret_token_123" }), approve: () => {} });
+    const p = createProjects(f.ctx, { prefsFile: join(root, "prefs.json"), pollMs: 0, github });
+    const a = f.progress.createGoal("Ada", "Alpha", "", ["One"])!;
+    p.routes.shipPR!({ t: "shipPR", goalId: a.id, per: "agent" } as never, client, ws);
+    await until(() => f.log.all().some((e) => e.status === "error" && /No agent on its own branch/.test(JSON.stringify(e))));
+    assert.equal(f.progress.getGoal(a.id)!.shippedAt, null, "nothing shipped");
+
+    f.progress.setPolicy("Ada", { ...f.progress.policy, prPer: "agent" });
+    p.routes.shipPR!({ t: "shipPR", goalId: a.id, per: "goal" } as never, client, ws);
+    await until(() => !!f.progress.getGoal(a.id)?.pr);
+    assert.ok(git(bare, "branch", "--list", "domain/alpha"), "the goal's branch went up");
+    p.dispose();
+  } finally {
+    gh.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});

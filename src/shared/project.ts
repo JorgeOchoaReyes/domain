@@ -71,6 +71,18 @@ export interface PullRequestInfo {
   repo?: string;
 }
 
+/** Whether shipping a goal opens one pull request for the goal, or one per agent (from each agent's own branch). */
+export type PrPer = "goal" | "agent";
+
+/** A pull request opened from one agent's own branch. */
+export interface AgentPullRequest extends PullRequestInfo {
+  deskId: string;
+  /** The agent's name, as it was when the PR opened. */
+  name: string;
+  /** The branch on GitHub it was opened from. */
+  head: string;
+}
+
 /** A commit, briefly. */
 export interface CommitLine {
   sha: string;
