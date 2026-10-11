@@ -1,4 +1,5 @@
 import { ingestAlumni, openFire } from "./ui/fire.js";
+import { needsAnswer } from "../shared/asking.js";
 import { ingestLessons, openLessons } from "./ui/lessons.js";
 import { ingestSkills } from "./ui/skills.js";
 import { ingestVoices, osDictationHint, speak, useVoices } from "./voice.js";
@@ -697,11 +698,17 @@ function applyOffice(): void {
   for (const desk of office.desks) {
     const st = desk.worker?.status;
     const before = lastStatus.get(desk.id);
+    // A question in words counts too ("asking" is its own state here, so it shouts once).
+    const asks = desk.worker?.asking ? "asking" : st;
+    if (asks === "asking" && before && before !== "asking") {
+      sound.click();
+      hud.toast(`❓ ${desk.worker!.identity?.name ?? AGENT_LABELS[desk.worker!.agent]} asks: ${desk.worker!.asking!.slice(0, 90)} · I to answer${away() ? " · T to jump there" : ""}`, "warn");
+    }
     if (st === "waiting" && before && before !== "waiting") {
       sound.click();
       hud.toast(`🔴 ${desk.worker!.identity?.name ?? AGENT_LABELS[desk.worker!.agent]} at ${desk.label} needs you · I to answer${away() ? " · T to jump there" : ""}`, "warn");
     }
-    if (st) lastStatus.set(desk.id, st);
+    if (st) lastStatus.set(desk.id, asks!);
     else lastStatus.delete(desk.id);
   }
   goals.update(progress, office.desks, office.presentations);
@@ -1750,7 +1757,7 @@ function cctvKey(e: KeyboardEvent): boolean {
 
 /** N: the next thing that needs you — an agent's question, then work ready to review — in the Agent monitor. */
 function nextNeedsYou(): void {
-  const waiting = office.desks.find((d) => d.worker?.status === "waiting");
+  const waiting = office.desks.find((d) => needsAnswer(d.worker));
   // Work in your line (not still with its auditor).
   const ready = office.presentations.find((p) => p.report);
   const id = waiting?.id ?? ready?.deskId;

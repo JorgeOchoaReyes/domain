@@ -101,7 +101,7 @@ export function buildInbox(i: InboxInput): InboxItem[] {
         at: i.now,
         actions: [{ id: "fix", label: "🛠 See the fix", primary: true }],
       });
-    } else if (w.status === "waiting") {
+    } else if (w.status === "waiting" || w.asking) {
       const trust = /trust this folder/i.test(w.activity);
       out.push({
         id: `${trust ? "trust" : "question"}-${d.id}`,
@@ -109,7 +109,7 @@ export function buildInbox(i: InboxInput): InboxItem[] {
         urgency: 3,
         icon: "🙋",
         title: trust ? `${who} asks whether it can trust this project's files` : `${who} needs your answer`,
-        detail: w.activity.replace(/ — answer in its terminal$/, ""),
+        detail: w.asking ?? w.activity.replace(/ — answer in its terminal$/, ""),
         deskId: d.id,
         at: i.now,
         actions: [

@@ -1,4 +1,5 @@
 import { skillBlockArgs } from "./skills.js";
+import { askedQuestion } from "../shared/asking.js";
 import { join, resolve, dirname } from "node:path";
 import { mkdirSync, rmSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import type {
@@ -120,6 +121,8 @@ export class Office {
   skillsFor: ((agent: AgentKind, identity: WorkerIdentity | null) => { on: string[]; off: string[] }) | null = null;
   /** Called when a worker worked its own way past the question it asked you: it's off your list. */
   onMovedOn: ((deskId: string, question: string) => void) | null = null;
+  /** Whether the worker at a desk is on a task (set by the server): only then is a question it ends on for you. */
+  hasTask: ((deskId: string) => boolean) | null = null;
   /** How long it keeps working past its question before that counts (tests shorten it). */
   movedOnMs = MOVED_ON_MS;
   /** Called when you or a worker says something during its review. */
@@ -421,6 +424,9 @@ export class Office {
             return;
           }
           w.status = status;
+          // Back at it: whatever it asked is behind it. Gone quiet: did it end on a question for you?
+          if (status !== "idle") delete w.asking;
+          else this.checkAsking(seat);
           // An empty activity: keep the task's own label ("🎯 Add the README…").
           // (A new task set since then has its own label: only "Free · …" goes back to the old one.)
           w.activity =
@@ -473,6 +479,25 @@ export class Office {
       this.changed();
     }, this.movedOnMs);
     seat.pastQuestion.unref?.();
+  }
+
+  /**
+   * It's gone quiet on a task: when what it last said ends in a question
+   * ("Where's the covers app?"), it's waiting for you — even with no menu on
+   * its screen and no report — so it shows as needing you, not as free.
+   */
+  private checkAsking(seat: Seat): void {
+    const deskId = seat.desk.id;
+    // Let the screen settle first (the prompt redraws after the answer).
+    setTimeout(() => {
+      const w = seat.desk.worker;
+      if (!w || w.status !== "idle" || w.report || !seat.session?.screen || this.hasTask?.(deskId) === false) return;
+      const q = askedQuestion(seat.session.screen());
+      if (!q || q === w.asking) return;
+      w.asking = q;
+      w.activity = `❓ ${q}`;
+      this.changed();
+    }, 1500).unref?.();
   }
 
   fire(deskId: string): boolean {

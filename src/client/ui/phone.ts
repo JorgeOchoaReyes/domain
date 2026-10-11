@@ -1,3 +1,4 @@
+import { needsAnswer } from "../../shared/asking.js";
 import type { OfficeState } from "../../shared/protocol.js";
 import { AGENT_LABELS, doingLabel } from "../../shared/protocol.js";
 import { dueLabel, goalProgress, type ProgressState } from "../../shared/progress.js";
@@ -191,7 +192,7 @@ export class Phone {
   /** How many things need you: the inbox, workers waiting, the line, overdue goals. */
   private badges(): Partial<Record<PhoneApp, number>> {
     const office = this.a.office();
-    const waiting = office.desks.filter((d) => d.worker?.status === "waiting").length;
+    const waiting = office.desks.filter((d) => needsAnswer(d.worker)).length;
     const line = office.presentations.filter((p) => p.report).length;
     const overdue = this.a.progress().goals.filter((g) => g.dueAt && !g.shippedAt && g.dueAt < Date.now()).length;
     return { alerts: this.items.length, monitor: waiting, workers: waiting, reviews: line, tasks: overdue };

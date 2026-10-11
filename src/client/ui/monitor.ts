@@ -1,3 +1,4 @@
+import { needsAnswer } from "../../shared/asking.js";
 import { deckOf, parseSlide } from "../../shared/slides.js";
 import type { ClientMessage, Desk, OfficeState, Report } from "../../shared/protocol.js";
 import { AGENT_LABELS, doingLabel } from "../../shared/protocol.js";
@@ -50,7 +51,7 @@ type Filter = "all" | "mine" | "waiting" | "review" | "working" | "free";
 const FILTERS: { id: Filter; label: string; test: (d: Desk, ready: Set<string>, me: string) => boolean }[] = [
   { id: "all", label: "All", test: () => true },
   { id: "mine", label: "👤 Mine", test: (d, _r, me) => d.worker?.hiredBy === me || d.worker?.lentTo === me },
-  { id: "waiting", label: "🔴 Needs you", test: (d) => d.worker?.status === "waiting" },
+  { id: "waiting", label: "🔴 Needs you", test: (d) => needsAnswer(d.worker) },
   { id: "review", label: "🎤 To review", test: (d, ready) => ready.has(d.id) },
   { id: "working", label: "⚙️ Working", test: (d) => d.worker?.status === "working" || d.worker?.status === "booting" },
   { id: "free", label: "💤 Free", test: (d, ready) => ["idle", "done", "asleep"].includes(d.worker?.status ?? "") && !ready.has(d.id) },
@@ -294,7 +295,7 @@ export class MonitorView {
     const head = JSON.stringify([w.status, workerName(w), w.agent, w.model, d.label, task, doing, w.branch, report?.at, report?.check?.status, auditing, theirs, w.hiredBy, w.lentTo, borrowKey(d.id)]);
     if (head === t.head) return;
     t.head = head;
-    t.el.classList.toggle("waiting", w.status === "waiting");
+    t.el.classList.toggle("waiting", needsAnswer(w));
     t.el.style.setProperty("--st", STATUS_BULB[w.status]);
     t.el.querySelector(".mon-who")!.innerHTML = `<b>${esc(workerName(w))}</b> <small>${[w.identity ? AGENT_LABELS[w.agent] : "", w.model, d.label, theirs ? `🔒 ${w.lentTo ? w.lentTo : w.hiredBy}'s` : ""].filter(Boolean).map(esc).join(" · ")}</small>`;
     // Borrowing: ask for someone else's agent, or give one back (or call yours back).
@@ -306,7 +307,7 @@ export class MonitorView {
     t.el.querySelector(".mon-st")!.textContent = WALL_STATUS[w.status] ?? w.status;
     t.el.querySelector(".mon-now")!.innerHTML = `${task ? `<span class="mon-task-t">🎯 ${esc(task)}</span>` : ""}<span>${esc(doing)}</span>${w.branch ? `<span class="mon-br">🌿 ${esc(w.branch)}</span>` : ""}`;
     const input = t.el.querySelector<HTMLInputElement>(".mon-say input");
-    if (input) input.placeholder = report ? "A note with your review (needed to send it back)…" : w.status === "waiting" ? `It's asking you — answer, or use the keys` : `Tell ${workerName(w)}…`;
+    if (input) input.placeholder = report ? "A note with your review (needed to send it back)…" : w.asking ? `It asked: ${w.asking.slice(0, 80)} — answer here` : w.status === "waiting" ? `It's asking you — answer, or use the keys` : `Tell ${workerName(w)}…`;
     const rv = t.el.querySelector<HTMLElement>(".mon-review")!;
     rv.classList.toggle("hidden", !report);
     rv.classList.remove("sent");

@@ -207,3 +207,21 @@ test("a worker that asked you something and then got on with it: once it's kept 
   assert.deepEqual(moved, ["Where is the frankie repo?"]);
   office.dispose();
 });
+
+test("a worker on a task that goes quiet on a question in words needs you (not free); back at work, it doesn't", async () => {
+  const office = new Office(sim);
+  const deskId = office.snapshot().desks[0].id;
+  office.hire(deskId, "claude", "Jorge");
+  office.hasTask = () => true;
+  const session = (office as unknown as { seats: { desk: { id: string }; session: { setStatus(s: string, a: string): void; screen?: () => string[] } }[] }).seats.find((s) => s.desk.id === deskId)!.session;
+  session.screen = () => ["Where's the covers app?", "", "> "];
+  session.setStatus("idle", "Idle");
+  await new Promise((r) => setTimeout(r, 1700));
+  let w = office.snapshot().desks.find((d) => d.id === deskId)!.worker!;
+  assert.equal(w.asking, "Where's the covers app?");
+  assert.match(w.activity, /❓/);
+  session.setStatus("working", "Cloning covers");
+  w = office.snapshot().desks.find((d) => d.id === deskId)!.worker!;
+  assert.equal(w.asking, undefined);
+  office.dispose();
+});

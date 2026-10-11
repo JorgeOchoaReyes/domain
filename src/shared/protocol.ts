@@ -124,6 +124,8 @@ export interface Worker {
   /** What's wrong, in the CLI's own words, when it's stuck (the desk offers the fix). */
   trouble?: Trouble;
   /** Lent to this person (they asked, its owner said yes): theirs to direct until it's back. */
+  /** It asked you something in plain words at its prompt and stopped (see shared/asking.ts): the question. */
+  asking?: string;
   lentTo?: string;
   /** The repo folder it works in, when that's another open repo than the office's own project. */
   repo?: string;

@@ -439,6 +439,8 @@ const simAudited = new Map<string, number>();
 setInterval(() => audits.tick(), 10_000).unref();
 setInterval(() => audits.checkVerdicts(), 3_000).unref();
 
+// A question a worker ends on is for you only when it's on a task.
+office.hasTask = (deskId) => progress.snapshot().goals.some((g) => g.tasks.some((t) => t.deskId === deskId && t.status !== "done"));
 // It asked you something, then worked its own way past it: off your list, and #team hears why.
 office.onMovedOn = (deskId, question) => {
   const text = `✅ ${nameAt(deskId)} got past “${question.slice(0, 140)}” on its own and is back at work — that question's off your list.`;
