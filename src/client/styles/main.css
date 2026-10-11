@@ -142,6 +142,7 @@ button, input, textarea { font-family: inherit; }
 .dock-badge { min-width: 22px; height: 22px; padding: 0 6px; border-radius: var(--r-pill); background: var(--bad); color: #fff; font: 900 12px/18px var(--font); border: var(--line-thin); text-align: center; }
 .dock-badge.soft { background: var(--accent); }
 .dock-btn .dock-badge { position: absolute; top: -9px; right: -9px; }
+.dock-num { position: absolute; left: 5px; bottom: 2px; font: 900 9px/1 var(--font); color: var(--muted); opacity: .8; pointer-events: none; }
 .dock-dot { position: absolute; top: -5px; right: -5px; width: 14px; height: 14px; border-radius: 50%; background: var(--accent); border: var(--line-thin); }
 .dock-inbox.ping:not(.on) { animation: dock-ring 2.4s ease-in-out infinite; }
 @keyframes dock-ring { 0%, 86%, 100% { transform: rotate(0); } 89% { transform: rotate(-8deg); } 93% { transform: rotate(8deg); } 97% { transform: rotate(-4deg); } }

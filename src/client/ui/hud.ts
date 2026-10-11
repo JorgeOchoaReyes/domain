@@ -180,7 +180,7 @@ export class Hud {
 
     const help = document.createElement("div");
     help.className = "panel keys";
-    help.innerHTML = `<span class="key">WASD</span>walk <span class="key">⇧</span>run <span class="key">␣</span>jump <span class="key">E</span>use <span class="key">T</span>travel <span class="key">V</span>view <span class="key">I</span>needs you <span class="key">G</span>goals <span class="key">H</span>help`;
+    help.innerHTML = `<span class="key">WASD</span>walk <span class="key">⇧</span>run <span class="key">␣</span>jump <span class="key">E</span>use <span class="key">T</span>travel <span class="key">V</span>view <span class="key">1–6</span>dock <span class="key">I</span>needs you <span class="key">G</span>goals <span class="key">H</span>help`;
     this.root.appendChild(help);
   }
 
@@ -419,7 +419,7 @@ export class Hud {
       ["C", "Team chat: message a worker or everyone; see what each is doing now and what it has done; type into its terminal"],
       ["T", "Fast travel: work floor, your office, stand-up, kitchen, game room, outside — or straight to a worker who needs you"],
       ["U", "Stand-up: say your day out loud (🎤) and it becomes the plan — summary, end-of-day goals, tasks handed out — or Resume yesterday in one click"],
-      ["L", "Your laptop: a browser for what's being built, workers' screens, the loop, decks and deploys — near a couch or table you sit down and it stays there"],
+      ["1–6", "The dock, left to right: 1 Needs you, 2 Goals, 3 Monitor, 4 Laptop, 5 Phone, 6 More — each button shows its number"],      ["L", "Your laptop: a browser for what's being built, workers' screens, the loop, decks and deploys — near a couch or table you sit down and it stays there"],
       ["K", "Agent monitor: every agent's live CLI at once, whoever needs you first — answer with a message, a task or a key (1, 2, 3, Enter, Esc) without leaving your seat · also the monitor wall in your office, the laptop's 📺 Monitor and the phone"],
       ["I", "Needs you: one list of everything waiting on you — agents' questions, stuck agents, work to review, “I'll take it” offers, requests to borrow your agents, huddles and demos, deadlines — each with its button · also 🔔 in the dock and the phone's Alerts · below it, Recent: the routine news that didn't pop up"],
       ["N", "The next thing that needs you: an agent's question, then finished work to review — opened big in the Agent monitor, ready to answer, approve or send back"],

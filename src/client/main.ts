@@ -1229,6 +1229,12 @@ const phone = new Phone({
   },
 });
 hud.placeInDock(phone.dockButton, "laptop");
+// 1, 2, 3…: the dock's buttons, left to right (Needs you, Goals, Monitor, Laptop, Phone, More) — each shows its number.
+const dockButtons = () => [...document.querySelectorAll<HTMLButtonElement>(".dock > .btn, .dock-more-wrap > .btn")];
+dockButtons().forEach((b, i) => {
+  b.insertAdjacentHTML("beforeend", `<kbd class="dock-num">${i + 1}</kbd>`);
+  b.title = `${b.title} · ${i + 1}`;
+});
 
 // --- 🔔 Needs you: one place for everything waiting on you -------------------------------------
 
@@ -2295,6 +2301,11 @@ window.addEventListener("keydown", (e) => {
     return;
   }
   const key = e.key.toLowerCase();
+  const n = /^(?:Digit|Numpad)([1-9])$/.exec(e.code);
+  if (n && !e.ctrlKey && !e.altKey && !e.metaKey) {
+    dockButtons()[Number(n[1]) - 1]?.click();
+    return;
+  }
   if (key === "e") interact();
   else if (key === "o") startOfficeHours();
   else if (key === "r") openRoundup();
