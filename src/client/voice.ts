@@ -34,8 +34,15 @@ export function ingestVoices(msg: ServerMessage): void {
   } else if (msg.t === "ttsAudio") {
     waiting.get(msg.id)?.(msg.audio ?? null);
     waiting.delete(msg.id);
+  } else if (msg.t === "dictated") {
+    const f = onDictated;
+    onDictated = null;
+    f?.(msg.ok, msg.error);
   }
 }
+
+/** The 🎤 waiting to hear whether the computer's dictation started. */
+let onDictated: ((ok: boolean, error?: string) => void) | null = null;
 
 export function elevenState(): VoicesState {
   return eleven;
@@ -345,7 +352,12 @@ export function osDictationHint(): string {
 /** A 🎤 button's HTML (empty when there's no way to dictate here). */
 export function micButton(cls = ""): string {
   if (!DESKTOP && !sttSupported()) return "";
-  return `<button type="button" class="btn mic ${cls}" title="${DESKTOP && !WINDOWS ? `Dictate: ${osDictationHint()}` : "Dictate — click again to stop"}">🎤</button>`;
+  return `<button type="button" class="btn mic ${cls}" title="${DESKTOP && !WINDOWS && !MAC ? `Dictate: ${osDictationHint()}` : "Dictate — click again to stop"}">🎤</button>`;
+}
+
+/** What the box says while the computer's dictation is on. */
+function listeningText(): string {
+  return MAC ? "🎤 Listening — speak now (macOS dictation) · Fn or click 🎤 again to stop" : "🎤 Listening — speak now (Windows voice typing) · click 🎤 again to stop";
 }
 
 /**
@@ -355,8 +367,9 @@ export function micButton(cls = ""): string {
 export function wireMic(button: HTMLButtonElement | null, field: HTMLInputElement | HTMLTextAreaElement, onError?: (error: string) => void): void {
   if (!button) return;
   if (DESKTOP) {
-    // The OS dictates into whatever has focus. On Windows the office starts it for you (Win+H:
-    // Windows voice typing) and the second click stops it; elsewhere it says how.
+    // The OS dictates into whatever has focus. The office starts it for you — Windows: Win+H
+    // (voice typing), which the second click presses again to stop; macOS: the app's own
+    // Start Dictation — and if it couldn't, the box says how to start it by hand.
     const before = field.placeholder;
     let live = false;
     const stop = () => {
@@ -364,23 +377,35 @@ export function wireMic(button: HTMLButtonElement | null, field: HTMLInputElemen
       button.classList.remove("live");
       field.placeholder = before;
     };
+    const showHow = (why?: string) => {
+      field.placeholder = why ? `🎤 ${why}` : `🎤 ${osDictationHint()[0].toUpperCase()}${osDictationHint().slice(1)} — it types here`;
+      button.classList.add("live");
+      setTimeout(() => button.classList.remove("live"), 4000);
+    };
     field.addEventListener("blur", () => live && setTimeout(() => document.activeElement !== field && stop(), 300));
     button.addEventListener("click", () => {
       field.focus();
       // Typing goes at the end of what's there.
       const end = field.value.length;
       field.setSelectionRange(end, end);
-      if (WINDOWS && sendMsg) {
-        sendMsg({ t: "dictate" });
-        if (live) return stop();
+      if ((WINDOWS || MAC) && sendMsg) {
+        if (live) {
+          // macOS dictation stops itself (Fn, Done, or a pause); Windows' Win+H toggles.
+          if (WINDOWS) sendMsg({ t: "dictate" });
+          return stop();
+        }
         live = true;
         button.classList.add("live");
-        field.placeholder = "🎤 Listening — speak now (Windows voice typing) · click 🎤 again to stop";
+        field.placeholder = listeningText();
+        onDictated = (ok, error) => {
+          if (ok || !live) return;
+          live = false;
+          showHow(error);
+        };
+        sendMsg({ t: "dictate" });
         return;
       }
-      field.placeholder = `🎤 ${osDictationHint()[0].toUpperCase()}${osDictationHint().slice(1)} — it types here`;
-      button.classList.add("live");
-      setTimeout(() => button.classList.remove("live"), 4000);
+      showHow();
     });
     return;
   }

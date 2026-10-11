@@ -1,6 +1,7 @@
 import { app, BrowserWindow, Menu, dialog, session, shell, utilityProcess, type UtilityProcess } from "electron";
 import { fileURLToPath } from "node:url";
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
+import { defaultsReader, startMacDictation, type DictateResult } from "./dictation.js";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { homedir } from "node:os";
@@ -140,10 +141,26 @@ function buildMenu(project: string): void {
           { role: "quit" },
         ],
       },
+      // macOS: an Edit menu (copy and paste, and the system's own Edit → Start Dictation…).
+      ...(process.platform === "darwin" ? [{ role: "editMenu" as const }] : []),
       { role: "viewMenu" },
       { role: "windowMenu" },
     ]),
   );
+}
+
+/**
+ * The 🎤 button on macOS: start the Mac's dictation in the box that has
+ * focus (electron/dictation.ts). Windows voice typing is started by the
+ * server itself (src/server/dictate.ts), so this is macOS-only.
+ */
+function dictate(): Promise<DictateResult> {
+  if (process.platform !== "darwin") return Promise.resolve({ ok: false, error: "Use your computer's dictation to talk" });
+  BrowserWindow.getAllWindows()[0]?.focus();
+  return startMacDictation({
+    sendAction: (action) => Menu.sendActionToFirstResponder(action),
+    readDefault: defaultsReader(execFile as never),
+  });
 }
 
 /**
@@ -302,6 +319,8 @@ async function startServer(): Promise<string> {
           setTimeout(() => relaunchOn(path), 600);
         } else if (m.t === "pickFolder") {
           void pickProject().then((path) => child.postMessage({ t: "pickedFolder", id: m.id, path }));
+        } else if (m.t === "dictate") {
+          void dictate().then((r) => child.postMessage({ t: "dictated", id: m.id, ...r }));
         }
       });
       child.once("exit", (code) => {
@@ -319,6 +338,7 @@ async function startServer(): Promise<string> {
     Object.assign(globalThis, {
       __domainRelaunch: (path: string) => setTimeout(() => relaunchOn(path), 600),
       __domainPickFolder: () => pickProject(),
+      __domainDictate: () => dictate(),
     });
     // The specifier is held in a variable so TypeScript does not try to
     // resolve the separately-built server bundle at typecheck time.
