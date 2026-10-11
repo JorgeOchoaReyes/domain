@@ -1,6 +1,5 @@
 import * as THREE from "three";
-import { TEAM_PODS } from "../../shared/layout.js";
-import type { PodSeat } from "../../shared/pods.js";
+import { ALL_PODS, type PodSeat } from "../../shared/pods.js";
 import { textPlane } from "./toon.js";
 
 /**
@@ -12,7 +11,7 @@ export class PodSigns {
   private plates = new Map<string, { key: string; meshes: THREE.Mesh[] }>();
 
   set(seats: readonly PodSeat[], me: string): void {
-    for (const pod of TEAM_PODS) {
+    for (const pod of ALL_PODS) {
       const seat = seats.find((s) => s.pod === pod.name);
       const text = !seat ? "" : seat.person === me ? `⭐ Your pod, ${seat.person}` : `🧑 ${seat.person}'s pod${seat.here ? "" : " (away)"}`;
       const key = `${text}|${seat?.here}`;

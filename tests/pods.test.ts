@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ASK_TTL_MS, assignPods, podDesks, podNames, podOfDesk, podOwnerBlocking, podSeats } from "../src/shared/pods.ts";
 import { mayDirect, type ServerMessage, type Worker } from "../src/shared/protocol.ts";
-import { TEAM_DESK_IDS } from "../src/shared/layout.ts";
+import { MORE_TEAM_DESK_IDS, TEAM_DESK_IDS } from "../src/shared/layout.ts";
 import { Pods, podsModule } from "../src/server/pods.ts";
 import { allowed } from "../src/server/permissions.ts";
 import type { ClientRec, ServerCtx } from "../src/server/ctx.ts";
@@ -34,7 +34,8 @@ test("pods are the team floor's desk clusters", () => {
   const names = podNames();
   assert.ok(names.length >= 4);
   const all = names.flatMap((p) => podDesks(p));
-  assert.deepEqual([...all].sort(), [...TEAM_DESK_IDS].sort(), "every team-floor desk is in exactly one pod");
+  assert.deepEqual([...all].sort(), [...TEAM_DESK_IDS, ...MORE_TEAM_DESK_IDS].sort(), "every team-floor desk, on every team floor, is in exactly one pod");
+  assert.deepEqual(names.slice(0, 5), ["A", "B", "C", "D", "E"], "floor 3's pods first, then the floor above");
   assert.equal(podDesks("A").length, 4);
   for (const p of names) for (const d of podDesks(p)) assert.equal(podOfDesk(d), p);
   assert.equal(podOfDesk("desk-1"), null, "downstairs desks are nobody's pod");

@@ -1,4 +1,4 @@
-import { MORE_PLACES, PLACES, inUpstairs, type RoomId } from "../../shared/layout.js";
+import { MORE_PLACES, PLACES, inUpstairs, teamFloorIndex, type RoomId } from "../../shared/layout.js";
 import { esc, openModal } from "./modal.js";
 
 /**
@@ -21,11 +21,20 @@ export interface Destination {
   then?: () => void;
 }
 
+/** How many team floors are open (floors 4 and up are listed once they are). */
+let teamFloorsOpen: number | null = null;
+/** The office changed: how many team floors are open now. True when one just opened. */
+export function setTeamFloorsOpen(n: number): boolean {
+  const opened = teamFloorsOpen !== null && n > teamFloorsOpen;
+  teamFloorsOpen = n;
+  return opened;
+}
+
 export function placeDestinations(here: RoomId | "desks"): Destination[] {
   const up = here === "library" || here === "lounge2" || here === "gym";
   return [
     ...PLACES.map((p) => ({ label: p.label, icon: p.icon, x: p.x, z: p.z, facing: p.facing, sub: p.id === here ? "You're here" : undefined })),
-    ...MORE_PLACES.map((p) => ({ label: p.label, icon: p.icon, x: p.x, z: p.z, facing: p.facing, sub: up && inUpstairs(p.x) ? "You're here" : undefined })),
+    ...MORE_PLACES.filter((p) => teamFloorIndex(p.x) < (teamFloorsOpen ?? 1)).map((p) => ({ label: p.label, icon: p.icon, x: p.x, z: p.z, facing: p.facing, sub: up && inUpstairs(p.x) ? "You're here" : undefined })),
   ];
 }
 

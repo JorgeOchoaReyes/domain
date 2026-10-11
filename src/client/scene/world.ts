@@ -2,6 +2,8 @@ import { buildUpstairs, type Upstairs } from "./upstairs.js";
 import { buildParkland, type Parkland } from "./parkland.js";
 import { UPSTAIRS, UP_HEIGHT, BREAK_SPOTS, waitSpot, TEAM_FLOOR, TEAM_DESK_IDS, floorOf, type WalkPt } from "../../shared/layout.js";
 import { huddleSpot } from "../../shared/huddle.js";
+import { MORE_TEAM_DESK_IDS, POOL, TEAM_FLOORS, openTeamFloors, teamFloorIndex, teamFloorRect } from "../../shared/layout.js";
+import { addPool, type PoolScene } from "./pool.js";
 import { buildTeamFloor, type TeamFloor } from "./teamfloor.js";
 import * as THREE from "three";
 // Only what moved gets its matrices recomputed (see there).
@@ -134,8 +136,18 @@ export class World {
   }
   private boundsAt(x: number): { minX: number; maxX: number; minZ: number; maxZ: number } {
     const f = floorOf(x);
+    if (f > 3) {
+      const r = teamFloorRect(f - 3);
+      return { minX: r.minX + 0.4, maxX: r.maxX - 0.4, minZ: r.minZ + 0.4, maxZ: r.maxZ - 0.4 };
+    }
     return f === 3 ? this.teamBounds : f === 2 ? this.upBounds : this.groundBounds;
   }
+  /** Floors 4 and up (the same team floor again, further east), for a growing team. */
+  readonly moreTeamFloors: TeamFloor[] = [];
+  /** How many team floors are open (1: just floor 3): one more each time the last fills up. */
+  teamFloorsOpen = 1;
+  /** The pool table in the game room. */
+  readonly pool: PoolScene;
   /** Floor 3, the team floor (its desks are the office's, moved up there). */
   readonly teamFloor: TeamFloor;
   /** Floor 2, up the elevator. */
@@ -220,6 +232,18 @@ export class World {
       const view = this.office.desks.get(id);
       if (view) this.teamFloor.group.add(view.group);
     }
+    // And the floors above it, with theirs.
+    for (let k = 1; k < TEAM_FLOORS; k++) {
+      const f = buildTeamFloor(k);
+      f.group.visible = false;
+      this.scene.add(f.group);
+      this.moreTeamFloors.push(f);
+    }
+    for (const id of MORE_TEAM_DESK_IDS) {
+      const view = this.office.desks.get(id);
+      const def = DESK_BY_ID.get(id);
+      if (view && def) this.moreTeamFloors[teamFloorIndex(def.x) - 1]?.group.add(view.group);
+    }
     this.scene.add(this.upstairs.group);
     this.upstairs.group.visible = false;
     this.park = buildParkland();
@@ -227,13 +251,14 @@ export class World {
     this.props = buildProps();
     this.scene.add(this.props.group);
     this.extras = addExtras(this.props);
+    this.pool = addPool(this.props);
     this.scene.add(this.extras.grounds, this.extras.upstairs);
     this.extras.upstairs.visible = false;
     const street = buildCars();
     this.cars = street.cars;
     // The cars' footprints move with them (they're kept up to date in place).
-    this.colliders = [...this.office.colliders, ...this.rooms.colliders, ...this.gameRoom.colliders, ...this.upstairs.colliders, ...this.teamFloor.colliders, ...this.park.colliders, ...this.props.colliders, ...street.colliders];
-    this.collectOccludable([this.office.group, this.rooms.group, this.gameRoom.group, this.teamFloor.group]);
+    this.colliders = [...this.office.colliders, ...this.rooms.colliders, ...this.gameRoom.colliders, ...this.upstairs.colliders, ...this.teamFloor.colliders, ...this.moreTeamFloors.flatMap((f) => f.colliders), ...this.park.colliders, ...this.props.colliders, ...street.colliders];
+    this.collectOccludable([this.office.group, this.rooms.group, this.gameRoom.group, this.teamFloor.group, ...this.moreTeamFloors.map((f) => f.group)]);
     // Lights in rooms that get hidden (the game room's neon, the pinball's flash) live in the
     // scene itself and are only dimmed while their room is hidden: three.js builds its shaders
     // for an exact number of lights, so a light coming and going recompiled every material on
@@ -257,7 +282,7 @@ export class World {
       this.collectOccludable([m]);
       this.warm(m);
     };
-    this.occluders = [...cameraOccluders(), ...this.upstairs.occluders, ...this.teamFloor.occluders];
+    this.occluders = [...cameraOccluders(), ...this.upstairs.occluders, ...this.teamFloor.occluders, ...this.moreTeamFloors.flatMap((f) => f.occluders)];
     this.occluders.push({
       minX: ELEVATOR.x - ELEVATOR.width / 2,
       maxX: ELEVATOR.x + ELEVATOR.width / 2,
@@ -370,6 +395,8 @@ export class World {
   sync(desks: Desk[], line: Presentation[], peers: Peer[], selfId: string): void {
     this.desks = desks;
     this.line = line;
+    const taken = new Set(desks.filter((d) => d.worker).map((d) => d.id));
+    this.teamFloorsOpen = openTeamFloors((id) => taken.has(id));
     this.syncDesks(desks);
     this.syncWorkers(desks, line);
     this.syncPeers(peers, selfId);
@@ -598,8 +625,9 @@ export class World {
         const n = Number(desk.id.replace(/\D/g, "")) || 0;
         const onBreak = (now + n * 37_000) % WAIT_CYCLE_MS > WAIT_CYCLE_MS - BREAK_MS;
         if (onBreak) {
-          const i = (n + Math.floor(now / 45_000)) % BREAK_SPOTS.length;
-          dest = { ...BREAK_SPOTS[i], seated: false, key: `break-${i}` };
+          // Round the lounge, or a game of pool.
+          const i = (n + Math.floor(now / 45_000)) % (BREAK_SPOTS.length + POOL.spots.length);
+          dest = i < BREAK_SPOTS.length ? { ...BREAK_SPOTS[i], seated: false, key: `break-${i}` } : { ...POOL.spots[i - BREAK_SPOTS.length], seated: false, key: `pool-${i - BREAK_SPOTS.length}` };
         } else {
           const at = freeIds.indexOf(desk.id);
           const s = waitSpot(at);
@@ -830,6 +858,10 @@ export class World {
     this.rooms.update(dt, now, { x: pp.x, z: pp.z });
     this.cullAreas();
     this.gameRoom.update(dt, now);
+    // Workers on a break at the pool table take their shots.
+    let atPool = 0;
+    for (const v of this.workers.values()) if (v.destKey.startsWith("pool-") && !v.path.length) atPool++;
+    this.pool.setPlayers(atPool);
     this.props.update(dt, now, this.props.group.visible);
     // Breaks start (and move on) with time, not just when the office changes.
     if (now - this.lastBreakLook > 3000 && this.desks.length) {
@@ -1243,6 +1275,7 @@ export class World {
     const up = floor !== 1;
     this.upstairs.group.visible = floor === 2;
     this.teamFloor.group.visible = floor === 3;
+    this.moreTeamFloors.forEach((f, i) => (f.group.visible = floor === i + 4));
     this.rooms.group.visible = !up;
     this.park.group.visible = !up && seeGrounds;
     this.extras.grounds.visible = !up && seeGrounds;

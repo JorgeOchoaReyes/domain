@@ -30,6 +30,8 @@ export interface GameRoom {
   monitors: { workers: LiveBoard; goals: LiveBoard };
   /** Repaint a cabinet's screen with its best score. */
   setBest(id: ArcadeId, best: number): void;
+  /** The office's high scores for a game (best first): its cabinets show them between attract loops. */
+  setBoard(id: ArcadeId, board: readonly { name: string; score: number }[]): void;
   /** Neon pulse, attract-mode animation on cabinet screens, pad glow. */
   update(dt: number, now: number): void;
   /** Disco: the ball spins up and lights sweep the floor, beating with the music (pulse 0..1). */
@@ -51,6 +53,8 @@ interface Cabinet {
   color: string;
   best: number;
   board: LiveBoard;
+  /** The office's high scores for this game, best first. */
+  leaders: readonly { name: string; score: number }[];
 }
 
 export function buildGameRoom(): GameRoom {
@@ -117,10 +121,10 @@ export function buildGameRoom(): GameRoom {
     g.rotation.y = a.rotY;
     const floor = floorOf(a.x);
     if (floor === 1) add(g);
-    else upstairsCabinets[floor].add(g);
+    else upstairsCabinets[floor as 2 | 3].add(g);
     // Square enough for either way it faces.
     solid(a.x, a.z, 0.46, 0.46);
-    cabinets.push({ id: a.id, name: a.name, color: a.color, best: 0, board });
+    cabinets.push({ id: a.id, name: a.name, color: a.color, best: 0, board, leaders: [] });
   }
 
   // --- the hoop on the east wall -------------------------------------------------
@@ -295,6 +299,13 @@ export function buildGameRoom(): GameRoom {
       // Every cabinet with this game shows the same best.
       for (const c of cabinets.filter((x) => x.id === id)) {
         c.best = best;
+        paintCabinetScreen(c, performance.now());
+        c.board.texture.needsUpdate = true;
+      }
+    },
+    setBoard(id, board) {
+      for (const c of cabinets.filter((x) => x.id === id)) {
+        c.leaders = board.slice(0, 3);
         paintCabinetScreen(c, performance.now());
         c.board.texture.needsUpdate = true;
       }
@@ -480,7 +491,22 @@ function paintCabinetScreen(c: Cabinet, now: number): void {
   g.fillRect(0, 0, W, H);
   const t = now / 1000;
   g.save();
-  if (c.id === "snake") {
+  // Every few seconds, the office's high scores instead of the attract loop.
+  if (c.leaders.length && Math.floor(t / 4) % 3 === 2) {
+    g.textBaseline = "middle";
+    g.textAlign = "center";
+    g.font = `900 20px ${F}`;
+    g.fillStyle = c.color;
+    g.fillText("HIGH SCORES", W / 2, 58);
+    c.leaders.forEach((e, i) => {
+      g.font = `800 19px ${F}`;
+      g.fillStyle = i === 0 ? "#ffd166" : "#ffffff";
+      g.textAlign = "left";
+      g.fillText(`${i + 1}. ${e.name.toUpperCase().slice(0, 12)}`, 34, 90 + i * 30);
+      g.textAlign = "right";
+      g.fillText(String(e.score), W - 34, 90 + i * 30);
+    });
+  } else if (c.id === "snake") {
     const cell = 16;
     const len = 9;
     for (let i = 0; i < len; i++) {
@@ -564,7 +590,8 @@ function paintCabinetScreen(c: Cabinet, now: number): void {
   g.shadowBlur = 0;
   g.font = `800 20px ${F}`;
   g.fillStyle = "#ffd166";
-  g.fillText(`BEST ${c.best}`, W / 2, H - 46);
+  const top = c.leaders[0];
+  g.fillText(top && top.score >= c.best ? `HI ${top.score} · ${top.name.toUpperCase().slice(0, 10)}` : `BEST ${c.best}`, W / 2, H - 46);
   if (Math.floor(t * 2) % 2 === 0) {
     g.fillStyle = c.color;
     g.font = `900 22px ${F}`;

@@ -1,4 +1,4 @@
-import { DESKS, TEAM_DESK_IDS, TEAM_PODS } from "./layout.js";
+import { DESKS, MORE_TEAM_DESK_IDS, TEAM_DESK_IDS, TEAM_FLOORS, teamPods } from "./layout.js";
 
 /**
  * Pods for people: in a shared office each person gets a pod on the team
@@ -45,19 +45,24 @@ export type BorrowEvent = "asked" | "lent" | "declined" | "returned" | "refused"
 /** How long an owner has to answer before the ask lapses. */
 export const ASK_TTL_MS = 2 * 60_000;
 
-/** The pods' names, in the order they're handed out. */
+/** Every team floor's pods (floor 3's A–D first, then floor 4's E–H, …), with their centers. */
+export const ALL_PODS: readonly { name: string; x: number; z: number }[] = Array.from({ length: TEAM_FLOORS }, (_, k) => teamPods(k)).flat();
+/** Every desk on a team floor. */
+const ALL_TEAM_DESKS: readonly string[] = [...TEAM_DESK_IDS, ...MORE_TEAM_DESK_IDS];
+
+/** The pods' names, in the order they're handed out: floor 3's first, then the floors above. */
 export function podNames(): string[] {
-  return TEAM_PODS.map((p) => p.name);
+  return ALL_PODS.map((p) => p.name);
 }
 
 /** The desks in a pod. */
 export function podDesks(pod: string): string[] {
-  return DESKS.filter((d) => TEAM_DESK_IDS.includes(d.id) && d.label.replace(/\d+$/, "") === `Pod ${pod}`).map((d) => d.id);
+  return DESKS.filter((d) => ALL_TEAM_DESKS.includes(d.id) && d.label.replace(/\d+$/, "") === `Pod ${pod}`).map((d) => d.id);
 }
 
-/** Which pod a desk is in (null: not on the team floor). */
+/** Which pod a desk is in (null: not on a team floor). */
 export function podOfDesk(deskId: string): string | null {
-  if (!TEAM_DESK_IDS.includes(deskId)) return null;
+  if (!ALL_TEAM_DESKS.includes(deskId)) return null;
   const label = DESKS.find((d) => d.id === deskId)?.label ?? "";
   const m = /^Pod (\S+?)\d+$/.exec(label);
   return m ? m[1] : null;
